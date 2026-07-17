@@ -1,0 +1,4 @@
+.devloop/wt/
+node_modules/
+.wrangler/
+.dev.vars
