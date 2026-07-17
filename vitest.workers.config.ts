@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.toml" } })],
   test: {
     name: "workers",
-    include: ["test/shared/**/*.test.ts", "test/adapters/**/*.test.ts"],
+    include: ["test/*.test.ts", "test/shared/**/*.test.ts", "test/adapters/**/*.test.ts"],
   },
 });

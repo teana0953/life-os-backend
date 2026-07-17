@@ -20,19 +20,25 @@ function toDomain(row: UserRow): User {
  * Driven adapter: implements UserRepository via Drizzle + Neon.
  * Get-or-create by firebase_uid; a returning user's stored email/displayName
  * are not refreshed from the input.
+ *
+ * Takes a lazy `() => Db` factory rather than an eager Db so that constructing
+ * the Neon client (which throws on a malformed DATABASE_URL) happens on first
+ * use — inside the HTTP error boundary — instead of crashing the Worker.
  */
 export class DrizzleUserRepository implements UserRepository {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly getDb: () => Db) {}
 
   async getOrCreate(input: GetOrCreateUserInput): Promise<User> {
-    const [existing] = await this.db
+    const db = this.getDb();
+
+    const [existing] = await db
       .select()
       .from(users)
       .where(eq(users.firebaseUid, input.firebaseUid))
       .limit(1);
     if (existing) return toDomain(existing);
 
-    const [created] = await this.db
+    const [created] = await db
       .insert(users)
       .values({
         firebaseUid: input.firebaseUid,
@@ -44,7 +50,7 @@ export class DrizzleUserRepository implements UserRepository {
     if (created) return toDomain(created);
 
     // Lost a race with a concurrent insert for the same firebase_uid.
-    const [row] = await this.db
+    const [row] = await db
       .select()
       .from(users)
       .where(eq(users.firebaseUid, input.firebaseUid))
