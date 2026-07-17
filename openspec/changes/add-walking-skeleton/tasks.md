@@ -13,8 +13,8 @@
 
 ## 3. Shared 技術件(TDD,vitest-pool-workers)
 
-- [ ] 3.1 `firebase-verifier`:jose × JWKS 驗證;JWKS 來源設計為可注入(prod 用 createRemoteJWKSet、測試用 createLocalJWKSet,免攔 fetch),自產 RSA key 覆蓋:有效 token、過期、錯 aud、錯 iss、簽章無效、無/壞 header(對應 auth spec)
-- [ ] 3.2 Drizzle schema(`users` 表:id、firebase_uid unique、email、display_name、created_at)+ Neon client 工廠;產出第一份 drizzle-kit migration
+- [x] 3.1 `firebase-verifier`:jose × JWKS 驗證;JWKS 來源設計為可注入(prod 用 createRemoteJWKSet、測試用 createLocalJWKSet,免攔 fetch),自產 RSA key 覆蓋:有效 token、過期、錯 aud、錯 iss、簽章無效、無/壞 header(對應 auth spec)
+- [x] 3.2 Drizzle schema(`users` 表:id、firebase_uid unique、email、display_name、created_at)+ Neon client 工廠;產出第一份 drizzle-kit migration
 
 ## 4. Adapters
 
