@@ -66,12 +66,15 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
-function buildApp(overrides: { ping?: () => Promise<void>; userRepository?: UserRepository } = {}) {
+function buildApp(
+  overrides: { ping?: () => Promise<void>; userRepository?: UserRepository; allowedWebOrigin?: string } = {},
+) {
   return createApp({
     projectId: PROJECT_ID,
     jwks,
     userRepository: overrides.userRepository ?? new InMemoryUserRepository(),
     ping: overrides.ping ?? (async () => {}),
+    allowedWebOrigin: overrides.allowedWebOrigin,
   });
 }
 
@@ -90,6 +93,22 @@ describe("CORS", () => {
     const res = await app.request("/health", { headers: { Origin: "https://evil.example.com" } });
 
     expect(res.headers.get("access-control-allow-origin")).not.toBe("https://evil.example.com");
+  });
+
+  it("reflects the configured production web origin", async () => {
+    const app = buildApp({ allowedWebOrigin: "https://life-os.pages.dev" });
+
+    const res = await app.request("/health", { headers: { Origin: "https://life-os.pages.dev" } });
+
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://life-os.pages.dev");
+  });
+
+  it("still rejects a non-configured production origin", async () => {
+    const app = buildApp({ allowedWebOrigin: "https://life-os.pages.dev" });
+
+    const res = await app.request("/health", { headers: { Origin: "https://other.pages.dev" } });
+
+    expect(res.headers.get("access-control-allow-origin")).not.toBe("https://other.pages.dev");
   });
 
   it("answers preflight for /api/me allowing the Authorization header", async () => {

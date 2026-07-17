@@ -6,9 +6,13 @@ import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import { createHealthHandler } from "./routes/health";
 import { createMeHandler } from "./routes/me";
 
-/** Allows the Flutter web client during local development (any localhost port). */
-function isAllowedOrigin(origin: string): boolean {
-  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+/**
+ * Allows the Flutter web client: any localhost port during local development,
+ * plus one configured production origin (the deployed Cloudflare Pages URL).
+ */
+function isAllowedOrigin(origin: string, productionOrigin?: string): boolean {
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return productionOrigin !== undefined && productionOrigin !== "" && origin === productionOrigin;
 }
 
 export interface CreateAppOptions {
@@ -16,6 +20,8 @@ export interface CreateAppOptions {
   jwks: JWTVerifyGetKey;
   userRepository: UserRepository;
   ping: () => Promise<void>;
+  /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
+  allowedWebOrigin?: string;
 }
 
 /** Composes the Hono app (driving adapter): routes, auth middleware, and the uniform error handler. */
@@ -27,7 +33,7 @@ export function createApp(options: CreateAppOptions) {
   app.use(
     "*",
     cors({
-      origin: (origin) => (isAllowedOrigin(origin) ? origin : null),
+      origin: (origin) => (isAllowedOrigin(origin, options.allowedWebOrigin) ? origin : null),
       allowMethods: ["GET", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type"],
     }),
