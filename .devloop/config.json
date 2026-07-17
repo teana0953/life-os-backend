@@ -1,5 +1,9 @@
 {
   "superpowers": true,
   "auto_approve": false,
-  "finish": "ask"
+  "finish": "ask",
+  "gate_cmds": [
+    "npm test",
+    "npm run typecheck"
+  ]
 }

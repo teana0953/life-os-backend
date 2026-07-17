@@ -1,0 +1,41 @@
+{
+  "name": "life-os-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loftapartment/life-os-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/loftapartment/life-os-backend/issues"
+  },
+  "homepage": "https://github.com/loftapartment/life-os-backend#readme",
+  "description": "",
+  "dependencies": {
+    "@neondatabase/serverless": "1.1.0",
+    "drizzle-orm": "0.45.2",
+    "hono": "4.12.30",
+    "jose": "6.2.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
+    "@cloudflare/workers-types": "^5.20260717.1",
+    "@types/node": "^26.1.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.111.0"
+  }
+}

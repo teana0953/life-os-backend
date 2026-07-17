@@ -17,6 +17,14 @@ The system SHALL verify Firebase ID tokens on protected routes by validating the
 - **WHEN** a request carries a token whose `aud` does not match the Firebase project ID
 - **THEN** the system responds `401` with JSON `{ "error": "unauthorized" }`
 
+#### Scenario: Wrong issuer
+- **WHEN** a request carries a token whose `iss` is not `https://securetoken.google.com/<project-id>`
+- **THEN** the system responds `401` with JSON `{ "error": "unauthorized" }`
+
+#### Scenario: Invalid signature
+- **WHEN** a request carries a token signed by a key not present in the JWKS
+- **THEN** the system responds `401` with JSON `{ "error": "unauthorized" }`
+
 ### Requirement: Protected routes reject missing credentials
 The system SHALL respond `401` to any request to a protected route that lacks a syntactically valid `Authorization: Bearer` header.
 
