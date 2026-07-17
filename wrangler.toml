@@ -1,0 +1,9 @@
+name = "life-os-backend"
+main = "src/index.ts"
+compatibility_date = "2026-07-17"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (DATABASE_URL, FIREBASE_PROJECT_ID) are NOT declared here.
+# Set them with `wrangler secret put <NAME>` for deployed environments,
+# and in a local, untracked `.dev.vars` file for `wrangler dev`.
+# See `.dev.vars.example` for the required keys.

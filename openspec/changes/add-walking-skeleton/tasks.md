@@ -2,9 +2,9 @@
 
 ## 1. 專案骨架
 
-- [ ] 1.1 初始化 npm 專案:TypeScript、Hono、wrangler、vitest、@cloudflare/vitest-pool-workers、jose、drizzle-orm、@neondatabase/serverless、drizzle-kit;`tsconfig.json`、`wrangler.toml`(secrets 用 binding 佔位,不含值)、`.gitignore`
-- [ ] 1.2 建立 hexagonal/context-first 目錄結構(`src/contexts/user/{domain,application,adapters}`、`src/shared/{auth,db}`、`src/adapters/http`、`test/`)
-- [ ] 1.3 撰寫 repo CLAUDE.md:架構慣例(domain 定義 port、adapters 實作、依賴只朝內、新 context 照 `contexts/user/` 樣板)、測試分層、命名慣例(技術前綴 + port 名)
+- [x] 1.1 初始化 npm 專案:TypeScript、Hono、wrangler、vitest、@cloudflare/vitest-pool-workers、jose、drizzle-orm、@neondatabase/serverless、drizzle-kit;`tsconfig.json`、`wrangler.toml`(secrets 用 binding 佔位,不含值)、`.gitignore`
+- [x] 1.2 建立 hexagonal/context-first 目錄結構(`src/contexts/user/{domain,application,adapters}`、`src/shared/{auth,db}`、`src/adapters/http`、`test/`)
+- [x] 1.3 撰寫 repo CLAUDE.md:架構慣例(domain 定義 port、adapters 實作、依賴只朝內、新 context 照 `contexts/user/` 樣板)、測試分層、命名慣例(技術前綴 + port 名)
 
 ## 2. Domain / Application(TDD,純單元測試)
 
