@@ -8,8 +8,8 @@
 
 ## 2. Domain / Application(TDD,純單元測試)
 
-- [ ] 2.1 `User` entity 與 `UserRepository` port(interface):先寫測試再實作
-- [ ] 2.2 `get-or-create-user` use case:注入 in-memory repository,覆蓋「首次建檔」與「回頭客不重複建檔」兩情境(對應 user-account spec)
+- [x] 2.1 `User` entity 與 `UserRepository` port(interface):先寫測試再實作
+- [x] 2.2 `get-or-create-user` use case:注入 in-memory repository,覆蓋「首次建檔」與「回頭客不重複建檔」兩情境(對應 user-account spec)
 
 ## 3. Shared 技術件(TDD,vitest-pool-workers)
 
