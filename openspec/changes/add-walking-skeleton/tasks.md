@@ -24,6 +24,10 @@
 
 ## 5. 部署與驗收
 
-- [ ] 5.1 對 Neon 跑 migration;`wrangler secret` 設定 `DATABASE_URL`、`FIREBASE_PROJECT_ID`;`wrangler dev` 本地驗證 `/health`
-- [ ] 5.2 `wrangler deploy` 上線;線上驗收:`/health` 200、無 token `/api/me` 401、有效 Firebase token `/api/me` 回 user JSON 且 DB 有該筆資料
+> **範圍調整(使用者批准)**:實際 migration、部署、線上驗收全部遞延至後續 change `add-cicd`,
+> 由 GitHub Actions pipeline 以 GitHub secrets 執行,避免密鑰在本地與 CI 各設一次。
+> 本 change 以自動測試(15 tests 全綠)+ 本地結構驗證收尾。
+
+- [~] 5.1 ~~對 Neon 跑 migration;`wrangler dev` 本地驗證 `/health`~~ → 遞延 `add-cicd`
+- [~] 5.2 ~~`wrangler deploy` 上線 + 線上驗收~~ → 遞延 `add-cicd`(端到端「有效 token 拿 user JSON」待 Flutter 端能簽出真 token 時補)
 - [x] 5.3 README:專案簡介、本地開發、migration、secrets 設定、部署步驟

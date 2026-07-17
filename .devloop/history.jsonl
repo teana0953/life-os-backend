@@ -1,2 +1,4 @@
 {"ts": "2026-07-17T05:22:00.513305+00:00", "event": "start", "from": null, "to": "proposal_review", "iteration": 0}
 {"ts": "2026-07-17T05:24:53.978928+00:00", "event": "propose_clean", "from": "proposal_review", "to": "apply", "iteration": 0}
+{"ts": "2026-07-17T05:51:37.847372+00:00", "event": "apply_done", "from": "apply", "to": "gate", "iteration": 0}
+{"ts": "2026-07-17T05:51:39.784660+00:00", "event": "gate_pass", "from": "gate", "to": "qa", "iteration": 1}
