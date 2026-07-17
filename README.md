@@ -94,3 +94,50 @@ After deploying, verify:
 - `GET /api/me` with no token returns `401`.
 - `GET /api/me` with a valid Firebase ID token returns the user JSON, and a
   corresponding row exists in the `users` table in Neon.
+
+## CI/CD
+
+GitHub Actions runs two workflows:
+
+- **CI** (`.github/workflows/ci.yml`) — on every pull request and every push
+  to a branch other than `main`: `npm ci`, `npm run typecheck`, `npm test`.
+  A failing type-check or test suite fails the run.
+- **Deploy** (`.github/workflows/deploy.yml`) — on every push to `main`:
+  runs database migrations (`npm run db:migrate`), then deploys the Worker
+  to Cloudflare with `cloudflare/wrangler-action` (which also uploads the
+  Worker's runtime secrets from GitHub), then runs a post-deploy smoke test
+  (`GET /health` expects `200`, `GET /api/me` with no token expects `401`).
+  If migrations fail, the deploy step never runs. Workflow YAML is checked
+  with `actionlint` (`npm run lint:actions`) as part of the quality gate.
+
+### Required GitHub configuration
+
+Set these under the repo's **Settings → Secrets and variables → Actions**:
+
+**Secrets** (tab: Secrets):
+
+| Secret | Used for |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Deploy authentication (Cloudflare dashboard → API Tokens → "Edit Cloudflare Workers" template) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identification |
+| `DATABASE_URL` | Running migrations and as a Worker runtime secret (Neon connection string) |
+| `FIREBASE_PROJECT_ID` | Worker runtime secret (token verification) |
+
+**Variables** (tab: Variables):
+
+| Variable | Used for |
+|---|---|
+| `PRODUCTION_URL` | Base URL the post-deploy smoke test curls (e.g. `https://life-os-backend.<subdomain>.workers.dev`) |
+
+`DATABASE_URL` and `FIREBASE_PROJECT_ID` are pushed to the Worker on every
+deploy from these GitHub secrets, so there's no separate manual
+`wrangler secret put` step for deployed environments — GitHub is the single
+source of truth for runtime config.
+
+### Deploy failures
+
+Cloudflare Workers has no automatic rollback. If the smoke test fails after
+a deploy, the previous code is **not** restored automatically — the failed
+workflow run is a signal to investigate and either push a fix or manually
+redeploy a known-good commit (`git checkout <good-sha> -- . && npx wrangler
+deploy`, or re-run the `Deploy` workflow from that commit).

@@ -17,8 +17,8 @@
 
 ## 4. 文件
 
-- [ ] 4.1 README 補 CI/CD 章節:pipeline 行為、所需 4 個 GitHub secrets 與設定位置、部署失敗無自動 rollback 的處理說明
+- [x] 4.1 README 補 CI/CD 章節:pipeline 行為、所需 4 個 GitHub secrets 與設定位置、部署失敗無自動 rollback 的處理說明
 
 ## 5. 靜態驗證
 
-- [ ] 5.1 對兩個 workflow 跑 `actionlint` 通過;確認 `npm test`、`npm run typecheck` 維持全綠(gate 全綠)
+- [x] 5.1 對兩個 workflow 跑 `actionlint` 通過;確認 `npm test`、`npm run typecheck` 維持全綠(gate 全綠)
