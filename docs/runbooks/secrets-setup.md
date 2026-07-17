@@ -14,13 +14,13 @@ the first deploy run fails at the migration or deploy step.
 | Name | Kind | Sensitive? | Used by |
 |---|---|---|---|
 | `CLOUDFLARE_API_TOKEN` | secret | **yes** | deploy step (auth to Cloudflare) |
-| `CLOUDFLARE_ACCOUNT_ID` | secret | no¹ | deploy step (target account) |
 | `DATABASE_URL` | secret | **yes** | migration + Worker runtime |
 | `FIREBASE_PROJECT_ID` | secret | no¹ | Worker runtime (token `aud`/`iss` check) |
 | `PRODUCTION_URL` | variable | no | smoke test target |
 
-¹ Account ID and Firebase project ID are not secret, but the workflow reads them
-from the `secrets.*` context, so they must be stored as secrets to be referenced.
+¹ Firebase project ID is not secret, but the workflow reads it from the
+`secrets.*` context, so it is stored as a secret to be referenced. The Cloudflare
+account is inferred from `CLOUDFLARE_API_TOKEN`, so no account-id secret is needed.
 
 ## Where to get each value
 
@@ -30,10 +30,6 @@ from the `secrets.*` context, so they must be stored as secrets to be referenced
    which covers both `wrangler deploy` and `wrangler secret put`).
 3. Under **Account Resources**, scope it to the account that will host the Worker.
 4. Create, copy the token **once** (it is not shown again).
-
-### `CLOUDFLARE_ACCOUNT_ID`
-- `npx wrangler whoami` (shows the account ID), **or**
-- Cloudflare dashboard → **Workers & Pages** → the Account ID is in the right sidebar.
 
 ### `DATABASE_URL`
 - [Neon console](https://console.neon.tech) → your project → **Connection Details**
@@ -64,7 +60,6 @@ hidden input:
 
 ```bash
 gh secret set CLOUDFLARE_API_TOKEN
-gh secret set CLOUDFLARE_ACCOUNT_ID
 gh secret set DATABASE_URL
 gh secret set FIREBASE_PROJECT_ID
 gh variable set PRODUCTION_URL   # e.g. https://life-os-backend.<subdomain>.workers.dev
@@ -103,7 +98,7 @@ Watch it: `gh run watch` (or Actions tab).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Deploy step: `Authentication error` / 10000 | bad/expired `CLOUDFLARE_API_TOKEN` or wrong `CLOUDFLARE_ACCOUNT_ID` | re-create token with "Edit Cloudflare Workers"; recheck account id |
+| Deploy step: `Authentication error` / 10000 | `CLOUDFLARE_API_TOKEN` lacks Workers Scripts:Edit, is stale, or is scoped to a different account | ensure the secret holds a token with the "Edit Cloudflare Workers" template scoped to the right account (the account is inferred from the token) |
 | Migration step fails to connect | `DATABASE_URL` wrong or missing `?sslmode=require` | recopy from Neon, ensure TLS param |
 | Smoke test: `/health` returns 503 | Worker runtime `DATABASE_URL` not uploaded, or DB unreachable | confirm the deploy step's `secrets:`+`env:` mapping; check Neon is awake |
 | Smoke test: "PRODUCTION_URL not set" | variable missing | set `PRODUCTION_URL`, re-run failed job |

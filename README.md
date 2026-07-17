@@ -121,8 +121,7 @@ Set these under the repo's **Settings → Secrets and variables → Actions**:
 
 | Secret | Used for |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Deploy authentication (Cloudflare dashboard → API Tokens → "Edit Cloudflare Workers" template) |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account identification |
+| `CLOUDFLARE_API_TOKEN` | Deploy authentication (Cloudflare dashboard → API Tokens → "Edit Cloudflare Workers" template). The Worker's account is inferred from this token, so no separate account-id secret is needed. |
 | `DATABASE_URL` | Running migrations and as a Worker runtime secret (Neon connection string) |
 | `FIREBASE_PROJECT_ID` | Worker runtime secret (token verification) |
 
