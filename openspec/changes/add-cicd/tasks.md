@@ -2,7 +2,7 @@
 
 ## 1. Gate 工具
 
-- [ ] 1.1 加入 `actionlint` 到 gate:package.json 新增 `lint:actions` script(用 npx 或下載 binary 執行 actionlint 掃 `.github/workflows/`);確認本地可跑
+- [x] 1.1 加入 `actionlint` 到 gate:package.json 新增 `lint:actions` script(用 npx 或下載 binary 執行 actionlint 掃 `.github/workflows/`);確認本地可跑
 
 ## 2. CI workflow
 
