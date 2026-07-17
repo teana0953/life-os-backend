@@ -26,4 +26,4 @@
 
 - [ ] 5.1 對 Neon 跑 migration;`wrangler secret` 設定 `DATABASE_URL`、`FIREBASE_PROJECT_ID`;`wrangler dev` 本地驗證 `/health`
 - [ ] 5.2 `wrangler deploy` 上線;線上驗收:`/health` 200、無 token `/api/me` 401、有效 Firebase token `/api/me` 回 user JSON 且 DB 有該筆資料
-- [ ] 5.3 README:專案簡介、本地開發、migration、secrets 設定、部署步驟
+- [x] 5.3 README:專案簡介、本地開發、migration、secrets 設定、部署步驟
