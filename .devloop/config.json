@@ -3,6 +3,7 @@
   "auto_approve": false,
   "finish": "ask",
   "gate_cmds": [
+    "npm run lint:actions",
     "npm test",
     "npm run typecheck"
   ]

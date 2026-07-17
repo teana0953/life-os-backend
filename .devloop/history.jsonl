@@ -2,3 +2,7 @@
 {"ts": "2026-07-17T06:46:53.672060+00:00", "event": "teardown_done", "from": "teardown", "to": "done", "iteration": 1}
 {"ts": "2026-07-17T06:51:38.444244+00:00", "event": "start", "from": null, "to": "proposal_review", "iteration": 0}
 {"ts": "2026-07-17T06:54:37.199496+00:00", "event": "propose_clean", "from": "proposal_review", "to": "apply", "iteration": 0}
+{"ts": "2026-07-17T07:21:11.286350+00:00", "event": "apply_done", "from": "apply", "to": "gate", "iteration": 0}
+{"ts": "2026-07-17T07:21:13.426174+00:00", "event": "gate_pass", "from": "gate", "to": "qa", "iteration": 1}
+{"ts": "2026-07-17T07:23:43.584369+00:00", "event": "qa_pass", "from": "qa", "to": "review", "iteration": 1}
+{"ts": "2026-07-17T07:26:40.464015+00:00", "event": "review_blocking_code", "from": "review", "to": "fix", "iteration": 1}

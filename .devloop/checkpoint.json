@@ -1,18 +1,31 @@
 {
-  "phase": "apply",
+  "phase": "fix",
   "change_id": "add-cicd",
   "branch": "change/add-cicd",
-  "iteration": 0,
+  "iteration": 1,
   "last_artifact": "",
   "non_blocking": [
     "煙霧測試如何取得已部署 URL 未在 design.md 或 tasks.md 3.4 指定,只寫「取得部署 URL」。可行路徑存在(wrangler-action 的 `deployment-url` output,或固定 `https://life-os-backend.<account-subdomain>.workers.dev`),不阻塞;但需在實作前定案。注意:`deployment-url` output 在部分 wrangler 版本回傳的是 version-preview URL 而非穩定 production workers.dev URL。建議實作時實測驗證,或改用固定 workers.dev 網址(account subdomain 由使用者填入 README/secret),避免 smoke test 打到錯誤或不穩定的 URL。",
     "wrangler-action 的 `secrets` 輸入只吃「變數名稱清單」,對應的值必須同時在該 step 的 `env:` 區塊提供(例如 `env: { DATABASE_URL: ${{ secrets.DATABASE_URL }}, FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }} }`)。design.md/tasks.md 3.3 只說「以 action 的 secrets 輸入上傳」,未點出這個 env 映射。若實作時漏掉,secret 會以空值上傳 → Worker runtime 無 DATABASE_URL → /health 回 503 → smoke test 會擋下(不致密鑰外洩,也不會靜默通過)。機制本身正確,故非阻塞,但 task 3.3 應明列 env 映射以免每次 CD 都紅。",
-    "CI 觸發同時掛 `pull_request` 與非 main 分支 `push`,對同一 repo 的功能分支會造成重複 run(push 一次、開 PR 又一次)。單人開發影響輕微,可加 `concurrency` group 或只保留其一;非阻塞的最佳化。"
+    "CI 觸發同時掛 `pull_request` 與非 main 分支 `push`,對同一 repo 的功能分支會造成重複 run(push 一次、開 PR 又一次)。單人開發影響輕微,可加 `concurrency` group 或只保留其一;非阻塞的最佳化。",
+    "GitHub secrets(CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID/DATABASE_URL/FIREBASE_PROJECT_ID)與 repo variable PRODUCTION_URL 尚未在 GitHub 設定,屬預期的人工前置作業(design.md 已明確標註「使用者於 GitHub UI 設定,永不經過對話」),非結構缺陷。真實 pipeline 執行(CI run 綠、CD migration/deploy/smoke test 綠)需留到使用者設好 secrets 後於 merge 時觀察。",
+    ".github/workflows/deploy.yml — deploy job 沒有 concurrency 設定。連續兩次 push 到 main 會並行跑兩個 deploy,兩個 `drizzle-kit migrate` 可能競態、部署順序不定。建議加 `concurrency:\\n  group: deploy-main\\n  cancel-in-progress: false`(部署中途不可取消,故 false),序列化 main 部署。",
+    "多處第三方 action 釘在可變 major tag:actions/checkout@v4、actions/setup-node@v4、cloudflare/wrangler-action@v3(deploy.yml/ci.yml)。可變 tag 會被上游重新指向,存在供應鏈風險。安全強化可釘完整 commit SHA(搭配 Dependabot 更新)。屬常見實務,標 non_blocking。",
+    "scripts/lint-actions.sh:19-21 — 透過 `curl ... raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest` 安裝:下載腳本取自可變的 `main` 分支並直接 pipe 到 bash,且安裝 `latest`(未釘版本)。供應鏈與可重現性風險。建議把安裝腳本 ref 釘到某個 release tag,並把 `latest` 改為固定 actionlint 版本。此為本機/gate 工具腳本,故 non_blocking。",
+    ".github/workflows/ci.yml:3-7 — 同時觸發 `pull_request` 與 `push`(branches-ignore main)。同 repo 分支開 PR 時 push 與 pull_request 兩事件都會觸發,且兩者 github.ref 不同故 concurrency group 不同 → CI 會重複跑兩次,浪費 runner。常見做法是只留 pull_request(+ 可選 push 到 main,但此處 main 已由 deploy 處理)。",
+    "spec 要求「Malformed workflow caught before merge → actionlint gate 失敗」,但 ci.yml 並未執行 `npm run lint:actions`;actionlint 只在本 change 的 dev-loop gate 跑一次。日後 PR 若改動 workflow YAML,CI 不會自動用 actionlint 攔截。若要讓 spec 情境對每個 PR 持續生效,建議在 ci.yml 增一步 `npm run lint:actions`(或視為僅本 change 的 gate,則屬設計取捨)。",
+    ".github/workflows/deploy.yml Smoke test — 兩個 curl 皆無 `--retry`/`--max-time`。剛部署後 Worker 冷啟或 workers.dev 傳播可能有短暫延遲,煙霧測試偶發性 red 會誤判部署失敗。建議加 `--retry 3 --retry-connrefused --max-time 10` 降低 flakiness。狀態碼判斷(恰 200 / 恰 401、-f 對 health、-s 對 /api/me)本身嚴謹,無誤。"
   ],
-  "updated_at": "2026-07-17T06:54:37.199073+00:00",
+  "updated_at": "2026-07-17T07:26:40.463209+00:00",
   "resume_exec": "claude -p '/dev-loop resume'",
   "units": [],
-  "review_legs": [],
+  "review_legs": [
+    {
+      "kind": "code",
+      "status": "collected",
+      "report": ".devloop/review-code.json"
+    }
+  ],
   "propose_attempts": 0,
   "gate_failures": 0,
   "finish_mode": null
