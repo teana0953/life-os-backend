@@ -112,6 +112,9 @@ GitHub Actions runs two workflows:
 
 ### Required GitHub configuration
 
+> Step-by-step, including where to get each value and first-deploy handling:
+> [`docs/runbooks/secrets-setup.md`](docs/runbooks/secrets-setup.md).
+
 Set these under the repo's **Settings → Secrets and variables → Actions**:
 
 **Secrets** (tab: Secrets):
