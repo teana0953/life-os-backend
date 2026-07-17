@@ -1,5 +1,5 @@
 {
-  "phase": "merge",
+  "phase": "done",
   "change_id": "add-walking-skeleton",
   "branch": "change/add-walking-skeleton",
   "iteration": 1,
@@ -16,7 +16,7 @@
     "src/adapters/http/middleware/auth.ts:34 — catch 對所有例外一律回 401。當 Google securetoken JWKS 端點暫時無法連線(網路/上游故障)時,jwtVerify 會 throw,結果所有已登入請求被誤判為 401 unauthorized,而非 5xx。骨架階段可接受,但語意上把暫時性基礎設施故障當成憑證錯誤;未來可考慮區分驗簽失敗(401)與 JWKS 取得失敗(503)。",
     "src/contexts/user/adapters/drizzle-user-repository.ts:27 / test — get-or-create 最微妙的 race 處理(insert onConflictDoNothing().returning() 為空後 re-select)只在 in-memory repository 測到,真正的 Drizzle adapter 這段 SQL 分支沒有測試覆蓋。邏輯本身正確;此為測試覆蓋缺口(需真實 Postgres 才能測 race/onConflict),walking skeleton 階段可接受,建議後續補整合測試。"
   ],
-  "updated_at": "2026-07-17T06:45:41.738419+00:00",
+  "updated_at": "2026-07-17T06:46:53.671627+00:00",
   "resume_exec": "claude -p '/dev-loop resume'",
   "units": [],
   "review_legs": [
@@ -28,5 +28,5 @@
   ],
   "propose_attempts": 0,
   "gate_failures": 0,
-  "finish_mode": null
+  "finish_mode": "merge"
 }
