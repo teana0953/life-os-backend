@@ -1,0 +1,9 @@
+{
+  "findings": [
+    {
+      "severity": "non_blocking",
+      "level": "behavior",
+      "note": "GitHub secrets(CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID/DATABASE_URL/FIREBASE_PROJECT_ID)與 repo variable PRODUCTION_URL 尚未在 GitHub 設定,屬預期的人工前置作業(design.md 已明確標註「使用者於 GitHub UI 設定,永不經過對話」),非結構缺陷。真實 pipeline 執行(CI run 綠、CD migration/deploy/smoke test 綠)需留到使用者設好 secrets 後於 merge 時觀察。"
+    }
+  ]
+}

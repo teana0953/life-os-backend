@@ -1,0 +1,12 @@
+{"ts": "2026-07-17T06:46:53.611484+00:00", "event": "finish_done", "from": "merge", "to": "teardown", "iteration": 1}
+{"ts": "2026-07-17T06:46:53.672060+00:00", "event": "teardown_done", "from": "teardown", "to": "done", "iteration": 1}
+{"ts": "2026-07-17T06:51:38.444244+00:00", "event": "start", "from": null, "to": "proposal_review", "iteration": 0}
+{"ts": "2026-07-17T06:54:37.199496+00:00", "event": "propose_clean", "from": "proposal_review", "to": "apply", "iteration": 0}
+{"ts": "2026-07-17T07:21:11.286350+00:00", "event": "apply_done", "from": "apply", "to": "gate", "iteration": 0}
+{"ts": "2026-07-17T07:21:13.426174+00:00", "event": "gate_pass", "from": "gate", "to": "qa", "iteration": 1}
+{"ts": "2026-07-17T07:23:43.584369+00:00", "event": "qa_pass", "from": "qa", "to": "review", "iteration": 1}
+{"ts": "2026-07-17T07:26:40.464015+00:00", "event": "review_blocking_code", "from": "review", "to": "fix", "iteration": 1}
+{"ts": "2026-07-17T07:27:23.932149+00:00", "event": "fix_done", "from": "fix", "to": "gate", "iteration": 1}
+{"ts": "2026-07-17T07:27:29.961130+00:00", "event": "gate_pass", "from": "gate", "to": "qa", "iteration": 2}
+{"ts": "2026-07-17T07:27:42.511856+00:00", "event": "qa_pass", "from": "qa", "to": "review", "iteration": 2}
+{"ts": "2026-07-17T07:29:08.660874+00:00", "event": "review_no_blocking", "from": "review", "to": "merge", "iteration": 2}
