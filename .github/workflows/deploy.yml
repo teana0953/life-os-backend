@@ -1,0 +1,66 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          secrets: |
+            DATABASE_URL
+            FIREBASE_PROJECT_ID
+        env:
+          # wrangler-action reads the values for the names listed under
+          # `secrets:` above from this step's env and uploads them to the
+          # Worker via `wrangler secret put` — GitHub secrets stay the
+          # single source of truth for runtime config.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+
+      - name: Smoke test
+        env:
+          # Repo variable: Settings -> Secrets and variables -> Actions -> Variables.
+          # No dynamic fallback is computed here (the workers.dev subdomain
+          # isn't one of the configured secrets/variables) — if PRODUCTION_URL
+          # isn't set, the smoke test fails with an explicit message instead
+          # of silently skipping.
+          URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "PRODUCTION_URL repo variable is not set (Settings -> Secrets and variables -> Actions -> Variables); cannot run smoke test." >&2
+            exit 1
+          fi
+
+          health_status=$(curl -fsS -o /dev/null -w '%{http_code}' "$URL/health") || { echo "GET $URL/health failed" >&2; exit 1; }
+          if [ "$health_status" != "200" ]; then
+            echo "Expected GET /health to return 200, got $health_status" >&2
+            exit 1
+          fi
+
+          me_status=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/me")
+          if [ "$me_status" != "401" ]; then
+            echo "Expected GET /api/me (no token) to return 401, got $me_status" >&2
+            exit 1
+          fi
