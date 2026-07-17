@@ -7,6 +7,8 @@ import { createDbClient, type Db } from "./shared/db/client";
 export interface Env {
   DATABASE_URL: string;
   FIREBASE_PROJECT_ID: string;
+  /** Optional deployed web app origin (Cloudflare Pages) to allow via CORS. */
+  ALLOWED_WEB_ORIGIN?: string;
 }
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
@@ -29,6 +31,7 @@ export default {
       projectId: env.FIREBASE_PROJECT_ID,
       jwks,
       userRepository,
+      allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
         await getDb().execute(sql`select 1`);
       },
