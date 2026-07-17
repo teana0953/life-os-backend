@@ -75,6 +75,41 @@ function buildApp(overrides: { ping?: () => Promise<void>; userRepository?: User
   });
 }
 
+describe("CORS", () => {
+  it("reflects an allowed localhost origin", async () => {
+    const app = buildApp();
+
+    const res = await app.request("/health", { headers: { Origin: "http://localhost:5000" } });
+
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5000");
+  });
+
+  it("does not allow a foreign origin", async () => {
+    const app = buildApp();
+
+    const res = await app.request("/health", { headers: { Origin: "https://evil.example.com" } });
+
+    expect(res.headers.get("access-control-allow-origin")).not.toBe("https://evil.example.com");
+  });
+
+  it("answers preflight for /api/me allowing the Authorization header", async () => {
+    const app = buildApp();
+
+    const res = await app.request("/api/me", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5000",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+      },
+    });
+
+    expect(res.status).toBeLessThan(300);
+    expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5000");
+    expect((res.headers.get("access-control-allow-headers") ?? "").toLowerCase()).toContain("authorization");
+  });
+});
+
 describe("GET /health", () => {
   it("returns 200 {ok:true} when the database ping succeeds", async () => {
     const app = buildApp({ ping: async () => {} });
