@@ -18,9 +18,9 @@
 
 ## 4. Adapters
 
-- [ ] 4.1 `DrizzleUserRepository` 實作 `UserRepository` port(get-or-create by firebase_uid,回頭客不刷新 email/display_name)
-- [ ] 4.2 HTTP driving adapter:Hono app、auth middleware、`GET /health`(含 DB ping,DB 掛回 503)、`GET /api/me`、統一 `onError`(500 不洩內部訊息);測試注入 fake repository 驗 200/401/503 與 JSON 形狀(對應 api-platform + user-account spec)
-- [ ] 4.3 `index.ts` composition root:讀 env bindings(`DATABASE_URL`、`FIREBASE_PROJECT_ID`)手動 DI 組裝
+- [x] 4.1 `DrizzleUserRepository` 實作 `UserRepository` port(get-or-create by firebase_uid,回頭客不刷新 email/display_name)
+- [x] 4.2 HTTP driving adapter:Hono app、auth middleware、`GET /health`(含 DB ping,DB 掛回 503)、`GET /api/me`、統一 `onError`(500 不洩內部訊息);測試注入 fake repository 驗 200/401/503 與 JSON 形狀(對應 api-platform + user-account spec)
+- [x] 4.3 `index.ts` composition root:讀 env bindings(`DATABASE_URL`、`FIREBASE_PROJECT_ID`)手動 DI 組裝
 
 ## 5. 部署與驗收
 
