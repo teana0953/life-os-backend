@@ -13,12 +13,12 @@
 
 ## 3. Shared 技術件(TDD,vitest-pool-workers)
 
-- [ ] 3.1 `firebase-verifier`:jose × JWKS 驗證,自產 RSA key + mock JWKS fetch,覆蓋有效 token、過期、錯 aud、無/壞 header 四路(對應 auth spec)
+- [ ] 3.1 `firebase-verifier`:jose × JWKS 驗證;JWKS 來源設計為可注入(prod 用 createRemoteJWKSet、測試用 createLocalJWKSet,免攔 fetch),自產 RSA key 覆蓋:有效 token、過期、錯 aud、錯 iss、簽章無效、無/壞 header(對應 auth spec)
 - [ ] 3.2 Drizzle schema(`users` 表:id、firebase_uid unique、email、display_name、created_at)+ Neon client 工廠;產出第一份 drizzle-kit migration
 
 ## 4. Adapters
 
-- [ ] 4.1 `DrizzleUserRepository` 實作 `UserRepository` port(upsert by firebase_uid)
+- [ ] 4.1 `DrizzleUserRepository` 實作 `UserRepository` port(get-or-create by firebase_uid,回頭客不刷新 email/display_name)
 - [ ] 4.2 HTTP driving adapter:Hono app、auth middleware、`GET /health`(含 DB ping,DB 掛回 503)、`GET /api/me`、統一 `onError`(500 不洩內部訊息);測試注入 fake repository 驗 200/401/503 與 JSON 形狀(對應 api-platform + user-account spec)
 - [ ] 4.3 `index.ts` composition root:讀 env bindings(`DATABASE_URL`、`FIREBASE_PROJECT_ID`)手動 DI 組裝
 
