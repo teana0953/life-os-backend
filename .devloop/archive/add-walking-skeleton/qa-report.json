@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "severity": "non_blocking",
+      "level": "behavior",
+      "note": "auth spec 的「過期 token 401」「錯 aud 401」「錯 iss 401」三個 scenario,只在 test/shared/auth/firebase-verifier.test.ts 的單元測試層驗證(斷言 verifyFirebaseToken 會 reject),沒有在 test/adapters/http/app.test.ts 的 HTTP 層另外對這三種情況各斷言一次實際回傳 401 + { error: 'unauthorized' }。app.test.ts 目前只在 HTTP 層測了『無 header』『壞 header』『簽章無效』三種 401 情境。因為 src/adapters/http/middleware/auth.ts 對 verifyFirebaseToken 拋出的任何錯誤都是同一個 catch-all 轉 401,所以行為本身沒有問題(不算與 spec 牴觸,scenario 也不算完全沒被驗證,只是分層驗證、未在 HTTP 層重複斷言),建議之後補齊以避免未來重構 middleware 時漏掉。"
+    },
+    {
+      "severity": "non_blocking",
+      "level": "behavior",
+      "note": "DrizzleUserRepository(src/contexts/user/adapters/drizzle-user-repository.ts)的 get-or-create / 不刷新 email·display_name / onConflictDoNothing 競態處理邏輯,沒有對應的整合測試(需要真的 Neon 連線,而本次 QA 範圍明確排除連真 DB)。程式碼閱讀確認邏輯正確(existing 命中直接回傳、不做 update),且應用層同一語意已由 get-or-create-user.test.ts 與 app.test.ts(注入 in-memory repository)驗證,因此不視為 blocking,僅記錄此 adapter 本身缺乏自動化覆蓋。"
+    }
+  ]
+}

@@ -2,3 +2,5 @@
 {"ts": "2026-07-17T05:24:53.978928+00:00", "event": "propose_clean", "from": "proposal_review", "to": "apply", "iteration": 0}
 {"ts": "2026-07-17T05:51:37.847372+00:00", "event": "apply_done", "from": "apply", "to": "gate", "iteration": 0}
 {"ts": "2026-07-17T05:51:39.784660+00:00", "event": "gate_pass", "from": "gate", "to": "qa", "iteration": 1}
+{"ts": "2026-07-17T06:42:42.377307+00:00", "event": "qa_pass", "from": "qa", "to": "review", "iteration": 1}
+{"ts": "2026-07-17T06:45:41.738733+00:00", "event": "review_no_blocking", "from": "review", "to": "merge", "iteration": 1}
