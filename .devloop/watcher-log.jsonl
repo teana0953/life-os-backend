@@ -1,0 +1,2 @@
+{"ts": "2026-07-17T06:51:39.990389+00:00", "exit_code": 0, "output_tail": "Unknown command: /dev-loop\n", "action": "stop", "heartbeat": 1800}
+{"ts": "2026-07-17T06:54:38.180345+00:00", "exit_code": 0, "output_tail": "Unknown command: /dev-loop\n", "action": "stop", "heartbeat": 1800}

@@ -1,2 +1,4 @@
 {"ts": "2026-07-17T06:46:53.611484+00:00", "event": "finish_done", "from": "merge", "to": "teardown", "iteration": 1}
 {"ts": "2026-07-17T06:46:53.672060+00:00", "event": "teardown_done", "from": "teardown", "to": "done", "iteration": 1}
+{"ts": "2026-07-17T06:51:38.444244+00:00", "event": "start", "from": null, "to": "proposal_review", "iteration": 0}
+{"ts": "2026-07-17T06:54:37.199496+00:00", "event": "propose_clean", "from": "proposal_review", "to": "apply", "iteration": 0}
