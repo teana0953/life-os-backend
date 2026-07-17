@@ -6,7 +6,7 @@
 
 ## 2. CI workflow
 
-- [ ] 2.1 `.github/workflows/ci.yml`:觸發 `pull_request` + 非 main 分支 `push`;加 `concurrency`(group 依 ref、`cancel-in-progress: true`)避免同分支重複 run;job = checkout → setup-node(v22, npm cache)→ `npm ci` → `npm run typecheck` → `npm test`(對應 ci-cd「Continuous integration」需求)
+- [x] 2.1 `.github/workflows/ci.yml`:觸發 `pull_request` + 非 main 分支 `push`;加 `concurrency`(group 依 ref、`cancel-in-progress: true`)避免同分支重複 run;job = checkout → setup-node(v22, npm cache)→ `npm ci` → `npm run typecheck` → `npm test`(對應 ci-cd「Continuous integration」需求)
 
 ## 3. CD workflow
 
