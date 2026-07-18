@@ -6,12 +6,16 @@ import { logManualFoodEntry } from "../../../contexts/health/application/log-man
 import type { DietLogRepository } from "../../../contexts/health/domain/diet-log-repository";
 import type { FoodDictionaryRepository } from "../../../contexts/health/domain/food-dictionary-repository";
 import type { FoodEntry } from "../../../contexts/health/domain/food-entry";
+import { NullBaseGramsError } from "../../../contexts/health/domain/quantity";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
 import {
+  BadRequestError,
   optionalFiniteNumber,
   optionalFiniteNumberOrUndefined,
+  optionalPositiveFiniteNumber,
+  optionalTimestamp,
   requireDay,
   requireString,
 } from "../validation";
@@ -41,6 +45,7 @@ function entryToJson(entry: FoodEntry) {
     meat: entry.meat,
     fruit: entry.fruit,
     veg: entry.veg,
+    eaten_at: entry.eatenAt.toISOString(),
     logged_at: entry.loggedAt.toISOString(),
   };
 }
@@ -57,15 +62,30 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
     const meal = requireString(body.meal, "meal");
     const name = typeof body.name === "string" ? body.name : null;
     const photoRef = typeof body.photo_ref === "string" ? body.photo_ref : null;
+    const eatenAt = optionalTimestamp(body.eaten_at, "eaten_at");
 
     if (body.food_item_id !== undefined) {
-      const entry = await logFoodEntryFromDictionary(options.dietLogRepository, options.foodDictionaryRepository, {
-        userId,
-        day,
-        meal,
-        foodItemId: requireString(body.food_item_id, "food_item_id"),
-      });
-      return c.json(entryToJson(entry), 201);
+      const quantity = optionalPositiveFiniteNumber(body.quantity, "quantity");
+      const grams = optionalPositiveFiniteNumber(body.grams, "grams");
+      if (quantity !== undefined && grams !== undefined) {
+        throw new BadRequestError("quantity and grams are mutually exclusive");
+      }
+
+      try {
+        const entry = await logFoodEntryFromDictionary(options.dietLogRepository, options.foodDictionaryRepository, {
+          userId,
+          day,
+          meal,
+          foodItemId: requireString(body.food_item_id, "food_item_id"),
+          quantity,
+          grams,
+          eatenAt,
+        });
+        return c.json(entryToJson(entry), 201);
+      } catch (err) {
+        if (err instanceof NullBaseGramsError) throw new BadRequestError(err.message);
+        throw err;
+      }
     }
 
     if (body.portions && typeof body.portions === "object") {
@@ -76,6 +96,7 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
         meal,
         name,
         photoRef,
+        eatenAt,
         portions: {
           staple: optionalFiniteNumber(portions.staple, "portions.staple", 0),
           meat: optionalFiniteNumber(portions.meat, "portions.meat", 0),
@@ -93,6 +114,7 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
       meal,
       name,
       photoRef,
+      eatenAt,
       nutrients: {
         carbG: optionalFiniteNumber(nutrients.carb_g, "nutrients.carb_g", 0),
         proteinG: optionalFiniteNumber(nutrients.protein_g, "nutrients.protein_g", 0),

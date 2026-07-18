@@ -24,11 +24,11 @@ export interface DayDietLog {
 const ZERO_TOTALS: DayNutrientTotals = { carbG: 0, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 0 };
 
 /**
- * Use case: a day's diet log, grouped by meal in chronological order, with
+ * Use case: a day's diet log, grouped by meal in eaten-at order (D3), with
  * nutrient/calorie totals computed from atomic fields only (never portions).
  */
 export async function getDayDietLog(repository: DietLogRepository, userId: string, day: string): Promise<DayDietLog> {
-  const entries = [...(await repository.listByDay(userId, day))].sort((a, b) => a.loggedAt.getTime() - b.loggedAt.getTime());
+  const entries = [...(await repository.listByDay(userId, day))].sort((a, b) => a.eatenAt.getTime() - b.eatenAt.getTime());
 
   const meals: MealGroup[] = [];
   const indexByMeal = new Map<string, number>();

@@ -7,6 +7,7 @@ import type { CreateFoodEntryInput, DietLogRepository } from "../../../../src/co
 import type { FoodDictionaryRepository } from "../../../../src/contexts/health/domain/food-dictionary-repository";
 import type { FoodEntry } from "../../../../src/contexts/health/domain/food-entry";
 import type { FoodItem } from "../../../../src/contexts/health/domain/food-item";
+import { NullBaseGramsError } from "../../../../src/contexts/health/domain/quantity";
 
 class InMemoryDietLogRepository implements DietLogRepository {
   entries: FoodEntry[] = [];
@@ -54,6 +55,43 @@ const banana: FoodItem = {
   meat: 0,
   fruit: 2,
   veg: 0,
+  baseGrams: null,
+  createdAt: new Date(),
+};
+
+const riceBowl: FoodItem = {
+  id: "item-rice-bowl",
+  ownerUserId: null,
+  name: "飯/1碗",
+  carbG: 60,
+  proteinG: 0,
+  fatG: 0,
+  sugarG: 0,
+  fiberG: 0,
+  kcal: 240,
+  staple: 4,
+  meat: 0,
+  fruit: 0,
+  veg: 0,
+  baseGrams: null,
+  createdAt: new Date(),
+};
+
+const riceGram: FoodItem = {
+  id: "item-rice-50g",
+  ownerUserId: null,
+  name: "飯/50g",
+  carbG: 15,
+  proteinG: 0,
+  fatG: 0,
+  sugarG: 0,
+  fiberG: 0,
+  kcal: 60,
+  staple: 1,
+  meat: 0,
+  fruit: 0,
+  veg: 0,
+  baseGrams: 50,
   createdAt: new Date(),
 };
 
@@ -105,6 +143,36 @@ describe("logManualFoodEntry", () => {
 
     expect(entry.kcal).toBe(10 * 4 + 5 * 4 + 2 * 9);
   });
+
+  it("defaults eaten_at to the creation time when not supplied", async () => {
+    const before = Date.now();
+
+    const entry = await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+    });
+
+    const after = Date.now();
+    expect(entry.eatenAt.getTime()).toBeGreaterThanOrEqual(before);
+    expect(entry.eatenAt.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it("stores a user-supplied eaten_at while logged_at remains system-assigned", async () => {
+    const eatenAt = new Date("2026-07-01T08:00:00.000Z");
+
+    const entry = await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+      eatenAt,
+    });
+
+    expect(entry.eatenAt).toEqual(eatenAt);
+    expect(entry.loggedAt.getTime()).not.toBe(eatenAt.getTime());
+  });
 });
 
 describe("logFoodEntryFromDictionary", () => {
@@ -137,6 +205,63 @@ describe("logFoodEntryFromDictionary", () => {
       }),
     ).rejects.toThrow();
   });
+
+  it("defaults to quantity 1, reproducing the item's values unchanged", async () => {
+    const foodDictionary = new StubFoodDictionaryRepository(riceBowl) as unknown as FoodDictionaryRepository;
+
+    const entry = await logFoodEntryFromDictionary(dietLog, foodDictionary, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      foodItemId: riceBowl.id,
+    });
+
+    expect(entry.staple).toBe(4);
+    expect(entry.carbG).toBe(60);
+  });
+
+  it("scales portions and nutrients by a given quantity (1.5 -> 6 staple, 90 g carbohydrate)", async () => {
+    const foodDictionary = new StubFoodDictionaryRepository(riceBowl) as unknown as FoodDictionaryRepository;
+
+    const entry = await logFoodEntryFromDictionary(dietLog, foodDictionary, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      foodItemId: riceBowl.id,
+      quantity: 1.5,
+    });
+
+    expect(entry.staple).toBe(6);
+    expect(entry.carbG).toBe(90);
+  });
+
+  it("converts a gram amount to a quantity via base_grams (33 g on base_grams 50 -> 0.66 staple)", async () => {
+    const foodDictionary = new StubFoodDictionaryRepository(riceGram) as unknown as FoodDictionaryRepository;
+
+    const entry = await logFoodEntryFromDictionary(dietLog, foodDictionary, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      foodItemId: riceGram.id,
+      grams: 33,
+    });
+
+    expect(entry.staple).toBeCloseTo(0.66);
+  });
+
+  it("rejects a gram-based log when the item's base_grams is null", async () => {
+    const foodDictionary = new StubFoodDictionaryRepository(riceBowl) as unknown as FoodDictionaryRepository;
+
+    await expect(
+      logFoodEntryFromDictionary(dietLog, foodDictionary, {
+        userId: "user-1",
+        day: "2026-07-18",
+        meal: "breakfast",
+        foodItemId: riceBowl.id,
+        grams: 33,
+      }),
+    ).rejects.toThrow(NullBaseGramsError);
+  });
 });
 
 describe("getDayDietLog", () => {
@@ -165,6 +290,27 @@ describe("getDayDietLog", () => {
 
     expect(dayLog.totals.carbG).toBe(20);
     expect(dayLog.totals.kcal).toBe(15 * 4 + 50);
+  });
+
+  it("orders by eaten_at, not logged_at: a back-dated breakfast sorts before an earlier-logged dinner", async () => {
+    await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "dinner",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+      eatenAt: new Date("2026-07-18T19:00:00.000Z"),
+    });
+    await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+      eatenAt: new Date("2026-07-18T08:00:00.000Z"),
+    });
+
+    const dayLog = await getDayDietLog(dietLog, "user-1", "2026-07-18");
+
+    expect(dayLog.meals.map((m) => m.meal)).toEqual(["breakfast", "dinner"]);
   });
 });
 

@@ -33,6 +33,7 @@ export const foodItem = pgTable("food_item", {
   name: text("name").notNull(),
   ...nutrientColumns,
   ...portionColumns,
+  baseGrams: numeric("base_grams"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -64,6 +65,7 @@ export const foodEntry = pgTable("food_entry", {
   unclassified: boolean("unclassified").notNull().default(false),
   ...nutrientColumns,
   ...portionColumns,
+  eatenAt: timestamp("eaten_at", { withTimezone: true }).notNull().defaultNow(),
   loggedAt: timestamp("logged_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
