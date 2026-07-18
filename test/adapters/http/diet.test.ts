@@ -79,8 +79,10 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
     );
   }
 
-  async findById(id: string): Promise<FoodItem | null> {
-    return this.items.find((i) => i.id === id) ?? null;
+  async findById(userId: string, id: string): Promise<FoodItem | null> {
+    const item = this.items.find((i) => i.id === id);
+    if (!item) return null;
+    return item.ownerUserId === null || item.ownerUserId === userId ? item : null;
   }
 
   async createCustom(input: CreateCustomFoodItemInput): Promise<FoodItem> {

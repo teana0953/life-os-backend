@@ -28,8 +28,10 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
     );
   }
 
-  async findById(id: string): Promise<FoodItem | null> {
-    return this.items.get(id) ?? null;
+  async findById(userId: string, id: string): Promise<FoodItem | null> {
+    const item = this.items.get(id);
+    if (!item) return null;
+    return item.ownerUserId === null || item.ownerUserId === userId ? item : null;
   }
 
   async createCustom(input: CreateCustomFoodItemInput): Promise<FoodItem> {
@@ -142,5 +144,25 @@ describe("favoriteFoodItem / unfavoriteFoodItem / listFavoriteFoodItems", () => 
     const favorites = await listFavoriteFoodItems(repo, "user-1");
 
     expect(favorites).toEqual([]);
+  });
+
+  it("does not let a user favorite another user's private custom item", async () => {
+    const foreign = await createCustomFoodItem(repo, {
+      ownerUserId: "user-A",
+      name: "私房菜/1份",
+      carbG: 5,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 20,
+      staple: 0,
+      meat: 0,
+      fruit: 0,
+      veg: 1,
+    });
+
+    await expect(favoriteFoodItem(repo, "user-B", foreign.id)).rejects.toThrow();
+    expect(await listFavoriteFoodItems(repo, "user-B")).toEqual([]);
   });
 });

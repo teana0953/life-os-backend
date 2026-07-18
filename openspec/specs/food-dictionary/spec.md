@@ -64,6 +64,10 @@ shared items and that user's own custom items.
 - **WHEN** user A creates a custom food item
 - **THEN** the item appears in user A's dictionary search and does not appear in user B's search
 
+#### Scenario: Another user cannot reach a private custom item by id
+- **WHEN** user B attempts to log or favorite user A's custom item by its id
+- **THEN** the system treats the item as not found for user B and neither logs nor favorites it
+
 ### Requirement: Favorite food items
 
 The system SHALL let an authenticated user mark and unmark dictionary items as

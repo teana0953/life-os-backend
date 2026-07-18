@@ -34,8 +34,9 @@ class InMemoryDietLogRepository implements DietLogRepository {
 
 class StubFoodDictionaryRepository implements Pick<FoodDictionaryRepository, "findById"> {
   constructor(private readonly item: FoodItem) {}
-  async findById(id: string): Promise<FoodItem | null> {
-    return id === this.item.id ? this.item : null;
+  async findById(userId: string, id: string): Promise<FoodItem | null> {
+    if (id !== this.item.id) return null;
+    return this.item.ownerUserId === null || this.item.ownerUserId === userId ? this.item : null;
   }
 }
 
@@ -121,6 +122,20 @@ describe("logFoodEntryFromDictionary", () => {
     expect(entry.fruit).toBe(2);
     expect(entry.carbG).toBe(30);
     expect(entry.unclassified).toBe(false);
+  });
+
+  it("does not let a user log another user's private custom item", async () => {
+    const foreign: FoodItem = { ...banana, id: "item-foreign", ownerUserId: "user-A" };
+    const foodDictionary = new StubFoodDictionaryRepository(foreign) as unknown as FoodDictionaryRepository;
+
+    await expect(
+      logFoodEntryFromDictionary(dietLog, foodDictionary, {
+        userId: "user-B",
+        day: "2026-07-18",
+        meal: "breakfast",
+        foodItemId: foreign.id,
+      }),
+    ).rejects.toThrow();
   });
 });
 

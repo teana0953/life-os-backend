@@ -15,7 +15,7 @@ export async function logFoodEntryFromDictionary(
   foodDictionaryRepository: FoodDictionaryRepository,
   input: LogFoodEntryFromDictionaryInput,
 ): Promise<FoodEntry> {
-  const item = await foodDictionaryRepository.findById(input.foodItemId);
+  const item = await foodDictionaryRepository.findById(input.userId, input.foodItemId);
   if (!item) throw new Error("food item not found");
 
   return dietLogRepository.create({

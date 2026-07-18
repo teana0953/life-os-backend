@@ -38,9 +38,13 @@ export class DrizzleFoodDictionaryRepository implements FoodDictionaryRepository
     return rows.map(toDomain);
   }
 
-  async findById(id: string): Promise<FoodItem | null> {
+  async findById(userId: string, id: string): Promise<FoodItem | null> {
     const db = this.getDb();
-    const [row] = await db.select().from(foodItem).where(eq(foodItem.id, id)).limit(1);
+    const [row] = await db
+      .select()
+      .from(foodItem)
+      .where(and(eq(foodItem.id, id), or(isNull(foodItem.ownerUserId), eq(foodItem.ownerUserId, userId))))
+      .limit(1);
     return row ? toDomain(row) : null;
   }
 
