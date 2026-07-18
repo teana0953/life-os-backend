@@ -15,6 +15,13 @@
       "when": 1784350999107,
       "tag": "0001_tricky_franklin_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784359434527,
+      "tag": "0002_handy_payback",
+      "breakpoints": true
     }
   ]
 }

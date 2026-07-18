@@ -21,6 +21,7 @@ function toDomain(row: FoodItemRow): FoodItem {
     meat: Number(row.meat),
     fruit: Number(row.fruit),
     veg: Number(row.veg),
+    baseGrams: row.baseGrams === null ? null : Number(row.baseGrams),
     createdAt: row.createdAt,
   };
 }

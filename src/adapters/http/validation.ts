@@ -38,6 +38,23 @@ export function optionalFiniteNumberOrUndefined(value: unknown, field: string): 
   return requireFiniteNumber(value, field);
 }
 
+/** Optional finite number greater than 0 that stays `undefined` when absent; throws when present but not finite or <= 0. */
+export function optionalPositiveFiniteNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  const n = requireFiniteNumber(value, field);
+  if (n <= 0) throw new BadRequestError(`${field} must be greater than 0`);
+  return n;
+}
+
+/** Optional timestamp (ISO string), returned as a `Date`; throws when present but not a valid timestamp. */
+export function optionalTimestamp(value: unknown, field: string): Date | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new BadRequestError(`${field} must be a valid timestamp`);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new BadRequestError(`${field} must be a valid timestamp`);
+  return date;
+}
+
 /**
  * An ISO calendar day `YYYY-MM-DD` that is also a real date; throws otherwise.
  * Uses component comparison rather than `Date.parse`, since V8 silently rolls

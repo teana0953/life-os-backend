@@ -17,6 +17,8 @@ interface CommonInput {
   meal: string;
   name?: string | null;
   photoRef?: string | null;
+  /** When the food was eaten; defaults to creation time (D3). */
+  eatenAt?: Date;
 }
 
 export type LogManualFoodEntryInput = CommonInput &
@@ -35,6 +37,7 @@ export async function logManualFoodEntry(repository: DietLogRepository, input: L
     name: input.name ?? null,
     photoRef: input.photoRef ?? null,
     source: "manual" as const,
+    eatenAt: input.eatenAt ?? new Date(),
   };
 
   if (input.portions) {

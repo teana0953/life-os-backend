@@ -25,6 +25,21 @@ export interface SeedFoodItem {
   meat: number;
   fruit: number;
   veg: number;
+  baseGrams: number | null;
+}
+
+/**
+ * Matches a bare gram amount in the unit segment after the row name's `/`
+ * (e.g. `/50g`, `/30g`, `/140克`), per design.md D4. Both the ASCII `g` and the
+ * Chinese `克` mean grams. The match is anchored to the number right after `/`,
+ * so a `克` inside a brand name (e.g. `星巴克拿鐵/1杯`) is not mistaken for a unit.
+ */
+const BASE_GRAMS_PATTERN = /\/\s*(\d+(?:\.\d+)?)\s*(?:g\b|克)/;
+
+/** Parses `base_grams` from the row name's unit token; null when the unit is a household measure (D4). */
+function parseBaseGrams(name: string): number | null {
+  const match = BASE_GRAMS_PATTERN.exec(name);
+  return match ? Number(match[1]) : null;
 }
 
 /**
@@ -40,7 +55,7 @@ export function seedRowToFoodItem(row: FoodSeedRow): SeedFoodItem {
   const nutrients = portionsToNutrients(portions);
   const sugarG = row.fruit > 0 ? row.fruit * 15 : 0;
 
-  return { name: row.name, ...nutrients, sugarG, ...portions };
+  return { name: row.name, ...nutrients, sugarG, ...portions, baseGrams: parseBaseGrams(row.name) };
 }
 
 /**
@@ -69,6 +84,7 @@ export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS
       meat: String(item.meat),
       fruit: String(item.fruit),
       veg: String(item.veg),
+      baseGrams: item.baseGrams === null ? null : String(item.baseGrams),
     };
   });
   if (values.length === 0) return;

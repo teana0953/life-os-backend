@@ -26,6 +26,7 @@ function toDomain(row: FoodEntryRow): FoodEntry {
     meat: Number(row.meat),
     fruit: Number(row.fruit),
     veg: Number(row.veg),
+    eatenAt: row.eatenAt,
     loggedAt: row.loggedAt,
   };
 }
@@ -56,6 +57,7 @@ export class DrizzleDietLogRepository implements DietLogRepository {
         meat: String(input.meat),
         fruit: String(input.fruit),
         veg: String(input.veg),
+        eatenAt: input.eatenAt,
       })
       .returning();
     if (!created) throw new Error("failed to create food entry");

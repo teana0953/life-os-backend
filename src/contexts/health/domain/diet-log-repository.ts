@@ -18,6 +18,7 @@ export interface CreateFoodEntryInput {
   meat: number;
   fruit: number;
   veg: number;
+  eatenAt: Date;
 }
 
 export interface DietLogRepository {

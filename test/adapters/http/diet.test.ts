@@ -86,7 +86,7 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   }
 
   async createCustom(input: CreateCustomFoodItemInput): Promise<FoodItem> {
-    return this.seed({ ...input });
+    return this.seed({ ...input, baseGrams: null });
   }
 
   async favorite(): Promise<void> {}
@@ -206,6 +206,7 @@ describe("diet-tracking HTTP routes", () => {
       meat: 0,
       fruit: 2,
       veg: 0,
+      baseGrams: null,
     });
     const token = await validToken();
 
@@ -220,6 +221,181 @@ describe("diet-tracking HTTP routes", () => {
     expect(body.source).toBe("dict");
     expect(body.fruit).toBe(2);
     expect(body.carb_g).toBe(30);
+  });
+
+  it("scales a dictionary log by quantity (1.5x -> 6 staple, 90 g carbohydrate)", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const riceBowl = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/1碗",
+      carbG: 60,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 240,
+      staple: 4,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseGrams: null,
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", food_item_id: riceBowl.id, quantity: 1.5 }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { staple: number; carb_g: number };
+    expect(body.staple).toBe(6);
+    expect(body.carb_g).toBe(90);
+  });
+
+  it("converts a gram-based dictionary log to a quantity via base_grams", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const riceGram = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/50g",
+      carbG: 15,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 60,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseGrams: 50,
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", food_item_id: riceGram.id, grams: 33 }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { staple: number };
+    expect(body.staple).toBeCloseTo(0.66);
+  });
+
+  it("rejects a gram-based dictionary log when the item has no base_grams, as 400", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const riceBowl = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/1碗",
+      carbG: 60,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 240,
+      staple: 4,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseGrams: null,
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", food_item_id: riceBowl.id, grams: 33 }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a dictionary log supplying both grams and quantity, as 400", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const riceBowl = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/1碗",
+      carbG: 60,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 240,
+      staple: 4,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseGrams: 50,
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", food_item_id: riceBowl.id, grams: 33, quantity: 1.5 }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("includes base_grams in a dictionary item's JSON response", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/50g",
+      carbG: 15,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 60,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseGrams: 50,
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/food-items?q=%E9%A3%AF", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { base_grams: number | null }[];
+    expect(body[0]?.base_grams).toBe(50);
+  });
+
+  it("orders a day's entries by eaten_at: a back-dated breakfast sorts before an earlier-logged dinner", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        day: "2026-07-18",
+        meal: "dinner",
+        portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+        eaten_at: "2026-07-18T19:00:00.000Z",
+      }),
+    });
+    await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        day: "2026-07-18",
+        meal: "breakfast",
+        portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+        eaten_at: "2026-07-18T08:00:00.000Z",
+      }),
+    });
+
+    const res = await app.request("/api/diet-entries?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { meals: { meal: string }[] };
+    expect(body.meals.map((m) => m.meal)).toEqual(["breakfast", "dinner"]);
   });
 
   it("returns a day's diet log grouped by meal", async () => {

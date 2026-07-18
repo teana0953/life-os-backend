@@ -31,6 +31,7 @@ function toJson(item: FoodItem) {
     meat: item.meat,
     fruit: item.fruit,
     veg: item.veg,
+    base_grams: item.baseGrams,
   };
 }
 

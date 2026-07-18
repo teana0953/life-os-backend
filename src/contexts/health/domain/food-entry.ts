@@ -21,5 +21,8 @@ export interface FoodEntry {
   meat: number;
   fruit: number;
   veg: number;
+  /** When the food was eaten; user-settable, defaults to creation time (D3). */
+  eatenAt: Date;
+  /** System audit time; never user-settable. */
   loggedAt: Date;
 }

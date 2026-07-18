@@ -13,5 +13,7 @@ export interface FoodItem {
   meat: number;
   fruit: number;
   veg: number;
+  /** Gram weight of one dictionary unit, used to convert a gram amount to a quantity; null when the unit has no defined gram weight. */
+  baseGrams: number | null;
   createdAt: Date;
 }
