@@ -11,6 +11,7 @@
     "deploy": "wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "seed:gen": "tsx scripts/gen-food-seed.ts",
     "db:seed": "tsx src/contexts/health/adapters/seed/run-seed.ts"
   },
   "repository": {

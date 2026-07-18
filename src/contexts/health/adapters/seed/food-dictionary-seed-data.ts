@@ -1,10 +1,11 @@
 import type { FoodSeedRow } from "./food-dictionary-seed";
 
 /**
- * The user's household-unit food -> portion reference table (271 rows),
- * exported from their Google Drive sheet. Columns are portion counts per
- * food group; atomic nutrients are derived at seed time by `seedRowToFoodItem`.
- * Regenerate from the sheet rather than hand-editing.
+ * The user's household-unit food -> portion reference table (271 rows).
+ *
+ * GENERATED FILE — do not hand-edit. Source of truth is
+ * `scripts/food-seed-source.tsv`; regenerate with `npm run seed:gen`.
+ * Atomic nutrients are derived at seed time by `seedRowToFoodItem`.
  */
 export const FOOD_SEED_ROWS: FoodSeedRow[] = [
   { id: 1, name: "飯/1碗", staple: 4, meat: 0, fruit: 0, veg: 0 },
