@@ -17,11 +17,17 @@ model owned by `diet-tracking`, BOTH:
 
 The portion attribution SHALL be stored, NOT derived from nutrients, because the
 food-group assignment (e.g. staple-carb vs fruit-carb) is human knowledge and is
-not recoverable from grams.
+not recoverable from grams. Each item MAY also carry an optional `base_grams` —
+the gram weight of one dictionary unit — used by `diet-tracking` for gram-based
+logging; it SHALL be null when the item's unit has no defined gram weight.
 
 #### Scenario: Item exposes both stored axes
 - **WHEN** a client reads a food item from the dictionary
 - **THEN** the response includes both its atomic nutrients and its stored food-group portion attribution
+
+#### Scenario: Item may carry base grams
+- **WHEN** a client reads a food item whose unit is a gram amount
+- **THEN** the response includes its `base_grams`
 
 ### Requirement: Dictionary search
 
@@ -47,11 +53,21 @@ portion → 15 g carbohydrate, meat portion → 7 g protein, vegetable portion �
 carbohydrate). The seed applies no fat estimate, so seeded nutrients — meat kcal
 in particular — are approximate and MAY be corrected per food item later; a
 seeded and a manually-logged meat portion therefore carry the same derived
-nutrients.
+nutrients. The seed SHALL also backfill `base_grams` for rows whose unit is a
+bare gram amount (e.g. `飯/50g` → 50), leaving it null for household-unit rows
+(e.g. `飯/1碗`, `香蕉/1根`).
 
 #### Scenario: Seed stores both axes
 - **WHEN** the seed loads a row recorded as 主食 1 份
 - **THEN** the created food item stores 1 staple portion and carries approximately 15 g carbohydrate in its atomic nutrients
+
+#### Scenario: Seed backfills base grams from a gram unit
+- **WHEN** the seed loads the row `飯/50g`
+- **THEN** the created food item's base_grams is 50
+
+#### Scenario: Household-unit row has no base grams
+- **WHEN** the seed loads the row `飯/1碗`
+- **THEN** the created food item's base_grams is null
 
 ### Requirement: User-custom food items
 
