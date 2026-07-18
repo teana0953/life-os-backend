@@ -1,0 +1,139 @@
+# diet-tracking Specification
+
+## Purpose
+TBD - created by archiving change add-diet-tracking. Update Purpose after archive.
+## Requirements
+### Requirement: Nutrient–portion–calorie conversion
+
+The system SHALL own conversion rules following the Taiwan MOHW food-exchange
+standard, applied per food group:
+
+- 1 staple (主食) portion = 15 g carbohydrate
+- 1 meat/protein (肉類) portion = 7 g protein
+- 1 fruit (水果) portion = 15 g carbohydrate (≈ 60 kcal)
+- 1 vegetable (蔬菜) portion = 5 g carbohydrate
+
+Calories for an entry SHALL be taken from an explicitly provided `kcal` when
+present (nutrition label or AI estimate); otherwise the system SHALL compute
+kcal from macros as `carb_g×4 + protein_g×4 + fat_g×9`. Calories SHALL NEVER be
+derived from portion counts.
+
+#### Scenario: Portion to grams
+- **WHEN** the system converts 1 staple portion to grams
+- **THEN** it yields 15 g carbohydrate
+
+#### Scenario: Grams to portion within a group
+- **WHEN** an entry attributes 7 g of protein to the meat group
+- **THEN** it projects to 1 meat portion
+
+#### Scenario: Calories fall back to macros
+- **WHEN** an entry has macros but no explicit kcal
+- **THEN** the system computes kcal as carb_g×4 + protein_g×4 + fat_g×9
+
+### Requirement: Atomic nutrient store of record
+
+A food entry SHALL persist atomic nutrients
+`{ carb_g, protein_g, fat_g, sugar_g, fiber_g, kcal }` as its store of record.
+Daily and per-entry nutrient and calorie totals SHALL be computed only from
+these fields, never from portion counts.
+
+#### Scenario: Nutrient totals come from atomic fields
+- **WHEN** a day's calorie total is requested
+- **THEN** it is computed by summing the atomic nutrient/kcal fields of that day's entries, independent of any portion values
+
+### Requirement: Food-group portion attribution
+
+A food entry SHALL record its food-group portion attribution
+`{ staple, meat, fruit, veg }`. This is required because grams alone cannot
+distinguish carbohydrate belonging to the staple group from carbohydrate
+belonging to the fruit group — the group assignment is human knowledge, not
+recoverable from nutrients. These portion values carry the categorization axis
+and are used for portion-target reporting and display; they MUST NOT be used to
+compute calories or nutrient totals.
+
+When an entry is created from nutrients without a food-group classification
+(e.g. an AI estimate that has not been categorized), its portion attribution
+SHALL be zero and the entry SHALL be marked `unclassified` via an explicit flag
+(not inferred from all-zero portions, so a legitimately group-less food is not
+mistaken for one needing categorization). Such entries contribute to
+nutrient/calorie totals but not to portion-based target consumption, and the
+system SHALL surface unclassified entries so the user can categorize them.
+
+#### Scenario: Same carbohydrate, different group
+- **WHEN** two entries each carry 15 g carbohydrate, one attributed to staple and one to fruit
+- **THEN** the first reports 1 staple portion and the second reports 1 fruit portion, while both contribute the same carbohydrate to nutrient totals
+
+#### Scenario: Unclassified nutrient-only entry
+- **WHEN** an entry is created from nutrients with no food-group classification
+- **THEN** it is marked unclassified, contributes to the day's calorie total, and does not reduce any category's remaining portions
+
+### Requirement: Entry source provenance
+
+Each food entry SHALL record a `source` of `manual`, `ai_photo`, or `dict`.
+Regardless of source, the persisted store of record SHALL be the atomic
+nutrients; for `manual` and `dict` sources the nutrients MAY be derived from
+supplied portions using the conversion rules, and for `ai_photo` the nutrients
+come from the estimate.
+
+#### Scenario: Dictionary source records provenance
+- **WHEN** an entry is created by logging a dictionary item
+- **THEN** the entry's source is `dict`
+
+### Requirement: Per-day per-meal organization
+
+A food entry SHALL belong to a calendar day and a meal. Meal SHALL be one of the
+standard meals (breakfast / lunch / dinner) or a user-provided snack label. The
+system SHALL return a day's entries grouped by meal in chronological order.
+
+#### Scenario: Entries grouped by meal
+- **WHEN** a user requests a day's diet log
+- **THEN** the system returns that day's entries grouped by their meal
+
+### Requirement: Log entry from a dictionary item
+
+The system SHALL let an authenticated user create a food entry from a dictionary
+item for a given day and meal. The new entry SHALL copy the dictionary item's
+atomic nutrients and food-group portion attribution and SHALL set `source` to
+`dict`.
+
+#### Scenario: Create entry from dictionary
+- **WHEN** a user logs dictionary item `香蕉/1根` (2 fruit portions) to breakfast on a day
+- **THEN** a food entry is created for that day/meal carrying the item's nutrients and 2 fruit portions with source `dict`
+
+### Requirement: Manual food entry
+
+The system SHALL let an authenticated user create a food entry by supplying an
+optional name, an optional photo reference, and either atomic nutrients or
+food-group portions. When only portions are supplied, the system SHALL derive
+atomic nutrients via the conversion rules; when nutrients are supplied, the
+system SHALL store them as given.
+
+#### Scenario: Manual entry from portions
+- **WHEN** a user creates an entry supplying 2 staple portions and no nutrients
+- **THEN** the entry is stored with derived nutrients (~30 g carbohydrate) and source `manual`
+
+### Requirement: Delete a food entry
+
+The system SHALL let an authenticated user delete one of their own food entries.
+A user MUST NOT be able to delete another user's entry.
+
+#### Scenario: Delete removes entry from the day
+- **WHEN** a user deletes one of their own food entries
+- **THEN** the entry no longer appears in that day's diet log and no longer counts toward that day's portion or nutrient totals
+
+### Requirement: Daily portion target
+
+The system SHALL let a user hold, per day, per-category base portion goals
+`{ staple, meat, fruit, veg }` plus a reserved additive `bonus` contribution
+(default 0) representing future exercise-earned portions. The effective target
+for a category SHALL be `base + bonus`. The system SHALL report, per category,
+the remaining portions as `effective_target − sum(logged portions)`.
+
+#### Scenario: Remaining portions
+- **WHEN** a day has an effective staple target of 12 and logged entries totaling 9 staple portions
+- **THEN** the system reports 3 staple portions remaining
+
+#### Scenario: Bonus adds to base
+- **WHEN** a day's base staple goal is 12 and its bonus is 2
+- **THEN** the effective staple target is 14
+
