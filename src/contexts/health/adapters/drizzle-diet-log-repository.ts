@@ -1,0 +1,82 @@
+import { and, eq } from "drizzle-orm";
+import type { Db } from "../../../shared/db/client";
+import { foodEntry } from "../../../shared/db/schema";
+import type { CreateFoodEntryInput, DietLogRepository } from "../domain/diet-log-repository";
+import type { FoodEntry } from "../domain/food-entry";
+
+type FoodEntryRow = typeof foodEntry.$inferSelect;
+
+function toDomain(row: FoodEntryRow): FoodEntry {
+  return {
+    id: row.id,
+    userId: row.userId,
+    day: row.day,
+    meal: row.meal,
+    name: row.name,
+    photoRef: row.photoRef,
+    source: row.source,
+    unclassified: row.unclassified,
+    carbG: Number(row.carbG),
+    proteinG: Number(row.proteinG),
+    fatG: Number(row.fatG),
+    sugarG: Number(row.sugarG),
+    fiberG: Number(row.fiberG),
+    kcal: Number(row.kcal),
+    staple: Number(row.staple),
+    meat: Number(row.meat),
+    fruit: Number(row.fruit),
+    veg: Number(row.veg),
+    loggedAt: row.loggedAt,
+  };
+}
+
+/** Driven adapter: implements DietLogRepository via Drizzle + Neon. */
+export class DrizzleDietLogRepository implements DietLogRepository {
+  constructor(private readonly getDb: () => Db) {}
+
+  async create(input: CreateFoodEntryInput): Promise<FoodEntry> {
+    const db = this.getDb();
+    const [created] = await db
+      .insert(foodEntry)
+      .values({
+        userId: input.userId,
+        day: input.day,
+        meal: input.meal,
+        name: input.name,
+        photoRef: input.photoRef,
+        source: input.source,
+        unclassified: input.unclassified,
+        carbG: String(input.carbG),
+        proteinG: String(input.proteinG),
+        fatG: String(input.fatG),
+        sugarG: String(input.sugarG),
+        fiberG: String(input.fiberG),
+        kcal: String(input.kcal),
+        staple: String(input.staple),
+        meat: String(input.meat),
+        fruit: String(input.fruit),
+        veg: String(input.veg),
+      })
+      .returning();
+    if (!created) throw new Error("failed to create food entry");
+    return toDomain(created);
+  }
+
+  async listByDay(userId: string, day: string): Promise<FoodEntry[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(foodEntry)
+      .where(and(eq(foodEntry.userId, userId), eq(foodEntry.day, day)));
+    return rows.map(toDomain);
+  }
+
+  async delete(userId: string, entryId: string): Promise<boolean> {
+    const db = this.getDb();
+    const deleted = await db
+      .delete(foodEntry)
+      .where(and(eq(foodEntry.userId, userId), eq(foodEntry.id, entryId)))
+      .returning({ id: foodEntry.id });
+    return deleted.length > 0;
+  }
+}

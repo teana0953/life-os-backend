@@ -1,10 +1,30 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
+import type { DietLogRepository } from "../../contexts/health/domain/diet-log-repository";
+import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
+import {
+  createGetDailyTargetHandler,
+  createSetDailyTargetHandler,
+} from "./routes/daily-target";
+import {
+  createDeleteFoodEntryHandler,
+  createGetDayDietLogHandler,
+  createLogFoodEntryHandler,
+} from "./routes/diet-entries";
+import {
+  createCustomFoodItemHandler,
+  createFavoriteFoodItemHandler,
+  createListFavoriteFoodItemsHandler,
+  createSearchFoodDictionaryHandler,
+  createUnfavoriteFoodItemHandler,
+} from "./routes/food-dictionary";
 import { createHealthHandler } from "./routes/health";
 import { createMeHandler } from "./routes/me";
+import { BadRequestError } from "./validation";
 
 /**
  * Allows the Flutter web client: any localhost port during local development,
@@ -19,6 +39,9 @@ export interface CreateAppOptions {
   projectId: string;
   jwks: JWTVerifyGetKey;
   userRepository: UserRepository;
+  foodDictionaryRepository: FoodDictionaryRepository;
+  dietLogRepository: DietLogRepository;
+  dailyTargetRepository: DailyTargetRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -34,12 +57,15 @@ export function createApp(options: CreateAppOptions) {
     "*",
     cors({
       origin: (origin) => (isAllowedOrigin(origin, options.allowedWebOrigin) ? origin : null),
-      allowMethods: ["GET", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type"],
     }),
   );
 
   app.onError((err, c) => {
+    if (err instanceof BadRequestError) {
+      return c.json({ error: "bad_request", message: err.message }, 400);
+    }
     console.error(err);
     return c.json({ error: "internal" }, 500);
   });
@@ -48,6 +74,30 @@ export function createApp(options: CreateAppOptions) {
 
   const authMiddleware = createAuthMiddleware({ projectId: options.projectId, jwks: options.jwks });
   app.get("/api/me", authMiddleware, createMeHandler({ userRepository: options.userRepository }));
+
+  const foodDictionaryOptions = { userRepository: options.userRepository, foodDictionaryRepository: options.foodDictionaryRepository };
+  app.get("/api/food-items/favorites", authMiddleware, createListFavoriteFoodItemsHandler(foodDictionaryOptions));
+  app.get("/api/food-items", authMiddleware, createSearchFoodDictionaryHandler(foodDictionaryOptions));
+  app.post("/api/food-items", authMiddleware, createCustomFoodItemHandler(foodDictionaryOptions));
+  app.post("/api/food-items/:id/favorite", authMiddleware, createFavoriteFoodItemHandler(foodDictionaryOptions));
+  app.delete("/api/food-items/:id/favorite", authMiddleware, createUnfavoriteFoodItemHandler(foodDictionaryOptions));
+
+  const dietEntryOptions = {
+    userRepository: options.userRepository,
+    dietLogRepository: options.dietLogRepository,
+    foodDictionaryRepository: options.foodDictionaryRepository,
+  };
+  app.post("/api/diet-entries", authMiddleware, createLogFoodEntryHandler(dietEntryOptions));
+  app.get("/api/diet-entries", authMiddleware, createGetDayDietLogHandler(dietEntryOptions));
+  app.delete("/api/diet-entries/:id", authMiddleware, createDeleteFoodEntryHandler(dietEntryOptions));
+
+  const dailyTargetOptions = {
+    userRepository: options.userRepository,
+    dailyTargetRepository: options.dailyTargetRepository,
+    dietLogRepository: options.dietLogRepository,
+  };
+  app.get("/api/daily-target", authMiddleware, createGetDailyTargetHandler(dailyTargetOptions));
+  app.put("/api/daily-target", authMiddleware, createSetDailyTargetHandler(dailyTargetOptions));
 
   return app;
 }
