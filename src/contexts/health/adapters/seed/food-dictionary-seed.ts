@@ -1,6 +1,7 @@
 import type { Db } from "../../../../shared/db/client";
 import { foodItem } from "../../../../shared/db/schema";
 import { portionsToNutrients } from "../../domain/conversion";
+import { FOOD_SEED_ROWS } from "./food-dictionary-seed-data";
 
 /** One row of the user's household-unit food -> portion reference table. */
 export interface FoodSeedRow {
@@ -43,24 +44,13 @@ export function seedRowToFoodItem(row: FoodSeedRow): SeedFoodItem {
 }
 
 /**
- * Placeholder seed data.
- *
- * design.md and tasks.md call for seeding the shared dictionary from the
- * user's 271-row food -> portion spreadsheet, said to be recorded in
- * `docs/research/chaodays-health-tracking.md`. That file (as present in this
- * repo) contains only narrative research notes about chaodays.app — it does
- * not contain the row-level id/name/staple/meat/fruit/veg table. Fabricating
- * 271 rows would misrepresent the user's real spreadsheet data, so this list
- * currently holds a small representative sample (covering each portion group)
- * instead. Replace `SEED_ROWS` with the full exported table once it is
- * available; `seedFoodDictionary` and `seedRowToFoodItem` need no changes.
+ * The shared dictionary is seeded from the user's full 271-row food -> portion
+ * reference table, exported from their Google Drive sheet into
+ * `./food-dictionary-seed-data.ts`. Each row's atomic nutrients are derived at
+ * seed time by `seedRowToFoodItem`; to refresh, regenerate the data file from
+ * the sheet — `seedFoodDictionary` and `seedRowToFoodItem` need no changes.
  */
-export const SEED_ROWS: FoodSeedRow[] = [
-  { id: 1, name: "飯/1碗", staple: 4, meat: 0, fruit: 0, veg: 0 },
-  { id: 2, name: "熟肉(雞豬牛羊魚)/30g", staple: 0, meat: 1, fruit: 0, veg: 0 },
-  { id: 3, name: "香蕉/1根", staple: 0, meat: 0, fruit: 2, veg: 0 },
-  { id: 4, name: "蔬菜(煮熟)/1份", staple: 0, meat: 0, fruit: 0, veg: 1 },
-];
+export const SEED_ROWS: FoodSeedRow[] = FOOD_SEED_ROWS;
 
 /** Inserts the seed rows as shared (owner_user_id = null) food_item rows. */
 export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS): Promise<void> {
