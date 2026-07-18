@@ -6,6 +6,7 @@ import type { DietLogRepository } from "../../../contexts/health/domain/diet-log
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
+import { optionalFiniteNumberOrUndefined, requireDay, requireFiniteNumber } from "../validation";
 
 export interface DailyTargetHandlerOptions {
   userRepository: UserRepository;
@@ -21,7 +22,7 @@ export function createGetDailyTargetHandler(options: DailyTargetHandlerOptions) 
       options.dailyTargetRepository,
       options.dietLogRepository,
       userId,
-      c.req.query("day") ?? "",
+      requireDay(c.req.query("day")),
     );
     return c.json(result);
   };
@@ -34,15 +35,15 @@ export function createSetDailyTargetHandler(options: DailyTargetHandlerOptions) 
     const body = await c.req.json<Record<string, unknown>>();
     const target = await setDailyTarget(options.dailyTargetRepository, {
       userId,
-      day: String(body.day),
-      baseStaple: Number(body.base_staple),
-      baseMeat: Number(body.base_meat),
-      baseFruit: Number(body.base_fruit),
-      baseVeg: Number(body.base_veg),
-      bonusStaple: body.bonus_staple === undefined ? undefined : Number(body.bonus_staple),
-      bonusMeat: body.bonus_meat === undefined ? undefined : Number(body.bonus_meat),
-      bonusFruit: body.bonus_fruit === undefined ? undefined : Number(body.bonus_fruit),
-      bonusVeg: body.bonus_veg === undefined ? undefined : Number(body.bonus_veg),
+      day: requireDay(body.day),
+      baseStaple: requireFiniteNumber(body.base_staple, "base_staple"),
+      baseMeat: requireFiniteNumber(body.base_meat, "base_meat"),
+      baseFruit: requireFiniteNumber(body.base_fruit, "base_fruit"),
+      baseVeg: requireFiniteNumber(body.base_veg, "base_veg"),
+      bonusStaple: optionalFiniteNumberOrUndefined(body.bonus_staple, "bonus_staple"),
+      bonusMeat: optionalFiniteNumberOrUndefined(body.bonus_meat, "bonus_meat"),
+      bonusFruit: optionalFiniteNumberOrUndefined(body.bonus_fruit, "bonus_fruit"),
+      bonusVeg: optionalFiniteNumberOrUndefined(body.bonus_veg, "bonus_veg"),
     });
     return c.json({
       id: target.id,

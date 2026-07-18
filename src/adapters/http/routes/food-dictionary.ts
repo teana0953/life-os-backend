@@ -9,6 +9,7 @@ import type { FoodItem } from "../../../contexts/health/domain/food-item";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
+import { optionalFiniteNumber, requireFiniteNumber, requireString } from "../validation";
 
 export interface FoodDictionaryHandlerOptions {
   userRepository: UserRepository;
@@ -49,17 +50,17 @@ export function createCustomFoodItemHandler(options: FoodDictionaryHandlerOption
     const body = await c.req.json<Record<string, unknown>>();
     const item = await createCustomFoodItem(options.foodDictionaryRepository, {
       ownerUserId: userId,
-      name: String(body.name),
-      carbG: Number(body.carb_g),
-      proteinG: Number(body.protein_g),
-      fatG: Number(body.fat_g),
-      sugarG: Number(body.sugar_g),
-      fiberG: Number(body.fiber_g),
-      kcal: Number(body.kcal),
-      staple: Number(body.staple ?? 0),
-      meat: Number(body.meat ?? 0),
-      fruit: Number(body.fruit ?? 0),
-      veg: Number(body.veg ?? 0),
+      name: requireString(body.name, "name"),
+      carbG: requireFiniteNumber(body.carb_g, "carb_g"),
+      proteinG: requireFiniteNumber(body.protein_g, "protein_g"),
+      fatG: requireFiniteNumber(body.fat_g, "fat_g"),
+      sugarG: requireFiniteNumber(body.sugar_g, "sugar_g"),
+      fiberG: requireFiniteNumber(body.fiber_g, "fiber_g"),
+      kcal: requireFiniteNumber(body.kcal, "kcal"),
+      staple: optionalFiniteNumber(body.staple, "staple", 0),
+      meat: optionalFiniteNumber(body.meat, "meat", 0),
+      fruit: optionalFiniteNumber(body.fruit, "fruit", 0),
+      veg: optionalFiniteNumber(body.veg, "veg", 0),
     });
     return c.json(toJson(item), 201);
   };

@@ -263,4 +263,101 @@ describe("diet-tracking HTTP routes", () => {
     const body = (await res.json()) as { remaining: { staple: number } };
     expect(body.remaining.staple).toBe(3);
   });
+
+  it("rejects a custom food item with a missing name as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ carb_g: 15, protein_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0, kcal: 60 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "bad_request" });
+  });
+
+  it("rejects a custom food item with a non-numeric nutrient as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "x", carb_g: "abc", protein_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0, kcal: 60 }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a diet entry with a missing day as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ meal: "breakfast", portions: { staple: 1 } }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a diet entry with a non-numeric portion as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", portions: { staple: "lots" } }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a day diet log request without a day as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a daily target request without a day as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/daily-target", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects setting a daily target with a non-numeric base goal as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/daily-target", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", base_staple: "abc", base_meat: 7, base_fruit: 2, base_veg: 2 }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a diet entry with an invalid calendar day as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/diet-entries", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-02-30", meal: "breakfast", portions: { staple: 1 } }),
+    });
+
+    expect(res.status).toBe(400);
+  });
 });

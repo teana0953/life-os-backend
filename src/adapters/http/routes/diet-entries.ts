@@ -9,6 +9,12 @@ import type { FoodEntry } from "../../../contexts/health/domain/food-entry";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
+import {
+  optionalFiniteNumber,
+  optionalFiniteNumberOrUndefined,
+  requireDay,
+  requireString,
+} from "../validation";
 
 export interface DietEntryHandlerOptions {
   userRepository: UserRepository;
@@ -47,17 +53,17 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const body = await c.req.json<Record<string, unknown>>();
-    const day = String(body.day);
-    const meal = String(body.meal);
+    const day = requireDay(body.day);
+    const meal = requireString(body.meal, "meal");
     const name = typeof body.name === "string" ? body.name : null;
     const photoRef = typeof body.photo_ref === "string" ? body.photo_ref : null;
 
-    if (typeof body.food_item_id === "string") {
+    if (body.food_item_id !== undefined) {
       const entry = await logFoodEntryFromDictionary(options.dietLogRepository, options.foodDictionaryRepository, {
         userId,
         day,
         meal,
-        foodItemId: body.food_item_id,
+        foodItemId: requireString(body.food_item_id, "food_item_id"),
       });
       return c.json(entryToJson(entry), 201);
     }
@@ -71,10 +77,10 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
         name,
         photoRef,
         portions: {
-          staple: Number(portions.staple ?? 0),
-          meat: Number(portions.meat ?? 0),
-          fruit: Number(portions.fruit ?? 0),
-          veg: Number(portions.veg ?? 0),
+          staple: optionalFiniteNumber(portions.staple, "portions.staple", 0),
+          meat: optionalFiniteNumber(portions.meat, "portions.meat", 0),
+          fruit: optionalFiniteNumber(portions.fruit, "portions.fruit", 0),
+          veg: optionalFiniteNumber(portions.veg, "portions.veg", 0),
         },
       });
       return c.json(entryToJson(entry), 201);
@@ -88,12 +94,12 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
       name,
       photoRef,
       nutrients: {
-        carbG: Number(nutrients.carb_g ?? 0),
-        proteinG: Number(nutrients.protein_g ?? 0),
-        fatG: Number(nutrients.fat_g ?? 0),
-        sugarG: Number(nutrients.sugar_g ?? 0),
-        fiberG: Number(nutrients.fiber_g ?? 0),
-        kcal: nutrients.kcal === undefined ? undefined : Number(nutrients.kcal),
+        carbG: optionalFiniteNumber(nutrients.carb_g, "nutrients.carb_g", 0),
+        proteinG: optionalFiniteNumber(nutrients.protein_g, "nutrients.protein_g", 0),
+        fatG: optionalFiniteNumber(nutrients.fat_g, "nutrients.fat_g", 0),
+        sugarG: optionalFiniteNumber(nutrients.sugar_g, "nutrients.sugar_g", 0),
+        fiberG: optionalFiniteNumber(nutrients.fiber_g, "nutrients.fiber_g", 0),
+        kcal: optionalFiniteNumberOrUndefined(nutrients.kcal, "nutrients.kcal"),
       },
     });
     return c.json(entryToJson(entry), 201);
@@ -104,7 +110,7 @@ export function createLogFoodEntryHandler(options: DietEntryHandlerOptions) {
 export function createGetDayDietLogHandler(options: DietEntryHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const dayLog = await getDayDietLog(options.dietLogRepository, userId, c.req.query("day") ?? "");
+    const dayLog = await getDayDietLog(options.dietLogRepository, userId, requireDay(c.req.query("day")));
     return c.json({
       day: dayLog.day,
       meals: dayLog.meals.map((meal) => ({ meal: meal.meal, entries: meal.entries.map(entryToJson) })),

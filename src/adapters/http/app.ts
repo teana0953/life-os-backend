@@ -24,6 +24,7 @@ import {
 } from "./routes/food-dictionary";
 import { createHealthHandler } from "./routes/health";
 import { createMeHandler } from "./routes/me";
+import { BadRequestError } from "./validation";
 
 /**
  * Allows the Flutter web client: any localhost port during local development,
@@ -62,6 +63,9 @@ export function createApp(options: CreateAppOptions) {
   );
 
   app.onError((err, c) => {
+    if (err instanceof BadRequestError) {
+      return c.json({ error: "bad_request", message: err.message }, 400);
+    }
     console.error(err);
     return c.json({ error: "internal" }, 500);
   });
