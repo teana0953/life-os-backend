@@ -55,4 +55,13 @@ describe("seedRowToFoodItem", () => {
     expect(seedRowToFoodItem({ id: 9, name: "肉包掌心大/1個", staple: 3, meat: 1, fruit: 0, veg: 0 }).baseGrams).toBeNull();
     expect(seedRowToFoodItem({ id: 10, name: "麥片/2湯匙", staple: 1, meat: 0, fruit: 0, veg: 0 }).baseGrams).toBeNull();
   });
+
+  it("backfills base_grams from a Chinese 克 gram unit", () => {
+    expect(seedRowToFoodItem({ id: 11, name: "雞胸肉水餃/140克", staple: 2, meat: 1.5, fruit: 0, veg: 0 }).baseGrams).toBe(140);
+    expect(seedRowToFoodItem({ id: 12, name: "蓮藕/100克", staple: 1, meat: 0, fruit: 0, veg: 0 }).baseGrams).toBe(100);
+  });
+
+  it("does not mistake a 克 inside a brand name for a gram unit", () => {
+    expect(seedRowToFoodItem({ id: 13, name: "星巴克拿鐵(大杯)/1杯", staple: 0, meat: 3, fruit: 0, veg: 0 }).baseGrams).toBeNull();
+  });
 });

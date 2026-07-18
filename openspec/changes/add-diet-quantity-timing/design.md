@@ -57,11 +57,14 @@ we never lose the audit trail while fixing user-facing order.
 ### D4 — `base_grams` backfill parses the unit token from the name
 
 Seed rows encode the unit in the name after `/` (`飯/50g`, `生米/20g`,
-`熟肉(雞豬牛羊魚)/30g`). The seed backfills `base_grams` only when that unit
-token is a bare gram amount — matched with an anchored regex like
-`/\/\s*(\d+(?:\.\d+)?)\s*g\b/` on the unit segment. Household units (`1碗`,
-`1根`, `1片`, `掌心大`, `2湯匙`) don't match and stay null. This is a seed-time
-heuristic on data we control; wrong/edge parses are correctable per item.
+`熟肉(雞豬牛羊魚)/30g`, `雞胸肉水餃/140克`). The seed backfills `base_grams` only
+when that unit token is a bare gram amount — matched with an anchored regex on
+the unit segment that accepts both the ASCII `g` and the Chinese `克` (both mean
+grams): `/\/\s*(\d+(?:\.\d+)?)\s*(?:g\b|克)/`. Anchoring to the digits right
+after `/` keeps a `克` inside a brand name (`星巴克拿鐵/1杯`) from being read as
+a unit. Household units (`1碗`, `1根`, `1片`, `掌心大`, `2湯匙`) don't match and
+stay null. This is a seed-time heuristic on data we control; wrong/edge parses
+are correctable per item.
 
 ### D5 — Schema delta
 
