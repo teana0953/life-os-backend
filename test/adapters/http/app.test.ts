@@ -2,8 +2,33 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
+import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
+import type { DietLogRepository } from "../../../src/contexts/health/domain/diet-log-repository";
+import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
+
+// This suite only exercises /health and /api/me; the health-context routes have their own test file.
+function notImplemented(): never {
+  throw new Error("not implemented in this test's fakes");
+}
+const stubFoodDictionaryRepository: FoodDictionaryRepository = {
+  search: notImplemented,
+  findById: notImplemented,
+  createCustom: notImplemented,
+  favorite: notImplemented,
+  unfavorite: notImplemented,
+  listFavorites: notImplemented,
+};
+const stubDietLogRepository: DietLogRepository = {
+  create: notImplemented,
+  listByDay: notImplemented,
+  delete: notImplemented,
+};
+const stubDailyTargetRepository: DailyTargetRepository = {
+  get: notImplemented,
+  set: notImplemented,
+};
 
 const PROJECT_ID = "life-os-test";
 const ISSUER = `https://securetoken.google.com/${PROJECT_ID}`;
@@ -73,6 +98,9 @@ function buildApp(
     projectId: PROJECT_ID,
     jwks,
     userRepository: overrides.userRepository ?? new InMemoryUserRepository(),
+    foodDictionaryRepository: stubFoodDictionaryRepository,
+    dietLogRepository: stubDietLogRepository,
+    dailyTargetRepository: stubDailyTargetRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });
