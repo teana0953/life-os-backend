@@ -15,6 +15,16 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     return this.targetsByUserDay.get(`${userId}:${day}`) ?? null;
   }
 
+  async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
+    let latest: DailyTarget | null = null;
+    for (const target of this.targetsByUserDay.values()) {
+      if (target.userId === userId && target.day <= day && (!latest || target.day > latest.day)) {
+        latest = target;
+      }
+    }
+    return latest;
+  }
+
   async set(input: SetDailyTargetInput): Promise<DailyTarget> {
     const target: DailyTarget = {
       id: String(this.nextId++),
@@ -112,5 +122,33 @@ describe("getDailyTargetWithRemaining", () => {
 
     expect(result.remaining.staple).toBe(12);
     expect(result.remaining.meat).toBe(7);
+  });
+
+  it("carries forward the base from the most recent earlier target when the day has none of its own, with bonus 0", async () => {
+    await dailyTargets.set({ userId: "user-1", day: "2026-07-01", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2 });
+
+    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-02");
+
+    expect(result.base.staple).toBe(12);
+    expect(result.bonus.staple).toBe(0);
+    expect(result.effective.staple).toBe(12);
+  });
+
+  it("reports an all-zero target when the user has never set one", async () => {
+    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-18");
+
+    expect(result.base).toEqual({ staple: 0, meat: 0, fruit: 0, veg: 0 });
+    expect(result.bonus).toEqual({ staple: 0, meat: 0, fruit: 0, veg: 0 });
+    expect(result.effective).toEqual({ staple: 0, meat: 0, fruit: 0, veg: 0 });
+  });
+
+  it("does not carry forward the source day's bonus to a later untouched day", async () => {
+    await dailyTargets.set({ userId: "user-1", day: "2026-07-01", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2, bonusStaple: 3 });
+
+    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-02");
+
+    expect(result.base.staple).toBe(12);
+    expect(result.bonus.staple).toBe(0);
+    expect(result.effective.staple).toBe(12);
   });
 });

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { dailyTarget } from "../../../shared/db/schema";
 import type { DailyTarget } from "../domain/daily-target";
@@ -32,6 +32,17 @@ export class DrizzleDailyTargetRepository implements DailyTargetRepository {
       .select()
       .from(dailyTarget)
       .where(and(eq(dailyTarget.userId, userId), eq(dailyTarget.day, day)))
+      .limit(1);
+    return row ? toDomain(row) : null;
+  }
+
+  async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
+    const db = this.getDb();
+    const [row] = await db
+      .select()
+      .from(dailyTarget)
+      .where(and(eq(dailyTarget.userId, userId), lte(dailyTarget.day, day)))
+      .orderBy(desc(dailyTarget.day))
       .limit(1);
     return row ? toDomain(row) : null;
   }
