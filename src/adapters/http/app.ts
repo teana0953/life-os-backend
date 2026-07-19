@@ -13,6 +13,7 @@ import {
 import {
   createDeleteFoodEntryHandler,
   createGetDayDietLogHandler,
+  createGetLoggedDaysHandler,
   createLogFoodEntryHandler,
   createUpdateFoodEntryHandler,
 } from "./routes/diet-entries";
@@ -90,6 +91,7 @@ export function createApp(options: CreateAppOptions) {
   };
   app.post("/api/diet-entries", authMiddleware, createLogFoodEntryHandler(dietEntryOptions));
   app.get("/api/diet-entries", authMiddleware, createGetDayDietLogHandler(dietEntryOptions));
+  app.get("/api/diet-entries/logged-days", authMiddleware, createGetLoggedDaysHandler(dietEntryOptions));
   app.delete("/api/diet-entries/:id", authMiddleware, createDeleteFoodEntryHandler(dietEntryOptions));
   app.patch("/api/diet-entries/:id", authMiddleware, createUpdateFoodEntryHandler(dietEntryOptions));
 

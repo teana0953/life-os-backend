@@ -77,6 +77,13 @@ class InMemoryDietLogRepository implements DietLogRepository {
     }
     return entry;
   }
+
+  async listLoggedDays(userId: string, month: string): Promise<string[]> {
+    const days = new Set(
+      this.entries.filter((e) => e.userId === userId && e.day.startsWith(month)).map((e) => e.day),
+    );
+    return [...days].sort();
+  }
 }
 
 let dailyTargets: InMemoryDailyTargetRepository;

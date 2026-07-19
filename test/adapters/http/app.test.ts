@@ -25,6 +25,7 @@ const stubDietLogRepository: DietLogRepository = {
   listByDay: notImplemented,
   delete: notImplemented,
   update: notImplemented,
+  listLoggedDays: notImplemented,
 };
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
