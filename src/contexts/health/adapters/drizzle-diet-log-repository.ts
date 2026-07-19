@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { foodEntry } from "../../../shared/db/schema";
 import { portionsToNutrients } from "../domain/conversion";
@@ -114,5 +114,21 @@ export class DrizzleDietLogRepository implements DietLogRepository {
       .where(and(eq(foodEntry.userId, userId), eq(foodEntry.id, entryId)))
       .returning();
     return updated ? toDomain(updated) : null;
+  }
+
+  async listLoggedDays(userId: string, month: string): Promise<string[]> {
+    const db = this.getDb();
+    const rows = await db
+      .selectDistinct({ day: foodEntry.day })
+      .from(foodEntry)
+      .where(
+        and(
+          eq(foodEntry.userId, userId),
+          gte(foodEntry.day, `${month}-01`),
+          sql`${foodEntry.day} < (${`${month}-01`})::date + interval '1 month'`,
+        ),
+      )
+      .orderBy(asc(foodEntry.day));
+    return rows.map((row) => row.day);
   }
 }

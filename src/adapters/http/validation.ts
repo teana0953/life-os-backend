@@ -73,3 +73,12 @@ export function requireDay(value: unknown, field = "day"): string {
   }
   throw new BadRequestError(`${field} must be a valid date (YYYY-MM-DD)`);
 }
+
+/** A calendar month `YYYY-MM` (01-12); throws otherwise. */
+export function requireMonth(value: unknown, field = "month"): string {
+  const s = requireString(value, field);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(s)) {
+    throw new BadRequestError(`${field} must be a valid month (YYYY-MM)`);
+  }
+  return s;
+}

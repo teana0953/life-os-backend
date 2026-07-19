@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { deleteFoodEntry } from "../../../../src/contexts/health/application/delete-food-entry";
 import { getDayDietLog } from "../../../../src/contexts/health/application/get-day-diet-log";
+import { getLoggedDays } from "../../../../src/contexts/health/application/get-logged-days";
 import { logFoodEntryFromDictionary } from "../../../../src/contexts/health/application/log-food-entry-from-dictionary";
 import { logManualFoodEntry } from "../../../../src/contexts/health/application/log-manual-food-entry";
 import { EmptyUpdateError, updateFoodEntry } from "../../../../src/contexts/health/application/update-food-entry";
@@ -54,6 +55,13 @@ class InMemoryDietLogRepository implements DietLogRepository {
       Object.assign(entry, nutrients, patch.portions);
     }
     return entry;
+  }
+
+  async listLoggedDays(userId: string, month: string): Promise<string[]> {
+    const days = new Set(
+      this.entries.filter((e) => e.userId === userId && e.day.startsWith(month)).map((e) => e.day),
+    );
+    return [...days].sort();
   }
 }
 
@@ -422,5 +430,50 @@ describe("updateFoodEntry", () => {
 
     expect(updated?.day).toBe("2026-07-19");
     expect(updated?.eatenAt).toEqual(new Date("2026-07-19T01:00:00.000Z"));
+  });
+});
+
+describe("getLoggedDays", () => {
+  it("returns distinct logged days ascending, deduping multiple entries on the same day", async () => {
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-04", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-01", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-01", meal: "lunch", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-20", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    const days = await getLoggedDays(dietLog, "user-1", "2026-07");
+
+    expect(days).toEqual(["2026-07-01", "2026-07-04", "2026-07-20"]);
+  });
+
+  it("excludes days from other months", async () => {
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-06-30", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-08-01", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    const days = await getLoggedDays(dietLog, "user-1", "2026-07");
+
+    expect(days).toEqual([]);
+  });
+
+  it("returns an empty list for a month with no entries", async () => {
+    const days = await getLoggedDays(dietLog, "user-1", "2026-07");
+
+    expect(days).toEqual([]);
+  });
+
+  it("scopes to the requesting user, excluding another user's entries in the same month", async () => {
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-05", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+    await logManualFoodEntry(dietLog, { userId: "user-2", day: "2026-07-10", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    const days = await getLoggedDays(dietLog, "user-1", "2026-07");
+
+    expect(days).toEqual(["2026-07-05"]);
+  });
+
+  it("does not error for a February month", async () => {
+    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-02-14", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    const days = await getLoggedDays(dietLog, "user-1", "2026-02");
+
+    expect(days).toEqual(["2026-02-14"]);
   });
 });

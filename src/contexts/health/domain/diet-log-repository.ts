@@ -42,4 +42,6 @@ export interface DietLogRepository {
    * Returns the updated entry, or null when not owned/found.
    */
   update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null>;
+  /** Distinct calendar days in `month` (YYYY-MM) on which the user has at least one entry, ascending. */
+  listLoggedDays(userId: string, month: string): Promise<string[]>;
 }

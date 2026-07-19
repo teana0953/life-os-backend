@@ -139,6 +139,13 @@ class InMemoryDietLogRepository implements DietLogRepository {
     }
     return entry;
   }
+
+  async listLoggedDays(userId: string, month: string): Promise<string[]> {
+    const days = new Set(
+      this.entries.filter((e) => e.userId === userId && e.day.startsWith(month)).map((e) => e.day),
+    );
+    return [...days].sort();
+  }
 }
 
 class InMemoryDailyTargetRepository implements DailyTargetRepository {
@@ -570,6 +577,62 @@ describe("diet-tracking HTTP routes", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  describe("GET /api/diet-entries/logged-days", () => {
+    it("requires auth", async () => {
+      const { app } = buildApp();
+
+      const res = await app.request("/api/diet-entries/logged-days?month=2026-07");
+
+      expect(res.status).toBe(401);
+    });
+
+    it("returns the distinct logged days in the requested month, ascending, not a single-entry shape", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+      await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-04", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } }),
+      });
+      await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-01", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } }),
+      });
+
+      const res = await app.request("/api/diet-entries/logged-days?month=2026-07", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { days: string[] };
+      expect(body).toEqual({ days: ["2026-07-01", "2026-07-04"] });
+      // Confirms the static "logged-days" segment isn't captured by the ":id" param route
+      // (which would instead 404/entry-not-found on this path).
+      expect(body).not.toHaveProperty("error");
+    });
+
+    it("rejects a missing month as 400", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+
+      const res = await app.request("/api/diet-entries/logged-days", { headers: { Authorization: `Bearer ${token}` } });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("rejects a malformed month as 400", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+
+      const res = await app.request("/api/diet-entries/logged-days?month=2026-13", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      expect(res.status).toBe(400);
+    });
   });
 
   describe("PATCH /api/diet-entries/:id", () => {

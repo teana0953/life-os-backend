@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { deleteFoodEntry } from "../../../contexts/health/application/delete-food-entry";
 import { getDayDietLog } from "../../../contexts/health/application/get-day-diet-log";
+import { getLoggedDays } from "../../../contexts/health/application/get-logged-days";
 import { logFoodEntryFromDictionary } from "../../../contexts/health/application/log-food-entry-from-dictionary";
 import { logManualFoodEntry } from "../../../contexts/health/application/log-manual-food-entry";
 import { EmptyUpdateError, updateFoodEntry } from "../../../contexts/health/application/update-food-entry";
@@ -18,6 +19,7 @@ import {
   optionalPositiveFiniteNumber,
   optionalTimestamp,
   requireDay,
+  requireMonth,
   requireString,
 } from "../validation";
 
@@ -139,6 +141,15 @@ export function createGetDayDietLogHandler(options: DietEntryHandlerOptions) {
       meals: dayLog.meals.map((meal) => ({ meal: meal.meal, entries: meal.entries.map(entryToJson) })),
       totals: dayLog.totals,
     });
+  };
+}
+
+/** Protected `GET /api/diet-entries/logged-days?month=`: the caller's distinct logged days in a month. */
+export function createGetLoggedDaysHandler(options: DietEntryHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const days = await getLoggedDays(options.dietLogRepository, userId, requireMonth(c.req.query("month")));
+    return c.json({ days });
   };
 }
 
