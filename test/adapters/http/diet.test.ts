@@ -149,6 +149,16 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     return this.targetsByUserDay.get(`${userId}:${day}`) ?? null;
   }
 
+  async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
+    let latest: DailyTarget | null = null;
+    for (const target of this.targetsByUserDay.values()) {
+      if (target.userId === userId && target.day <= day && (!latest || target.day > latest.day)) {
+        latest = target;
+      }
+    }
+    return latest;
+  }
+
   async set(input: SetDailyTargetInput): Promise<DailyTarget> {
     const target: DailyTarget = {
       id: `target-${this.nextId++}`,

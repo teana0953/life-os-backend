@@ -28,6 +28,7 @@ const stubDietLogRepository: DietLogRepository = {
 };
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
+  getLatestOnOrBefore: notImplemented,
   set: notImplemented,
 };
 

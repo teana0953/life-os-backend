@@ -17,7 +17,9 @@ const ZERO_PORTIONS: Portions = { staple: 0, meat: 0, fruit: 0, veg: 0 };
  * Use case: a day's effective portion target (base + bonus) and remaining
  * portions (effective - sum of logged portions). Unclassified entries carry
  * zero portions, so they never reduce remaining. Days without a set target
- * report a zero base/bonus.
+ * carry forward the base from the most recent earlier target (bonus 0); a
+ * day that has never had a target set, directly or via carry-forward,
+ * reports a zero base/bonus.
  */
 export async function getDailyTargetWithRemaining(
   dailyTargetRepository: DailyTargetRepository,
@@ -25,12 +27,15 @@ export async function getDailyTargetWithRemaining(
   userId: string,
   day: string,
 ): Promise<DailyTargetWithRemaining> {
-  const target = await dailyTargetRepository.get(userId, day);
-  const base: Portions = target
-    ? { staple: target.baseStaple, meat: target.baseMeat, fruit: target.baseFruit, veg: target.baseVeg }
-    : ZERO_PORTIONS;
-  const bonus: Portions = target
-    ? { staple: target.bonusStaple, meat: target.bonusMeat, fruit: target.bonusFruit, veg: target.bonusVeg }
+  const exact = await dailyTargetRepository.get(userId, day);
+  const carry = exact ? null : await dailyTargetRepository.getLatestOnOrBefore(userId, day);
+  const base: Portions = exact
+    ? { staple: exact.baseStaple, meat: exact.baseMeat, fruit: exact.baseFruit, veg: exact.baseVeg }
+    : carry
+      ? { staple: carry.baseStaple, meat: carry.baseMeat, fruit: carry.baseFruit, veg: carry.baseVeg }
+      : ZERO_PORTIONS;
+  const bonus: Portions = exact
+    ? { staple: exact.bonusStaple, meat: exact.bonusMeat, fruit: exact.bonusFruit, veg: exact.bonusVeg }
     : ZERO_PORTIONS;
   const effective: Portions = {
     staple: base.staple + bonus.staple,
