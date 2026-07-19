@@ -469,6 +469,16 @@ describe("getLoggedDays", () => {
     expect(days).toEqual(["2026-07-05"]);
   });
 
+  // NOTE: this runs against the in-memory fake (a `startsWith(month)` filter),
+  // so it only guards the use-case's month-filtering semantics — it does NOT
+  // exercise the real Drizzle SQL. The actual risk this month specifically
+  // motivates (a naive `day <= '<month>-31'` upper bound would make Postgres
+  // reject '2026-02-31' as an out-of-range date) lives in
+  // DrizzleDietLogRepository.listLoggedDays, which uses a half-open range
+  // `day >= '<month>-01' AND day < ('<month>-01')::date + interval '1 month'`.
+  // That SQL correctness is covered by code review, not by this fake; there is
+  // no real-Postgres integration harness in this project (test/index.test.ts
+  // only exercises the bad-DATABASE_URL degradation path).
   it("does not error for a February month", async () => {
     await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-02-14", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
 
