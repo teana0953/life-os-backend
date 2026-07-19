@@ -4,7 +4,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
 import type { DailyTarget } from "../../../src/contexts/health/domain/daily-target";
 import type { DailyTargetRepository, SetDailyTargetInput } from "../../../src/contexts/health/domain/daily-target-repository";
-import type { CreateFoodEntryInput, DietLogRepository } from "../../../src/contexts/health/domain/diet-log-repository";
+import { portionsToNutrients } from "../../../src/contexts/health/domain/conversion";
+import type {
+  CreateFoodEntryInput,
+  DietLogRepository,
+  UpdateFoodEntryPatch,
+} from "../../../src/contexts/health/domain/diet-log-repository";
 import type {
   CreateCustomFoodItemInput,
   FoodDictionaryRepository,
@@ -115,6 +120,24 @@ class InMemoryDietLogRepository implements DietLogRepository {
     if (idx === -1) return false;
     this.entries.splice(idx, 1);
     return true;
+  }
+
+  async update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null> {
+    const entry = this.entries.find((e) => e.userId === userId && e.id === entryId);
+    if (!entry) return null;
+
+    if (patch.name !== undefined) entry.name = patch.name;
+    if (patch.meal !== undefined) entry.meal = patch.meal;
+    if (patch.eatenAt !== undefined) {
+      entry.eatenAt = patch.eatenAt;
+      entry.day = patch.eatenAt.toISOString().slice(0, 10);
+    }
+    if (patch.portions !== undefined) {
+      const nutrients = portionsToNutrients(patch.portions);
+      entry.unclassified = false;
+      Object.assign(entry, nutrients, patch.portions);
+    }
+    return entry;
   }
 }
 
@@ -537,5 +560,147 @@ describe("diet-tracking HTTP routes", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  describe("PATCH /api/diet-entries/:id", () => {
+    it("requires auth", async () => {
+      const { app } = buildApp();
+
+      const res = await app.request("/api/diet-entries/entry-1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meal: "lunch" }),
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    it("updating portions recomputes nutrients and clears unclassified", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+      const created = await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-18", meal: "snack", nutrients: { carb_g: 5, protein_g: 0, fat_g: 0, sugar_g: 0, fiber_g: 0, kcal: 20 } }),
+      });
+      const { id } = (await created.json()) as { id: string };
+
+      const res = await app.request(`/api/diet-entries/${id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ portions: { staple: 2 } }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { staple: number; carb_g: number; unclassified: boolean };
+      expect(body.staple).toBe(2);
+      expect(body.carb_g).toBe(30);
+      expect(body.unclassified).toBe(false);
+    });
+
+    it("updating only meal leaves other fields unchanged", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+      const created = await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", name: "oatmeal", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } }),
+      });
+      const original = (await created.json()) as { id: string; carb_g: number; eaten_at: string };
+
+      const res = await app.request(`/api/diet-entries/${original.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ meal: "lunch" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { meal: string; name: string; carb_g: number; eaten_at: string };
+      expect(body.meal).toBe("lunch");
+      expect(body.name).toBe("oatmeal");
+      expect(body.carb_g).toBe(original.carb_g);
+      expect(body.eaten_at).toBe(original.eaten_at);
+    });
+
+    it("updating eaten_at to another calendar date moves the entry's day", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+      const created = await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          day: "2026-07-18",
+          meal: "dinner",
+          portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+          eaten_at: "2026-07-18T23:00:00.000Z",
+        }),
+      });
+      const { id } = (await created.json()) as { id: string };
+
+      const res = await app.request(`/api/diet-entries/${id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ eaten_at: "2026-07-19T01:00:00.000Z" }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { day: string; eaten_at: string };
+      expect(body.day).toBe("2026-07-19");
+      expect(body.eaten_at).toBe("2026-07-19T01:00:00.000Z");
+    });
+
+    it("rejects an empty patch as 400", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+      const created = await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", portions: { staple: 1 } }),
+      });
+      const { id } = (await created.json()) as { id: string };
+
+      const res = await app.request(`/api/diet-entries/${id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it("returns 404 for another user's entry", async () => {
+      const { app } = buildApp();
+      const token = await validToken("uid-1");
+      const created = await app.request("/api/diet-entries", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", portions: { staple: 1 } }),
+      });
+      const { id } = (await created.json()) as { id: string };
+      const otherToken = await validToken("uid-2");
+
+      const res = await app.request(`/api/diet-entries/${id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${otherToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ meal: "lunch" }),
+      });
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "not_found" });
+    });
+
+    it("returns 404 for a missing entry", async () => {
+      const { app } = buildApp();
+      const token = await validToken();
+
+      const res = await app.request("/api/diet-entries/does-not-exist", {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ meal: "lunch" }),
+      });
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "not_found" });
+    });
   });
 });

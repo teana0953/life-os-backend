@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { foodEntry } from "../../../shared/db/schema";
-import type { CreateFoodEntryInput, DietLogRepository } from "../domain/diet-log-repository";
+import { portionsToNutrients } from "../domain/conversion";
+import type { CreateFoodEntryInput, DietLogRepository, UpdateFoodEntryPatch } from "../domain/diet-log-repository";
 import type { FoodEntry } from "../domain/food-entry";
 
 type FoodEntryRow = typeof foodEntry.$inferSelect;
@@ -80,5 +81,38 @@ export class DrizzleDietLogRepository implements DietLogRepository {
       .where(and(eq(foodEntry.userId, userId), eq(foodEntry.id, entryId)))
       .returning({ id: foodEntry.id });
     return deleted.length > 0;
+  }
+
+  async update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null> {
+    const db = this.getDb();
+    const values: Partial<typeof foodEntry.$inferInsert> = {};
+
+    if (patch.name !== undefined) values.name = patch.name;
+    if (patch.meal !== undefined) values.meal = patch.meal;
+    if (patch.eatenAt !== undefined) {
+      values.eatenAt = patch.eatenAt;
+      values.day = patch.eatenAt.toISOString().slice(0, 10);
+    }
+    if (patch.portions !== undefined) {
+      const nutrients = portionsToNutrients(patch.portions);
+      values.unclassified = false;
+      values.carbG = String(nutrients.carbG);
+      values.proteinG = String(nutrients.proteinG);
+      values.fatG = String(nutrients.fatG);
+      values.sugarG = String(nutrients.sugarG);
+      values.fiberG = String(nutrients.fiberG);
+      values.kcal = String(nutrients.kcal);
+      values.staple = String(patch.portions.staple);
+      values.meat = String(patch.portions.meat);
+      values.fruit = String(patch.portions.fruit);
+      values.veg = String(patch.portions.veg);
+    }
+
+    const [updated] = await db
+      .update(foodEntry)
+      .set(values)
+      .where(and(eq(foodEntry.userId, userId), eq(foodEntry.id, entryId)))
+      .returning();
+    return updated ? toDomain(updated) : null;
   }
 }

@@ -4,7 +4,12 @@ import { logManualFoodEntry } from "../../../../src/contexts/health/application/
 import { setDailyTarget } from "../../../../src/contexts/health/application/set-daily-target";
 import type { DailyTarget } from "../../../../src/contexts/health/domain/daily-target";
 import type { DailyTargetRepository, SetDailyTargetInput } from "../../../../src/contexts/health/domain/daily-target-repository";
-import type { CreateFoodEntryInput, DietLogRepository } from "../../../../src/contexts/health/domain/diet-log-repository";
+import { portionsToNutrients } from "../../../../src/contexts/health/domain/conversion";
+import type {
+  CreateFoodEntryInput,
+  DietLogRepository,
+  UpdateFoodEntryPatch,
+} from "../../../../src/contexts/health/domain/diet-log-repository";
 import type { FoodEntry } from "../../../../src/contexts/health/domain/food-entry";
 
 class InMemoryDailyTargetRepository implements DailyTargetRepository {
@@ -53,6 +58,24 @@ class InMemoryDietLogRepository implements DietLogRepository {
     if (idx === -1) return false;
     this.entries.splice(idx, 1);
     return true;
+  }
+
+  async update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null> {
+    const entry = this.entries.find((e) => e.userId === userId && e.id === entryId);
+    if (!entry) return null;
+
+    if (patch.name !== undefined) entry.name = patch.name;
+    if (patch.meal !== undefined) entry.meal = patch.meal;
+    if (patch.eatenAt !== undefined) {
+      entry.eatenAt = patch.eatenAt;
+      entry.day = patch.eatenAt.toISOString().slice(0, 10);
+    }
+    if (patch.portions !== undefined) {
+      const nutrients = portionsToNutrients(patch.portions);
+      entry.unclassified = false;
+      Object.assign(entry, nutrients, patch.portions);
+    }
+    return entry;
   }
 }
 

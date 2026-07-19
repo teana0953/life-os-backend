@@ -1,3 +1,4 @@
+import type { Portions } from "./conversion";
 import type { FoodEntry, FoodEntrySource } from "./food-entry";
 
 export interface CreateFoodEntryInput {
@@ -21,9 +22,24 @@ export interface CreateFoodEntryInput {
   eatenAt: Date;
 }
 
+/** Partial update: only supplied fields change (D2 in design.md). */
+export interface UpdateFoodEntryPatch {
+  name?: string | null;
+  meal?: string;
+  eatenAt?: Date;
+  portions?: Portions;
+}
+
 export interface DietLogRepository {
   create(input: CreateFoodEntryInput): Promise<FoodEntry>;
   listByDay(userId: string, day: string): Promise<FoodEntry[]>;
   /** Deletes the entry if owned by userId. Returns whether an entry was deleted. */
   delete(userId: string, entryId: string): Promise<boolean>;
+  /**
+   * Updates the entry if owned by userId, merging only supplied patch fields.
+   * Supplying `portions` recomputes nutrients and clears `unclassified`;
+   * supplying `eatenAt` also updates `day` to its calendar date (D1, D2).
+   * Returns the updated entry, or null when not owned/found.
+   */
+  update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null>;
 }

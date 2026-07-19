@@ -3,7 +3,8 @@ import { deleteFoodEntry } from "../../../contexts/health/application/delete-foo
 import { getDayDietLog } from "../../../contexts/health/application/get-day-diet-log";
 import { logFoodEntryFromDictionary } from "../../../contexts/health/application/log-food-entry-from-dictionary";
 import { logManualFoodEntry } from "../../../contexts/health/application/log-manual-food-entry";
-import type { DietLogRepository } from "../../../contexts/health/domain/diet-log-repository";
+import { EmptyUpdateError, updateFoodEntry } from "../../../contexts/health/application/update-food-entry";
+import type { DietLogRepository, UpdateFoodEntryPatch } from "../../../contexts/health/domain/diet-log-repository";
 import type { FoodDictionaryRepository } from "../../../contexts/health/domain/food-dictionary-repository";
 import type { FoodEntry } from "../../../contexts/health/domain/food-entry";
 import { NullBaseGramsError } from "../../../contexts/health/domain/quantity";
@@ -148,5 +149,36 @@ export function createDeleteFoodEntryHandler(options: DietEntryHandlerOptions) {
     const deleted = await deleteFoodEntry(options.dietLogRepository, userId, c.req.param("id") ?? "");
     if (!deleted) return c.json({ error: "not_found" }, 404);
     return c.body(null, 204);
+  };
+}
+
+/** Protected `PATCH /api/diet-entries/:id`: partially update one of the caller's own entries. */
+export function createUpdateFoodEntryHandler(options: DietEntryHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    const patch: UpdateFoodEntryPatch = {};
+    if (body.name !== undefined) patch.name = typeof body.name === "string" ? body.name : null;
+    if (body.meal !== undefined) patch.meal = requireString(body.meal, "meal");
+    if (body.eaten_at !== undefined) patch.eatenAt = optionalTimestamp(body.eaten_at, "eaten_at");
+    if (body.portions && typeof body.portions === "object") {
+      const portions = body.portions as Record<string, unknown>;
+      patch.portions = {
+        staple: optionalFiniteNumber(portions.staple, "portions.staple", 0),
+        meat: optionalFiniteNumber(portions.meat, "portions.meat", 0),
+        fruit: optionalFiniteNumber(portions.fruit, "portions.fruit", 0),
+        veg: optionalFiniteNumber(portions.veg, "portions.veg", 0),
+      };
+    }
+
+    try {
+      const entry = await updateFoodEntry(options.dietLogRepository, userId, c.req.param("id") ?? "", patch);
+      if (!entry) return c.json({ error: "not_found" }, 404);
+      return c.json(entryToJson(entry));
+    } catch (err) {
+      if (err instanceof EmptyUpdateError) throw new BadRequestError(err.message);
+      throw err;
+    }
   };
 }

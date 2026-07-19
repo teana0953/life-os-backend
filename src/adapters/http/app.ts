@@ -14,6 +14,7 @@ import {
   createDeleteFoodEntryHandler,
   createGetDayDietLogHandler,
   createLogFoodEntryHandler,
+  createUpdateFoodEntryHandler,
 } from "./routes/diet-entries";
 import {
   createCustomFoodItemHandler,
@@ -57,7 +58,7 @@ export function createApp(options: CreateAppOptions) {
     "*",
     cors({
       origin: (origin) => (isAllowedOrigin(origin, options.allowedWebOrigin) ? origin : null),
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type"],
     }),
   );
@@ -90,6 +91,7 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/diet-entries", authMiddleware, createLogFoodEntryHandler(dietEntryOptions));
   app.get("/api/diet-entries", authMiddleware, createGetDayDietLogHandler(dietEntryOptions));
   app.delete("/api/diet-entries/:id", authMiddleware, createDeleteFoodEntryHandler(dietEntryOptions));
+  app.patch("/api/diet-entries/:id", authMiddleware, createUpdateFoodEntryHandler(dietEntryOptions));
 
   const dailyTargetOptions = {
     userRepository: options.userRepository,

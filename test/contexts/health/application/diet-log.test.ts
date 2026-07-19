@@ -3,7 +3,13 @@ import { deleteFoodEntry } from "../../../../src/contexts/health/application/del
 import { getDayDietLog } from "../../../../src/contexts/health/application/get-day-diet-log";
 import { logFoodEntryFromDictionary } from "../../../../src/contexts/health/application/log-food-entry-from-dictionary";
 import { logManualFoodEntry } from "../../../../src/contexts/health/application/log-manual-food-entry";
-import type { CreateFoodEntryInput, DietLogRepository } from "../../../../src/contexts/health/domain/diet-log-repository";
+import { EmptyUpdateError, updateFoodEntry } from "../../../../src/contexts/health/application/update-food-entry";
+import { portionsToNutrients } from "../../../../src/contexts/health/domain/conversion";
+import type {
+  CreateFoodEntryInput,
+  DietLogRepository,
+  UpdateFoodEntryPatch,
+} from "../../../../src/contexts/health/domain/diet-log-repository";
 import type { FoodDictionaryRepository } from "../../../../src/contexts/health/domain/food-dictionary-repository";
 import type { FoodEntry } from "../../../../src/contexts/health/domain/food-entry";
 import type { FoodItem } from "../../../../src/contexts/health/domain/food-item";
@@ -30,6 +36,24 @@ class InMemoryDietLogRepository implements DietLogRepository {
     if (idx === -1) return false;
     this.entries.splice(idx, 1);
     return true;
+  }
+
+  async update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null> {
+    const entry = this.entries.find((e) => e.userId === userId && e.id === entryId);
+    if (!entry) return null;
+
+    if (patch.name !== undefined) entry.name = patch.name;
+    if (patch.meal !== undefined) entry.meal = patch.meal;
+    if (patch.eatenAt !== undefined) {
+      entry.eatenAt = patch.eatenAt;
+      entry.day = patch.eatenAt.toISOString().slice(0, 10);
+    }
+    if (patch.portions !== undefined) {
+      const nutrients = portionsToNutrients(patch.portions);
+      entry.unclassified = false;
+      Object.assign(entry, nutrients, patch.portions);
+    }
+    return entry;
   }
 }
 
@@ -332,5 +356,71 @@ describe("deleteFoodEntry", () => {
 
     expect(deleted).toBe(false);
     expect(await dietLog.listByDay("user-1", "2026-07-18")).toHaveLength(1);
+  });
+});
+
+describe("updateFoodEntry", () => {
+  it("updating portions recomputes nutrients (2 staple -> ~30 g carbohydrate) and clears unclassified", async () => {
+    const entry = await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "snack",
+      nutrients: { carbG: 5, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 20 },
+    });
+
+    const updated = await updateFoodEntry(dietLog, "user-1", entry.id, { portions: { staple: 2, meat: 0, fruit: 0, veg: 0 } });
+
+    expect(updated?.staple).toBe(2);
+    expect(updated?.carbG).toBe(30);
+    expect(updated?.unclassified).toBe(false);
+  });
+
+  it("updating only meal leaves other fields unchanged", async () => {
+    const entry = await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      name: "oatmeal",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+    });
+
+    const updated = await updateFoodEntry(dietLog, "user-1", entry.id, { meal: "lunch" });
+
+    expect(updated?.meal).toBe("lunch");
+    expect(updated?.name).toBe("oatmeal");
+    expect(updated?.staple).toBe(1);
+    expect(updated?.carbG).toBe(entry.carbG);
+    expect(updated?.eatenAt).toEqual(entry.eatenAt);
+  });
+
+  it("cannot update another user's entry: reports not found and makes no change", async () => {
+    const entry = await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-18", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    const updated = await updateFoodEntry(dietLog, "user-2", entry.id, { meal: "lunch" });
+
+    expect(updated).toBeNull();
+    const [unchanged] = await dietLog.listByDay("user-1", "2026-07-18");
+    expect(unchanged?.meal).toBe("breakfast");
+  });
+
+  it("rejects an update with no updatable fields", async () => {
+    const entry = await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-18", meal: "breakfast", portions: { staple: 1, meat: 0, fruit: 0, veg: 0 } });
+
+    await expect(updateFoodEntry(dietLog, "user-1", entry.id, {})).rejects.toThrow(EmptyUpdateError);
+  });
+
+  it("editing the time across a day boundary moves the entry's day", async () => {
+    const entry = await logManualFoodEntry(dietLog, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "dinner",
+      portions: { staple: 1, meat: 0, fruit: 0, veg: 0 },
+      eatenAt: new Date("2026-07-18T23:00:00.000Z"),
+    });
+
+    const updated = await updateFoodEntry(dietLog, "user-1", entry.id, { eatenAt: new Date("2026-07-19T01:00:00.000Z") });
+
+    expect(updated?.day).toBe("2026-07-19");
+    expect(updated?.eatenAt).toEqual(new Date("2026-07-19T01:00:00.000Z"));
   });
 });
