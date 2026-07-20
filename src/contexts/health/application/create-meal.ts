@@ -2,7 +2,7 @@ import { portionsToNutrients, resolveKcal, type Portions } from "../domain/conve
 import type { FoodDictionaryRepository } from "../domain/food-dictionary-repository";
 import type { MealEntry } from "../domain/meal-entry";
 import type { CreateMealItemInput, MealRepository } from "../domain/meal-repository";
-import { gramsToQuantity } from "../domain/quantity";
+import { measureToQuantity } from "../domain/quantity";
 
 interface ManualNutrientsInput {
   carbG: number;
@@ -20,7 +20,7 @@ interface ManualItemFields {
 
 /** One item to add to the meal: a dictionary item, or a manual item from portions or nutrients. */
 export type CreateMealItem =
-  | { foodItemId: string; quantity?: number; grams?: number }
+  | { foodItemId: string; quantity?: number; measure?: number }
   | (ManualItemFields & { portions: Portions; nutrients?: undefined })
   | (ManualItemFields & { nutrients: ManualNutrientsInput; portions?: undefined });
 
@@ -33,7 +33,7 @@ export interface CreateMealInput {
   items: CreateMealItem[];
 }
 
-function isDictItem(item: CreateMealItem): item is { foodItemId: string; quantity?: number; grams?: number } {
+function isDictItem(item: CreateMealItem): item is { foodItemId: string; quantity?: number; measure?: number } {
   return "foodItemId" in item;
 }
 
@@ -42,9 +42,10 @@ function isDictItem(item: CreateMealItem): item is { foodItemId: string; quantit
  * items in one call (D4). Each item stores per-unit values + `quantity`,
  * never pre-multiplied (D3): a dictionary item copies the dict item's
  * per-unit portions/nutrients and sets `quantity` from an explicit quantity
- * or `grams ÷ base_grams`; a manual item stores the supplied per-unit
- * portions (deriving per-unit nutrients, classified) or nutrients (stored as
- * given, unclassified), `quantity` 1.
+ * or `measure ÷ base_amount` (measure interpreted in the item's own
+ * `measureUnit`, G3); a manual item stores the supplied per-unit portions
+ * (deriving per-unit nutrients, classified) or nutrients (stored as given,
+ * unclassified), `quantity` 1.
  */
 export async function createMeal(
   mealRepository: MealRepository,
@@ -58,7 +59,8 @@ export async function createMeal(
       const dictItem = await foodDictionaryRepository.findById(input.userId, item.foodItemId);
       if (!dictItem) throw new Error("food item not found");
 
-      const quantity = item.grams !== undefined ? gramsToQuantity(item.grams, dictItem.baseGrams) : (item.quantity ?? 1);
+      const quantity =
+        item.measure !== undefined ? measureToQuantity(item.measure, dictItem.baseAmount) : (item.quantity ?? 1);
       items.push({
         foodItemId: dictItem.id,
         name: dictItem.name,
@@ -76,7 +78,8 @@ export async function createMeal(
         fruit: dictItem.fruit,
         veg: dictItem.veg,
         quantity,
-        baseGrams: dictItem.baseGrams,
+        baseAmount: dictItem.baseAmount,
+        measureUnit: dictItem.measureUnit,
       });
     } else if (item.portions) {
       const nutrients = portionsToNutrients(item.portions);
@@ -89,7 +92,8 @@ export async function createMeal(
         ...nutrients,
         ...item.portions,
         quantity: 1,
-        baseGrams: null,
+        baseAmount: null,
+        measureUnit: null,
       });
     } else {
       const { carbG, proteinG, fatG, sugarG, fiberG, kcal } = item.nutrients;
@@ -110,7 +114,8 @@ export async function createMeal(
         fruit: 0,
         veg: 0,
         quantity: 1,
-        baseGrams: null,
+        baseAmount: null,
+        measureUnit: null,
       });
     }
   }

@@ -24,8 +24,10 @@ export interface MealItem {
   veg: number;
   /** Multiplier; the stored per-unit values are never rescaled when only quantity changes (D3). */
   quantity: number;
-  /** Gram weight of one unit, copied from the dictionary item at add time; null when not gram-priced. */
-  baseGrams: number | null;
+  /** Amount of one unit in `measureUnit`, copied from the dictionary item at add time; both null when not directly measurable. */
+  baseAmount: number | null;
+  /** Unit `baseAmount` is expressed in ('g' or 'ml'); null iff baseAmount is null. */
+  measureUnit: "g" | "ml" | null;
   createdAt: Date;
 }
 

@@ -75,7 +75,8 @@ class InMemoryMealRepository implements MealRepository {
       kcal: 0,
       ...portions,
       quantity,
-      baseGrams: null,
+      baseAmount: null,
+      measureUnit: null,
       createdAt: new Date(),
     };
     mealRow.items.push(item);
@@ -102,7 +103,8 @@ class InMemoryMealRepository implements MealRepository {
       fruit: 0,
       veg: 0,
       quantity: 1,
-      baseGrams: null,
+      baseAmount: null,
+      measureUnit: null,
       createdAt: new Date(),
     };
     mealRow.items.push(item);

@@ -16,7 +16,7 @@ import type {
   UpdateMealItemPatch,
   UpsertMealWithItemsInput,
 } from "../../../../src/contexts/health/domain/meal-repository";
-import { gramsToQuantity, NullBaseGramsError } from "../../../../src/contexts/health/domain/quantity";
+import { measureToQuantity, NullBaseMeasureError } from "../../../../src/contexts/health/domain/quantity";
 
 type StoredMeal = MealSummary & { items: MealItem[] };
 
@@ -80,8 +80,8 @@ class InMemoryMealRepository implements MealRepository {
 
     if (patch.quantity !== undefined) {
       item.quantity = patch.quantity;
-    } else if (patch.grams !== undefined) {
-      item.quantity = gramsToQuantity(patch.grams, item.baseGrams);
+    } else if (patch.measure !== undefined) {
+      item.quantity = measureToQuantity(patch.measure, item.baseAmount);
     }
     if (patch.portions !== undefined) {
       const nutrients = portionsToNutrients(patch.portions);
@@ -122,7 +122,8 @@ const riceBowl: FoodItem = {
   meat: 0,
   fruit: 0,
   veg: 0,
-  baseGrams: null,
+  baseAmount: null,
+  measureUnit: null,
   createdAt: new Date(),
 };
 
@@ -140,7 +141,27 @@ const riceGram: FoodItem = {
   meat: 0,
   fruit: 0,
   veg: 0,
-  baseGrams: 50,
+  baseAmount: 50,
+  measureUnit: "g",
+  createdAt: new Date(),
+};
+
+const soyMilk: FoodItem = {
+  id: "item-soy-milk-240ml",
+  ownerUserId: null,
+  name: "無糖豆漿/240mL",
+  carbG: 0,
+  proteinG: 7,
+  fatG: 0,
+  sugarG: 0,
+  fiberG: 0,
+  kcal: 28,
+  staple: 0,
+  meat: 1,
+  fruit: 0,
+  veg: 0,
+  baseAmount: 240,
+  measureUnit: "ml",
   createdAt: new Date(),
 };
 
@@ -222,23 +243,41 @@ describe("createMeal", () => {
     expect(created.items[0]?.quantity).toBe(1);
   });
 
-  it("converts a gram amount to quantity via base_grams, leaving per-unit values unchanged (33g / 50 -> 0.66)", async () => {
+  it("converts a gram measure to quantity via base_amount, leaving per-unit values unchanged (33g / 50 -> 0.66)", async () => {
     const foodDictionary = new StubFoodDictionaryRepository(riceGram) as unknown as FoodDictionaryRepository;
 
     const created = await createMeal(meals, foodDictionary, {
       userId: "user-1",
       day: "2026-07-18",
       meal: "breakfast",
-      items: [{ foodItemId: riceGram.id, grams: 33 }],
+      items: [{ foodItemId: riceGram.id, measure: 33 }],
     });
 
     const item = created.items[0];
     expect(item?.staple).toBe(1);
     expect(item?.quantity).toBeCloseTo(0.66);
-    expect(item?.baseGrams).toBe(50);
+    expect(item?.baseAmount).toBe(50);
+    expect(item?.measureUnit).toBe("g");
   });
 
-  it("rejects a gram amount when the dictionary item has no base_grams", async () => {
+  it("converts a millilitre measure to quantity via base_amount, leaving per-unit values unchanged (120ml / 240 -> 0.5)", async () => {
+    const foodDictionary = new StubFoodDictionaryRepository(soyMilk) as unknown as FoodDictionaryRepository;
+
+    const created = await createMeal(meals, foodDictionary, {
+      userId: "user-1",
+      day: "2026-07-18",
+      meal: "breakfast",
+      items: [{ foodItemId: soyMilk.id, measure: 120 }],
+    });
+
+    const item = created.items[0];
+    expect(item?.meat).toBe(1);
+    expect(item?.quantity).toBe(0.5);
+    expect(item?.baseAmount).toBe(240);
+    expect(item?.measureUnit).toBe("ml");
+  });
+
+  it("rejects a measure amount when the dictionary item has no base_amount", async () => {
     const foodDictionary = new StubFoodDictionaryRepository(riceBowl) as unknown as FoodDictionaryRepository;
 
     await expect(
@@ -246,9 +285,9 @@ describe("createMeal", () => {
         userId: "user-1",
         day: "2026-07-18",
         meal: "breakfast",
-        items: [{ foodItemId: riceBowl.id, grams: 33 }],
+        items: [{ foodItemId: riceBowl.id, measure: 33 }],
       }),
-    ).rejects.toThrow(NullBaseGramsError);
+    ).rejects.toThrow(NullBaseMeasureError);
   });
 
   it("stores a manual item from portions with derived per-unit nutrients, classified, quantity 1", async () => {
@@ -381,7 +420,7 @@ describe("updateMealItem", () => {
     expect(updated?.staple).toBe(1); // per-unit unchanged, no double-scale
   });
 
-  it("a gram update sets quantity = grams / base_grams, leaving per-unit values untouched", async () => {
+  it("a measure update sets quantity = measure / base_amount, leaving per-unit values untouched", async () => {
     const created = await createMeal(meals, foodDictionary, {
       userId: "user-1",
       day: "2026-07-18",
@@ -390,13 +429,13 @@ describe("updateMealItem", () => {
     });
     const itemId = created.items[0]!.id;
 
-    const updated = await updateMealItem(meals, "user-1", itemId, { grams: 33 });
+    const updated = await updateMealItem(meals, "user-1", itemId, { measure: 33 });
 
     expect(updated?.quantity).toBeCloseTo(0.66);
     expect(updated?.staple).toBe(1);
   });
 
-  it("rejects a gram update when the item has no base_grams", async () => {
+  it("rejects a measure update when the item has no base_amount", async () => {
     const dict = new StubFoodDictionaryRepository(riceBowl) as unknown as FoodDictionaryRepository;
     const created = await createMeal(meals, dict, {
       userId: "user-1",
@@ -406,7 +445,7 @@ describe("updateMealItem", () => {
     });
     const itemId = created.items[0]!.id;
 
-    await expect(updateMealItem(meals, "user-1", itemId, { grams: 33 })).rejects.toThrow(NullBaseGramsError);
+    await expect(updateMealItem(meals, "user-1", itemId, { measure: 33 })).rejects.toThrow(NullBaseMeasureError);
   });
 
   it("a portions update recomputes per-unit nutrients and marks classified, leaving quantity untouched", async () => {

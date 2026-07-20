@@ -1,6 +1,6 @@
 /**
- * Pure quantity scaling and gram-to-quantity conversion (D1, D2 in design.md).
- * No Workers runtime, no I/O.
+ * Pure quantity scaling and measure-to-quantity conversion (D1, D2 in design.md,
+ * generalised to a measure amount + unit by G3). No Workers runtime, no I/O.
  */
 
 export interface Scalable {
@@ -16,8 +16,8 @@ export interface Scalable {
   veg: number;
 }
 
-/** Thrown when a gram amount is given for an item whose base_grams is null (D2). */
-export class NullBaseGramsError extends Error {}
+/** Thrown when a measure amount is given for an item whose base_amount is null (D2, G3). */
+export class NullBaseMeasureError extends Error {}
 
 /** Scales both the atomic nutrients and the food-group portions by `quantity` (D1). */
 export function scaleByQuantity<T extends Scalable>(item: T, quantity: number): Scalable {
@@ -35,10 +35,10 @@ export function scaleByQuantity<T extends Scalable>(item: T, quantity: number): 
   };
 }
 
-/** Converts a gram amount to a quantity via the item's base_grams; throws when base_grams is null (D2). */
-export function gramsToQuantity(grams: number, baseGrams: number | null): number {
-  if (baseGrams === null) {
-    throw new NullBaseGramsError("item has no base_grams defined");
+/** Converts a measure amount to a quantity via the item's base_amount; throws when base_amount is null (D2, G3). */
+export function measureToQuantity(measure: number, baseAmount: number | null): number {
+  if (baseAmount === null) {
+    throw new NullBaseMeasureError("item has no base_amount defined");
   }
-  return grams / baseGrams;
+  return measure / baseAmount;
 }

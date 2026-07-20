@@ -13,7 +13,9 @@ export interface FoodItem {
   meat: number;
   fruit: number;
   veg: number;
-  /** Gram weight of one dictionary unit, used to convert a gram amount to a quantity; null when the unit has no defined gram weight. */
-  baseGrams: number | null;
+  /** Amount of one dictionary unit in `measureUnit`, used to convert a measure amount to a quantity; both null when the unit has no defined measure basis (household unit). */
+  baseAmount: number | null;
+  /** Unit `baseAmount` is expressed in ('g' or 'ml'); null iff baseAmount is null. */
+  measureUnit: "g" | "ml" | null;
   createdAt: Date;
 }
