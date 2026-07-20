@@ -4,7 +4,7 @@ import { mealEntry, mealItem } from "../../../shared/db/schema";
 import { portionsToNutrients } from "../domain/conversion";
 import type { MealEntry, MealItem, MealSummary } from "../domain/meal-entry";
 import type { CreateMealItemInput, MealRepository, UpdateMealItemPatch, UpsertMealWithItemsInput } from "../domain/meal-repository";
-import { gramsToQuantity } from "../domain/quantity";
+import { measureToQuantity } from "../domain/quantity";
 
 type MealEntryRow = typeof mealEntry.$inferSelect;
 type MealItemRow = typeof mealItem.$inferSelect;
@@ -33,7 +33,8 @@ function toMealItem(row: MealItemRow): MealItem {
     fruit: Number(row.fruit),
     veg: Number(row.veg),
     quantity: Number(row.quantity),
-    baseGrams: row.baseGrams === null ? null : Number(row.baseGrams),
+    baseAmount: row.baseAmount === null ? null : Number(row.baseAmount),
+    measureUnit: row.measureUnit,
     createdAt: row.createdAt,
   };
 }
@@ -57,7 +58,8 @@ function itemToRow(mealEntryId: string, item: CreateMealItemInput): typeof mealI
     fruit: String(item.fruit),
     veg: String(item.veg),
     quantity: String(item.quantity),
-    baseGrams: item.baseGrams === null ? null : String(item.baseGrams),
+    baseAmount: item.baseAmount === null ? null : String(item.baseAmount),
+    measureUnit: item.measureUnit,
   };
 }
 
@@ -167,9 +169,9 @@ export class DrizzleMealRepository implements MealRepository {
     const values: Partial<typeof mealItem.$inferInsert> = {};
     if (patch.quantity !== undefined) {
       values.quantity = String(patch.quantity);
-    } else if (patch.grams !== undefined) {
-      const baseGrams = current.baseGrams === null ? null : Number(current.baseGrams);
-      values.quantity = String(gramsToQuantity(patch.grams, baseGrams));
+    } else if (patch.measure !== undefined) {
+      const baseAmount = current.baseAmount === null ? null : Number(current.baseAmount);
+      values.quantity = String(measureToQuantity(patch.measure, baseAmount));
     }
     if (patch.portions !== undefined) {
       const nutrients = portionsToNutrients(patch.portions);

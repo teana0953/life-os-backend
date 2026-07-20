@@ -5,12 +5,12 @@ import type { MealRepository, UpdateMealItemPatch } from "../domain/meal-reposit
 export class EmptyUpdateError extends Error {}
 
 function isEmptyPatch(patch: UpdateMealItemPatch): boolean {
-  return patch.quantity === undefined && patch.grams === undefined && patch.portions === undefined;
+  return patch.quantity === undefined && patch.measure === undefined && patch.portions === undefined;
 }
 
 /**
  * Use case: update one of the user's own meal items (Model Y, D3). A
- * quantity or gram patch sets only the `quantity` column (per-unit values
+ * quantity or measure patch sets only the `quantity` column (per-unit values
  * untouched, no double-scaling); a portions patch sets the per-unit portion
  * columns and recomputes per-unit nutrients, marking the item classified.
  * Returns null if not owned/found.

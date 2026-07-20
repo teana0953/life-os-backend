@@ -18,7 +18,8 @@ export interface CreateMealItemInput {
   fruit: number;
   veg: number;
   quantity: number;
-  baseGrams: number | null;
+  baseAmount: number | null;
+  measureUnit: "g" | "ml" | null;
 }
 
 export interface UpsertMealWithItemsInput {
@@ -31,15 +32,16 @@ export interface UpsertMealWithItemsInput {
 }
 
 /**
- * Partial update for a meal item (Model Y, D3): `quantity` and `grams` are
- * mutually exclusive ways to set the `quantity` column only (grams is
- * converted via the item's own stored `base_grams`); `portions` sets the
- * per-unit portion columns and recomputes per-unit nutrients, marking the
- * item classified. None of these rescale the stored per-unit values.
+ * Partial update for a meal item (Model Y, D3): `quantity` and `measure` are
+ * mutually exclusive ways to set the `quantity` column only (measure is
+ * converted via the item's own stored `base_amount`, interpreted in its own
+ * `measureUnit`); `portions` sets the per-unit portion columns and recomputes
+ * per-unit nutrients, marking the item classified. None of these rescale the
+ * stored per-unit values.
  */
 export interface UpdateMealItemPatch {
   quantity?: number;
-  grams?: number;
+  measure?: number;
   portions?: Portions;
 }
 

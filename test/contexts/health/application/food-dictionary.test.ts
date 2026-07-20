@@ -35,7 +35,7 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   }
 
   async createCustom(input: CreateCustomFoodItemInput): Promise<FoodItem> {
-    return this.seed({ ...input, baseGrams: null });
+    return this.seed({ ...input, baseAmount: null, measureUnit: null });
   }
 
   async favorite(userId: string, foodItemId: string): Promise<void> {
@@ -59,8 +59,8 @@ beforeEach(() => {
 
 describe("searchFoodDictionary", () => {
   it("excludes non-matching items and returns items matching a name substring", async () => {
-    repo.seed({ ownerUserId: null, name: "香蕉/1根", carbG: 30, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 120, staple: 0, meat: 0, fruit: 2, veg: 0, baseGrams: null });
-    repo.seed({ ownerUserId: null, name: "飯/1碗", carbG: 60, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 240, staple: 4, meat: 0, fruit: 0, veg: 0, baseGrams: null });
+    repo.seed({ ownerUserId: null, name: "香蕉/1根", carbG: 30, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 120, staple: 0, meat: 0, fruit: 2, veg: 0, baseAmount: null, measureUnit: null });
+    repo.seed({ ownerUserId: null, name: "飯/1碗", carbG: 60, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 240, staple: 4, meat: 0, fruit: 0, veg: 0, baseAmount: null, measureUnit: null });
 
     const results = await searchFoodDictionary(repo, "user-1", "香蕉");
 
@@ -69,7 +69,7 @@ describe("searchFoodDictionary", () => {
   });
 
   it("returns an empty result set when nothing matches", async () => {
-    repo.seed({ ownerUserId: null, name: "飯/1碗", carbG: 60, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 240, staple: 4, meat: 0, fruit: 0, veg: 0, baseGrams: null });
+    repo.seed({ ownerUserId: null, name: "飯/1碗", carbG: 60, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 240, staple: 4, meat: 0, fruit: 0, veg: 0, baseAmount: null, measureUnit: null });
 
     const results = await searchFoodDictionary(repo, "user-1", "no-such-food");
 
@@ -77,7 +77,7 @@ describe("searchFoodDictionary", () => {
   });
 
   it("returns shared items and the searching user's own custom items, excluding another user's custom items", async () => {
-    repo.seed({ ownerUserId: null, name: "自訂菜/1份", carbG: 10, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 40, staple: 0, meat: 0, fruit: 0, veg: 1, baseGrams: null });
+    repo.seed({ ownerUserId: null, name: "自訂菜/1份", carbG: 10, proteinG: 0, fatG: 0, sugarG: 0, fiberG: 0, kcal: 40, staple: 0, meat: 0, fruit: 0, veg: 1, baseAmount: null, measureUnit: null });
     await createCustomFoodItem(repo, {
       ownerUserId: "user-1",
       name: "自訂菜/私房",
@@ -128,7 +128,7 @@ describe("createCustomFoodItem", () => {
 
 describe("favoriteFoodItem / unfavoriteFoodItem / listFavoriteFoodItems", () => {
   it("marks an item as a favorite and lists it", async () => {
-    const item = repo.seed({ ownerUserId: null, name: "豆漿/1杯", carbG: 8, proteinG: 7, fatG: 4, sugarG: 4, fiberG: 0, kcal: 100, staple: 0, meat: 1, fruit: 0, veg: 0, baseGrams: null });
+    const item = repo.seed({ ownerUserId: null, name: "豆漿/1杯", carbG: 8, proteinG: 7, fatG: 4, sugarG: 4, fiberG: 0, kcal: 100, staple: 0, meat: 1, fruit: 0, veg: 0, baseAmount: null, measureUnit: null });
 
     await favoriteFoodItem(repo, "user-1", item.id);
     const favorites = await listFavoriteFoodItems(repo, "user-1");
@@ -137,7 +137,7 @@ describe("favoriteFoodItem / unfavoriteFoodItem / listFavoriteFoodItems", () => 
   });
 
   it("unmarking a favorite removes it from the list", async () => {
-    const item = repo.seed({ ownerUserId: null, name: "豆漿/1杯", carbG: 8, proteinG: 7, fatG: 4, sugarG: 4, fiberG: 0, kcal: 100, staple: 0, meat: 1, fruit: 0, veg: 0, baseGrams: null });
+    const item = repo.seed({ ownerUserId: null, name: "豆漿/1杯", carbG: 8, proteinG: 7, fatG: 4, sugarG: 4, fiberG: 0, kcal: 100, staple: 0, meat: 1, fruit: 0, veg: 0, baseAmount: null, measureUnit: null });
     await favoriteFoodItem(repo, "user-1", item.id);
 
     await unfavoriteFoodItem(repo, "user-1", item.id);

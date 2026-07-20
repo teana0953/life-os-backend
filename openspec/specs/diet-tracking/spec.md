@@ -185,29 +185,6 @@ items.
 - **WHEN** a user has never set any daily target
 - **THEN** the queried day reports an all-zero base, bonus, and effective target
 
-### Requirement: Gram-based dictionary logging
-
-When a dictionary item has a `base_grams`, the system SHALL let the user add it
-to a meal by a gram amount instead of a unit multiple: the amount SHALL set the
-item's `quantity` to `grams ÷ base_grams`, leaving the item's per-unit portions
-and nutrients unchanged, so that its consumed amount (per-unit × quantity)
-reflects the grams. `grams` and `quantity` are mutually exclusive — when `grams`
-is supplied it determines the quantity, and supplying both SHALL be rejected with
-a client error. When a dictionary item has no `base_grams` (null), the system
-SHALL reject a gram-based add with a client error.
-
-#### Scenario: Gram amount sets the quantity
-- **WHEN** a user adds `飯/50g` (base_grams 50, 1 staple portion per unit) by 33 grams
-- **THEN** the item's quantity is set to 33 ÷ 50 = 0.66, so its consumed amount is 0.66 staple portions
-
-#### Scenario: Gram add rejected without base grams
-- **WHEN** a user attempts to add `飯/1碗` (base_grams null) by a gram amount
-- **THEN** the system rejects the request with a client error
-
-#### Scenario: Grams and quantity are mutually exclusive
-- **WHEN** a user adds a dictionary item supplying both a gram amount and a quantity
-- **THEN** the system rejects the request with a client error
-
 ### Requirement: User-settable eaten-at time
 
 A meal SHALL carry a single `time` timestamp for when it was eaten, shared by all
@@ -232,16 +209,17 @@ only its time and SHALL NOT move the meal to another day.
 ### Requirement: Update a food entry
 
 The system SHALL let an authenticated user update one of their own meal items —
-its per-unit food-group portions, or its amount via a new `quantity` or a gram
+its per-unit food-group portions, or its amount via a new `quantity` or a measure
 amount. A user MUST NOT be able to update another user's meal item (treated as
 not found, making no change). At least one updatable field MUST be supplied; an
 update with no fields SHALL be rejected.
 
 - A `quantity` update SHALL set the `quantity` column only, leaving the per-unit
   portions and nutrients unchanged.
-- A gram-amount update SHALL set `quantity = grams ÷ base_grams` (requiring a
-  non-null `base_grams`, else a client error), likewise leaving the per-unit
-  values unchanged.
+- A measure-amount update SHALL set `quantity = measure ÷ base_amount`, with the
+  `measure` interpreted in the item's own `measure_unit` (requiring a non-null
+  measure basis, else a client error), likewise leaving the per-unit values
+  unchanged.
 - A per-unit portions update SHALL set the per-unit portion columns, recompute
   the per-unit nutrients from them via the conversion rules, and mark the item
   classified (`unclassified` = false).
@@ -258,6 +236,14 @@ their current values.
 #### Scenario: Updating quantity rescales only the consumed amount
 - **WHEN** a user updates a meal item's quantity from 1 to 2
 - **THEN** the stored per-unit portions and nutrients are unchanged while the item's consumed amount (per-unit × quantity) doubles
+
+#### Scenario: Measure update sets quantity via the measure basis
+- **WHEN** a user updates a meal item backed by `無糖豆漿/240mL` (base_amount 240, measure_unit `ml`) with a measure of 120
+- **THEN** the item's quantity is set to 120 ÷ 240 = 0.5 while its per-unit values are unchanged
+
+#### Scenario: Measure update rejected without a measure basis
+- **WHEN** a user submits a measure-amount update for an item whose base_amount is null
+- **THEN** the system rejects it as a client error and makes no change
 
 #### Scenario: Cannot update another user's item
 - **WHEN** a user attempts to update a meal item they do not own
@@ -304,10 +290,11 @@ exists for that `(user, day, meal)` the system SHALL create it with the supplied
 append the supplied items, without creating a duplicate meal. Each item MAY be a
 dictionary item (storing the dictionary item's **per-unit** nutrients and
 portions plus a `quantity` multiplier — set from an explicit quantity or from a
-gram amount — with `source` `dict`) or a manual item (supplied portions or
-nutrients stored as **per-unit** values, `source` `manual`). An item's consumed
-amount SHALL be its per-unit values × its `quantity`, derived on read and never
-stored. The meal and its items SHALL be owned by the requesting user.
+measure amount in the item's `measure_unit` — with `source` `dict`) or a manual
+item (supplied portions or nutrients stored as **per-unit** values, `source`
+`manual`). An item's consumed amount SHALL be its per-unit values × its
+`quantity`, derived on read and never stored. The meal and its items SHALL be
+owned by the requesting user.
 
 #### Scenario: Create a meal with several items at once
 - **WHEN** a user posts a lunch for a day with a time and three items to a slot that has no meal yet
@@ -349,4 +336,35 @@ change).
 #### Scenario: Cannot delete another user's meal
 - **WHEN** a user attempts to delete a meal they do not own
 - **THEN** the system reports not found and makes no change
+
+### Requirement: Measure-based logging (g or ml)
+
+The system SHALL let a user add a dictionary item that has a measure basis
+(`base_amount` + `measure_unit`, where `measure_unit` is `g` or `ml`) to a meal
+by a **measure amount** in that item's unit instead of a unit multiple: the
+amount SHALL set the item's `quantity` to `measure ÷ base_amount`, leaving the item's
+per-unit portions and nutrients unchanged, so that its consumed amount
+(per-unit × quantity) reflects the measure. The supplied `measure` SHALL be
+interpreted in the item's own `measure_unit`; the system SHALL NOT convert
+between grams and millilitres. `measure` and `quantity` are mutually exclusive —
+when `measure` is supplied it determines the quantity, and supplying both SHALL be
+rejected with a client error. When a dictionary item has no measure basis
+(`base_amount` null, a household-unit food), the system SHALL reject a
+measure-based add with a client error.
+
+#### Scenario: Gram measure sets the quantity
+- **WHEN** a user adds `飯/50g` (base_amount 50, measure_unit `g`, 1 staple portion per unit) by a measure of 33
+- **THEN** the item's quantity is set to 33 ÷ 50 = 0.66, so its consumed amount is 0.66 staple portions
+
+#### Scenario: Millilitre measure sets the quantity
+- **WHEN** a user adds `無糖豆漿/240mL` (base_amount 240, measure_unit `ml`, 1 meat portion per unit) by a measure of 120
+- **THEN** the item's quantity is set to 120 ÷ 240 = 0.5, so its consumed amount is 0.5 meat portions
+
+#### Scenario: Measure add rejected without a measure basis
+- **WHEN** a user attempts to add `飯/1碗` (base_amount null) by a measure amount
+- **THEN** the system rejects the request with a client error
+
+#### Scenario: Measure and quantity are mutually exclusive
+- **WHEN** a user adds a dictionary item supplying both a measure amount and a quantity
+- **THEN** the system rejects the request with a client error
 

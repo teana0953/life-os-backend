@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gramsToQuantity, NullBaseGramsError, scaleByQuantity } from "../../../../src/contexts/health/domain/quantity";
+import { measureToQuantity, NullBaseMeasureError, scaleByQuantity } from "../../../../src/contexts/health/domain/quantity";
 
 describe("scaleByQuantity", () => {
   it("scales both nutrients and portions by the given quantity", () => {
@@ -31,12 +31,16 @@ describe("scaleByQuantity", () => {
   });
 });
 
-describe("gramsToQuantity", () => {
-  it("converts grams to a quantity via base_grams (33 / 50 = 0.66)", () => {
-    expect(gramsToQuantity(33, 50)).toBeCloseTo(0.66);
+describe("measureToQuantity", () => {
+  it("converts a gram measure to a quantity via a gram base_amount (33 / 50 = 0.66)", () => {
+    expect(measureToQuantity(33, 50)).toBeCloseTo(0.66);
   });
 
-  it("throws NullBaseGramsError when base_grams is null", () => {
-    expect(() => gramsToQuantity(33, null)).toThrow(NullBaseGramsError);
+  it("converts a millilitre measure to a quantity via an ml base_amount (120 / 240 = 0.5)", () => {
+    expect(measureToQuantity(120, 240)).toBe(0.5);
+  });
+
+  it("throws NullBaseMeasureError when base_amount is null", () => {
+    expect(() => measureToQuantity(33, null)).toThrow(NullBaseMeasureError);
   });
 });

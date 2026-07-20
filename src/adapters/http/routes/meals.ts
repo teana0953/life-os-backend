@@ -9,7 +9,7 @@ import { updateMealTime } from "../../../contexts/health/application/update-meal
 import type { FoodDictionaryRepository } from "../../../contexts/health/domain/food-dictionary-repository";
 import type { MealEntry, MealItem, MealSummary } from "../../../contexts/health/domain/meal-entry";
 import type { MealRepository, UpdateMealItemPatch } from "../../../contexts/health/domain/meal-repository";
-import { NullBaseGramsError, scaleByQuantity, type Scalable } from "../../../contexts/health/domain/quantity";
+import { NullBaseMeasureError, scaleByQuantity, type Scalable } from "../../../contexts/health/domain/quantity";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
@@ -65,7 +65,8 @@ function mealItemToJson(item: MealItem, consumed: Scalable = scaleByQuantity(ite
     fruit: item.fruit,
     veg: item.veg,
     quantity: item.quantity,
-    base_grams: item.baseGrams,
+    base_amount: item.baseAmount,
+    measure_unit: item.measureUnit,
     consumed: scalableToJson(consumed),
   };
 }
@@ -96,11 +97,11 @@ function parseCreateMealItem(raw: unknown, index: number): CreateMealItem {
 
   if (item.food_item_id !== undefined) {
     const quantity = optionalPositiveFiniteNumber(item.quantity, `items[${index}].quantity`);
-    const grams = optionalPositiveFiniteNumber(item.grams, `items[${index}].grams`);
-    if (quantity !== undefined && grams !== undefined) {
-      throw new BadRequestError(`items[${index}]: quantity and grams are mutually exclusive`);
+    const measure = optionalPositiveFiniteNumber(item.measure, `items[${index}].measure`);
+    if (quantity !== undefined && measure !== undefined) {
+      throw new BadRequestError(`items[${index}]: quantity and measure are mutually exclusive`);
     }
-    return { foodItemId: requireString(item.food_item_id, `items[${index}].food_item_id`), quantity, grams };
+    return { foodItemId: requireString(item.food_item_id, `items[${index}].food_item_id`), quantity, measure };
   }
 
   const name = typeof item.name === "string" ? item.name : null;
@@ -159,7 +160,7 @@ export function createCreateMealHandler(options: MealHandlerOptions) {
       });
       return c.json(mealToJson(created), 201);
     } catch (err) {
-      if (err instanceof NullBaseGramsError) throw new BadRequestError(err.message);
+      if (err instanceof NullBaseMeasureError) throw new BadRequestError(err.message);
       throw err;
     }
   };
@@ -217,21 +218,21 @@ export function createDeleteMealHandler(options: MealHandlerOptions) {
   };
 }
 
-/** Protected `PATCH /api/meal-items/:id`: update an item (quantity | grams | portions). */
+/** Protected `PATCH /api/meal-items/:id`: update an item (quantity | measure | portions). */
 export function createUpdateMealItemHandler(options: MealHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const body = await c.req.json<Record<string, unknown>>();
 
     const quantity = optionalPositiveFiniteNumber(body.quantity, "quantity");
-    const grams = optionalPositiveFiniteNumber(body.grams, "grams");
-    if (quantity !== undefined && grams !== undefined) {
-      throw new BadRequestError("quantity and grams are mutually exclusive");
+    const measure = optionalPositiveFiniteNumber(body.measure, "measure");
+    if (quantity !== undefined && measure !== undefined) {
+      throw new BadRequestError("quantity and measure are mutually exclusive");
     }
 
     const patch: UpdateMealItemPatch = {};
     if (quantity !== undefined) patch.quantity = quantity;
-    if (grams !== undefined) patch.grams = grams;
+    if (measure !== undefined) patch.measure = measure;
     if (body.portions && typeof body.portions === "object") {
       const portions = body.portions as Record<string, unknown>;
       patch.portions = {
@@ -247,7 +248,7 @@ export function createUpdateMealItemHandler(options: MealHandlerOptions) {
       if (!item) return c.json({ error: "not_found" }, 404);
       return c.json(mealItemToJson(item));
     } catch (err) {
-      if (err instanceof EmptyUpdateError || err instanceof NullBaseGramsError) throw new BadRequestError(err.message);
+      if (err instanceof EmptyUpdateError || err instanceof NullBaseMeasureError) throw new BadRequestError(err.message);
       throw err;
     }
   };

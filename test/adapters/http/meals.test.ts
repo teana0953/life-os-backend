@@ -17,7 +17,7 @@ import type {
   UpdateMealItemPatch,
   UpsertMealWithItemsInput,
 } from "../../../src/contexts/health/domain/meal-repository";
-import { gramsToQuantity } from "../../../src/contexts/health/domain/quantity";
+import { measureToQuantity } from "../../../src/contexts/health/domain/quantity";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -93,7 +93,7 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   }
 
   async createCustom(input: CreateCustomFoodItemInput): Promise<FoodItem> {
-    return this.seed({ ...input, baseGrams: null });
+    return this.seed({ ...input, baseAmount: null, measureUnit: null });
   }
 
   async favorite(): Promise<void> {}
@@ -165,8 +165,8 @@ class InMemoryMealRepository implements MealRepository {
 
     if (patch.quantity !== undefined) {
       item.quantity = patch.quantity;
-    } else if (patch.grams !== undefined) {
-      item.quantity = gramsToQuantity(patch.grams, item.baseGrams);
+    } else if (patch.measure !== undefined) {
+      item.quantity = measureToQuantity(patch.measure, item.baseAmount);
     }
     if (patch.portions !== undefined) {
       const nutrients = portionsToNutrients(patch.portions);
@@ -251,7 +251,8 @@ const riceBowl = {
   meat: 0,
   fruit: 0,
   veg: 0,
-  baseGrams: null,
+  baseAmount: null,
+  measureUnit: null,
 } as const;
 
 const riceGram = {
@@ -267,7 +268,25 @@ const riceGram = {
   meat: 0,
   fruit: 0,
   veg: 0,
-  baseGrams: 50,
+  baseAmount: 50,
+  measureUnit: "g",
+} as const;
+
+const soyMilk = {
+  ownerUserId: null,
+  name: "無糖豆漿/240mL",
+  carbG: 0,
+  proteinG: 7,
+  fatG: 0,
+  sugarG: 0,
+  fiberG: 0,
+  kcal: 28,
+  staple: 0,
+  meat: 1,
+  fruit: 0,
+  veg: 0,
+  baseAmount: 240,
+  measureUnit: "ml",
 } as const;
 
 describe("meal HTTP routes", () => {
@@ -351,13 +370,17 @@ describe("meal HTTP routes", () => {
       body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, quantity: 1.5 }] }),
     });
 
-    const body = (await res.json()) as { items: { staple: number; quantity: number; consumed: { staple: number } }[] };
+    const body = (await res.json()) as {
+      items: { staple: number; quantity: number; base_amount: number | null; measure_unit: string | null; consumed: { staple: number } }[];
+    };
     expect(body.items[0]?.staple).toBe(4);
     expect(body.items[0]?.quantity).toBe(1.5);
     expect(body.items[0]?.consumed.staple).toBe(6);
+    expect(body.items[0]?.base_amount).toBeNull();
+    expect(body.items[0]?.measure_unit).toBeNull();
   });
 
-  it("converts a gram-based dictionary item to a quantity via base_grams", async () => {
+  it("converts a gram-based dictionary item to a quantity via base_amount", async () => {
     const { app, foodDictionaryRepository } = buildApp();
     const item = foodDictionaryRepository.seed(riceGram);
     const token = await validToken();
@@ -365,14 +388,33 @@ describe("meal HTTP routes", () => {
     const res = await app.request("/api/meals", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, grams: 33 }] }),
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, measure: 33 }] }),
     });
 
-    const body = (await res.json()) as { items: { quantity: number }[] };
+    const body = (await res.json()) as { items: { quantity: number; base_amount: number | null; measure_unit: string | null }[] };
     expect(body.items[0]?.quantity).toBeCloseTo(0.66);
+    expect(body.items[0]?.base_amount).toBe(50);
+    expect(body.items[0]?.measure_unit).toBe("g");
   });
 
-  it("rejects a gram-based item when the dictionary item has no base_grams, as 400", async () => {
+  it("converts a millilitre-based dictionary item to a quantity via base_amount", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const item = foodDictionaryRepository.seed(soyMilk);
+    const token = await validToken();
+
+    const res = await app.request("/api/meals", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, measure: 120 }] }),
+    });
+
+    const body = (await res.json()) as { items: { quantity: number; base_amount: number | null; measure_unit: string | null }[] };
+    expect(body.items[0]?.quantity).toBe(0.5);
+    expect(body.items[0]?.base_amount).toBe(240);
+    expect(body.items[0]?.measure_unit).toBe("ml");
+  });
+
+  it("rejects a measure-based item when the dictionary item has no base_amount, as 400", async () => {
     const { app, foodDictionaryRepository } = buildApp();
     const item = foodDictionaryRepository.seed(riceBowl);
     const token = await validToken();
@@ -380,13 +422,13 @@ describe("meal HTTP routes", () => {
     const res = await app.request("/api/meals", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, grams: 33 }] }),
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, measure: 33 }] }),
     });
 
     expect(res.status).toBe(400);
   });
 
-  it("rejects an item supplying both grams and quantity, as 400", async () => {
+  it("rejects an item supplying both measure and quantity, as 400", async () => {
     const { app, foodDictionaryRepository } = buildApp();
     const item = foodDictionaryRepository.seed(riceGram);
     const token = await validToken();
@@ -394,7 +436,7 @@ describe("meal HTTP routes", () => {
     const res = await app.request("/api/meals", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, grams: 33, quantity: 1.5 }] }),
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, measure: 33, quantity: 1.5 }] }),
     });
 
     expect(res.status).toBe(400);
@@ -677,7 +719,7 @@ describe("meal HTTP routes", () => {
       expect(body.consumed.staple).toBe(2);
     });
 
-    it("a gram update sets quantity = grams / base_grams", async () => {
+    it("a measure update sets quantity = measure / base_amount", async () => {
       const { app, foodDictionaryRepository } = buildApp();
       const item = foodDictionaryRepository.seed(riceGram);
       const token = await validToken();
@@ -691,12 +733,34 @@ describe("meal HTTP routes", () => {
       const res = await app.request(`/api/meal-items/${items[0]!.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ grams: 33 }),
+        body: JSON.stringify({ measure: 33 }),
       });
 
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { quantity: number };
+      const body = (await res.json()) as { quantity: number; base_amount: number | null; measure_unit: string | null };
       expect(body.quantity).toBeCloseTo(0.66);
+      expect(body.base_amount).toBe(50);
+      expect(body.measure_unit).toBe("g");
+    });
+
+    it("rejects a measure update when the item has no base_amount, as 400", async () => {
+      const { app, foodDictionaryRepository } = buildApp();
+      const item = foodDictionaryRepository.seed(riceBowl);
+      const token = await validToken();
+      const created = await app.request("/api/meals", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id }] }),
+      });
+      const { items } = (await created.json()) as { items: { id: string }[] };
+
+      const res = await app.request(`/api/meal-items/${items[0]!.id}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ measure: 33 }),
+      });
+
+      expect(res.status).toBe(400);
     });
 
     it("a portions update recomputes per-unit nutrients and clears unclassified", async () => {
@@ -745,7 +809,7 @@ describe("meal HTTP routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("rejects supplying both quantity and grams, as 400", async () => {
+    it("rejects supplying both quantity and measure, as 400", async () => {
       const { app, foodDictionaryRepository } = buildApp();
       const item = foodDictionaryRepository.seed(riceGram);
       const token = await validToken();
@@ -759,7 +823,7 @@ describe("meal HTTP routes", () => {
       const res = await app.request(`/api/meal-items/${items[0]!.id}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ quantity: 2, grams: 100 }),
+        body: JSON.stringify({ quantity: 2, measure: 100 }),
       });
 
       expect(res.status).toBe(400);
