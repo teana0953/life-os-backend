@@ -1,16 +1,15 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { getDailyTargetWithRemaining } from "../../../../src/contexts/health/application/get-daily-target-with-remaining";
-import { logManualFoodEntry } from "../../../../src/contexts/health/application/log-manual-food-entry";
 import { setDailyTarget } from "../../../../src/contexts/health/application/set-daily-target";
 import type { DailyTarget } from "../../../../src/contexts/health/domain/daily-target";
 import type { DailyTargetRepository, SetDailyTargetInput } from "../../../../src/contexts/health/domain/daily-target-repository";
-import { portionsToNutrients } from "../../../../src/contexts/health/domain/conversion";
+import type { MealEntry, MealItem, MealSummary } from "../../../../src/contexts/health/domain/meal-entry";
 import type {
-  CreateFoodEntryInput,
-  DietLogRepository,
-  UpdateFoodEntryPatch,
-} from "../../../../src/contexts/health/domain/diet-log-repository";
-import type { FoodEntry } from "../../../../src/contexts/health/domain/food-entry";
+  CreateMealItemInput,
+  MealRepository,
+  UpdateMealItemPatch,
+  UpsertMealWithItemsInput,
+} from "../../../../src/contexts/health/domain/meal-repository";
 
 class InMemoryDailyTargetRepository implements DailyTargetRepository {
   private targetsByUserDay = new Map<string, DailyTarget>();
@@ -49,59 +48,109 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
   }
 }
 
-class InMemoryDietLogRepository implements DietLogRepository {
-  entries: FoodEntry[] = [];
-  private nextId = 1;
+type StoredMeal = MealSummary & { items: MealItem[] };
 
-  async create(input: CreateFoodEntryInput): Promise<FoodEntry> {
-    const entry: FoodEntry = { id: String(this.nextId++), loggedAt: new Date(), ...input };
-    this.entries.push(entry);
-    return entry;
+/** Minimal in-memory MealRepository; only what getDailyTargetWithRemaining needs (D6, task 5.2). */
+class InMemoryMealRepository implements MealRepository {
+  meals: StoredMeal[] = [];
+  private nextItemId = 1;
+
+  /** Test helper: seeds a meal item directly with per-unit portions and a quantity (default 1). */
+  seedItem(userId: string, day: string, meal: string, portions: { staple: number; meat: number; fruit: number; veg: number }, quantity = 1): void {
+    const mealRow: StoredMeal = { id: `meal-${this.meals.length + 1}`, userId, day, meal, time: new Date(), createdAt: new Date(), items: [] };
+    this.meals.push(mealRow);
+    const item: MealItem = {
+      id: `item-${this.nextItemId++}`,
+      mealEntryId: mealRow.id,
+      foodItemId: null,
+      name: null,
+      photoRef: null,
+      source: "manual",
+      unclassified: false,
+      carbG: 0,
+      proteinG: 0,
+      fatG: 0,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 0,
+      ...portions,
+      quantity,
+      baseGrams: null,
+      createdAt: new Date(),
+    };
+    mealRow.items.push(item);
   }
 
-  async listByDay(userId: string, day: string): Promise<FoodEntry[]> {
-    return this.entries.filter((e) => e.userId === userId && e.day === day);
+  /** Test helper: seeds a meal with a nutrient-only, unclassified item (zero portions). */
+  seedUnclassifiedItem(userId: string, day: string, meal: string, nutrients: { carbG: number; proteinG: number; fatG: number }): void {
+    const mealRow: StoredMeal = { id: `meal-${this.meals.length + 1}`, userId, day, meal, time: new Date(), createdAt: new Date(), items: [] };
+    this.meals.push(mealRow);
+    const item: MealItem = {
+      id: `item-${this.nextItemId++}`,
+      mealEntryId: mealRow.id,
+      foodItemId: null,
+      name: null,
+      photoRef: null,
+      source: "manual",
+      unclassified: true,
+      ...nutrients,
+      sugarG: 0,
+      fiberG: 0,
+      kcal: 0,
+      staple: 0,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      quantity: 1,
+      baseGrams: null,
+      createdAt: new Date(),
+    };
+    mealRow.items.push(item);
   }
 
-  async delete(userId: string, entryId: string): Promise<boolean> {
-    const idx = this.entries.findIndex((e) => e.userId === userId && e.id === entryId);
-    if (idx === -1) return false;
-    this.entries.splice(idx, 1);
-    return true;
+  async upsertMealWithItems(input: UpsertMealWithItemsInput): Promise<MealEntry> {
+    const items: MealItem[] = input.items.map((item: CreateMealItemInput) => ({
+      id: `item-${this.nextItemId++}`,
+      mealEntryId: "meal",
+      createdAt: new Date(),
+      ...item,
+    }));
+    const meal: StoredMeal = { id: "meal", userId: input.userId, day: input.day, meal: input.meal, time: input.time ?? new Date(), createdAt: new Date(), items };
+    this.meals.push(meal);
+    return meal;
   }
 
-  async update(userId: string, entryId: string, patch: UpdateFoodEntryPatch): Promise<FoodEntry | null> {
-    const entry = this.entries.find((e) => e.userId === userId && e.id === entryId);
-    if (!entry) return null;
-
-    if (patch.name !== undefined) entry.name = patch.name;
-    if (patch.meal !== undefined) entry.meal = patch.meal;
-    if (patch.eatenAt !== undefined) {
-      entry.eatenAt = patch.eatenAt;
-      entry.day = patch.eatenAt.toISOString().slice(0, 10);
-    }
-    if (patch.portions !== undefined) {
-      const nutrients = portionsToNutrients(patch.portions);
-      entry.unclassified = false;
-      Object.assign(entry, nutrients, patch.portions);
-    }
-    return entry;
+  async listMealsByDay(userId: string, day: string): Promise<MealEntry[]> {
+    return this.meals.filter((m) => m.userId === userId && m.day === day);
   }
 
-  async listLoggedDays(userId: string, month: string): Promise<string[]> {
-    const days = new Set(
-      this.entries.filter((e) => e.userId === userId && e.day.startsWith(month)).map((e) => e.day),
-    );
-    return [...days].sort();
+  async listLoggedDays(_userId: string, _month: string): Promise<string[]> {
+    return [];
+  }
+
+  async updateMealTime(_userId: string, _mealId: string, _time: Date): Promise<MealSummary | null> {
+    return null;
+  }
+
+  async deleteMeal(_userId: string, _mealId: string): Promise<boolean> {
+    return false;
+  }
+
+  async updateItem(_userId: string, _itemId: string, _patch: UpdateMealItemPatch): Promise<MealItem | null> {
+    return null;
+  }
+
+  async deleteItem(_userId: string, _itemId: string): Promise<boolean> {
+    return false;
   }
 }
 
 let dailyTargets: InMemoryDailyTargetRepository;
-let dietLog: InMemoryDietLogRepository;
+let mealRepository: InMemoryMealRepository;
 
 beforeEach(() => {
   dailyTargets = new InMemoryDailyTargetRepository();
-  dietLog = new InMemoryDietLogRepository();
+  mealRepository = new InMemoryMealRepository();
 });
 
 describe("setDailyTarget", () => {
@@ -121,34 +170,39 @@ describe("setDailyTarget", () => {
 });
 
 describe("getDailyTargetWithRemaining", () => {
-  it("reports remaining as effective_target - sum(logged portions), effective = base + bonus", async () => {
+  it("reports remaining as effective_target - sum(consumed portions), effective = base + bonus", async () => {
     await dailyTargets.set({ userId: "user-1", day: "2026-07-18", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2, bonusStaple: 2 });
-    await logManualFoodEntry(dietLog, { userId: "user-1", day: "2026-07-18", meal: "breakfast", portions: { staple: 9, meat: 0, fruit: 0, veg: 0 } });
+    mealRepository.seedItem("user-1", "2026-07-18", "breakfast", { staple: 9, meat: 0, fruit: 0, veg: 0 });
 
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-18");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-18");
 
     expect(result.effective.staple).toBe(14); // base 12 + bonus 2
     expect(result.remaining.staple).toBe(5); // 14 - 9
   });
 
+  it("sums the consumed amount (per-unit x quantity), not the per-unit value alone", async () => {
+    await dailyTargets.set({ userId: "user-1", day: "2026-07-18", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2 });
+    mealRepository.seedItem("user-1", "2026-07-18", "breakfast", { staple: 3, meat: 0, fruit: 0, veg: 0 }, 2); // consumed 6
+
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-18");
+
+    expect(result.logged.staple).toBe(6);
+    expect(result.remaining.staple).toBe(6); // 12 - 6
+  });
+
   it("adds bonus to base for the effective target", async () => {
     await dailyTargets.set({ userId: "user-1", day: "2026-07-18", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2, bonusStaple: 2 });
 
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-18");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-18");
 
     expect(result.effective.staple).toBe(14);
   });
 
-  it("does not let an unclassified nutrient-only entry reduce any category's remaining portions", async () => {
+  it("does not let an unclassified nutrient-only item reduce any category's remaining portions", async () => {
     await dailyTargets.set({ userId: "user-1", day: "2026-07-18", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2 });
-    await logManualFoodEntry(dietLog, {
-      userId: "user-1",
-      day: "2026-07-18",
-      meal: "snack",
-      nutrients: { carbG: 100, proteinG: 50, fatG: 20, sugarG: 0, fiberG: 0 },
-    });
+    mealRepository.seedUnclassifiedItem("user-1", "2026-07-18", "snack", { carbG: 100, proteinG: 50, fatG: 20 });
 
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-18");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-18");
 
     expect(result.remaining.staple).toBe(12);
     expect(result.remaining.meat).toBe(7);
@@ -157,7 +211,7 @@ describe("getDailyTargetWithRemaining", () => {
   it("carries forward the base from the most recent earlier target when the day has none of its own, with bonus 0", async () => {
     await dailyTargets.set({ userId: "user-1", day: "2026-07-01", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2 });
 
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-02");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-02");
 
     expect(result.base.staple).toBe(12);
     expect(result.bonus.staple).toBe(0);
@@ -165,7 +219,7 @@ describe("getDailyTargetWithRemaining", () => {
   });
 
   it("reports an all-zero target when the user has never set one", async () => {
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-18");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-18");
 
     expect(result.base).toEqual({ staple: 0, meat: 0, fruit: 0, veg: 0 });
     expect(result.bonus).toEqual({ staple: 0, meat: 0, fruit: 0, veg: 0 });
@@ -175,7 +229,7 @@ describe("getDailyTargetWithRemaining", () => {
   it("does not carry forward the source day's bonus to a later untouched day", async () => {
     await dailyTargets.set({ userId: "user-1", day: "2026-07-01", baseStaple: 12, baseMeat: 7, baseFruit: 2, baseVeg: 2, bonusStaple: 3 });
 
-    const result = await getDailyTargetWithRemaining(dailyTargets, dietLog, "user-1", "2026-07-02");
+    const result = await getDailyTargetWithRemaining(dailyTargets, mealRepository, "user-1", "2026-07-02");
 
     expect(result.base.staple).toBe(12);
     expect(result.bonus.staple).toBe(0);

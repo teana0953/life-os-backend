@@ -1,8 +1,62 @@
-# diet-tracking Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change add-diet-tracking. Update Purpose after archive.
-## Requirements
+### Requirement: Meal creation with multiple items
+
+The system SHALL let an authenticated user create a meal for a given day and meal
+slot with a single `time` and one or more items in a single request. When no meal
+exists for that `(user, day, meal)` the system SHALL create it with the supplied
+`time`; when a meal already exists for that slot the system SHALL reuse it and
+append the supplied items, without creating a duplicate meal. Each item MAY be a
+dictionary item (storing the dictionary item's **per-unit** nutrients and
+portions plus a `quantity` multiplier — set from an explicit quantity or from a
+gram amount — with `source` `dict`) or a manual item (supplied portions or
+nutrients stored as **per-unit** values, `source` `manual`). An item's consumed
+amount SHALL be its per-unit values × its `quantity`, derived on read and never
+stored. The meal and its items SHALL be owned by the requesting user.
+
+#### Scenario: Create a meal with several items at once
+- **WHEN** a user posts a lunch for a day with a time and three items to a slot that has no meal yet
+- **THEN** the system creates one lunch meal for that day carrying the time and creates its three items
+
+#### Scenario: Adding to an existing meal appends items
+- **WHEN** a user posts more items to a day and meal slot that already has a meal
+- **THEN** the system reuses that meal and appends the new items, and the day still has a single meal for that slot
+
+### Requirement: Per-day totals across meal items
+
+When a day's log is requested the system SHALL return per-day nutrient totals
+`{ carb_g, protein_g, fat_g, sugar_g, fiber_g, kcal }` and per-day food-group
+portion totals `{ staple, meat, fruit, veg }`, each computed by summing the
+**consumed amount (per-unit × quantity)** of all meal items of all of that day's
+meals. Nutrient totals SHALL come only from the atomic nutrient fields and
+portion totals only from the portion fields; an unclassified item contributes to
+nutrient totals but adds zero to portion totals.
+
+#### Scenario: Totals sum consumed amounts across every meal's items
+- **WHEN** a day has two meals whose items' consumed amounts (per-unit × quantity) together come to 6 staple portions and 800 kcal
+- **THEN** the day log reports 6 staple portions and 800 kcal in its totals
+
+#### Scenario: Unclassified item adds nutrients but no portions
+- **WHEN** a day includes an unclassified meal item whose consumed amount is 200 kcal and zero portions
+- **THEN** the day's kcal total includes that 200 kcal while its portion totals are unchanged by that item
+
+### Requirement: Delete a meal
+
+The system SHALL let an authenticated user delete one of their own meals, and
+deleting a meal SHALL also delete all of that meal's items (cascade). A user MUST
+NOT be able to delete another user's meal (treated as not found, making no
+change).
+
+#### Scenario: Deleting a meal removes it and its items
+- **WHEN** a user deletes one of their own meals
+- **THEN** the meal and all its items no longer appear in that day's log and no longer count toward that day's nutrient or portion totals
+
+#### Scenario: Cannot delete another user's meal
+- **WHEN** a user attempts to delete a meal they do not own
+- **THEN** the system reports not found and makes no change
+
+## MODIFIED Requirements
+
 ### Requirement: Nutrient–portion–calorie conversion
 
 The system SHALL own conversion rules following the Taiwan MOHW food-exchange
@@ -294,59 +348,3 @@ requesting user's own meals.
 #### Scenario: Scoped to the requesting user
 - **WHEN** two users each have meals in 2026-07 and user A queries 2026-07
 - **THEN** the system returns only the days on which user A has meals, not user B's
-
-### Requirement: Meal creation with multiple items
-
-The system SHALL let an authenticated user create a meal for a given day and meal
-slot with a single `time` and one or more items in a single request. When no meal
-exists for that `(user, day, meal)` the system SHALL create it with the supplied
-`time`; when a meal already exists for that slot the system SHALL reuse it and
-append the supplied items, without creating a duplicate meal. Each item MAY be a
-dictionary item (storing the dictionary item's **per-unit** nutrients and
-portions plus a `quantity` multiplier — set from an explicit quantity or from a
-gram amount — with `source` `dict`) or a manual item (supplied portions or
-nutrients stored as **per-unit** values, `source` `manual`). An item's consumed
-amount SHALL be its per-unit values × its `quantity`, derived on read and never
-stored. The meal and its items SHALL be owned by the requesting user.
-
-#### Scenario: Create a meal with several items at once
-- **WHEN** a user posts a lunch for a day with a time and three items to a slot that has no meal yet
-- **THEN** the system creates one lunch meal for that day carrying the time and creates its three items
-
-#### Scenario: Adding to an existing meal appends items
-- **WHEN** a user posts more items to a day and meal slot that already has a meal
-- **THEN** the system reuses that meal and appends the new items, and the day still has a single meal for that slot
-
-### Requirement: Per-day totals across meal items
-
-When a day's log is requested the system SHALL return per-day nutrient totals
-`{ carb_g, protein_g, fat_g, sugar_g, fiber_g, kcal }` and per-day food-group
-portion totals `{ staple, meat, fruit, veg }`, each computed by summing the
-**consumed amount (per-unit × quantity)** of all meal items of all of that day's
-meals. Nutrient totals SHALL come only from the atomic nutrient fields and
-portion totals only from the portion fields; an unclassified item contributes to
-nutrient totals but adds zero to portion totals.
-
-#### Scenario: Totals sum consumed amounts across every meal's items
-- **WHEN** a day has two meals whose items' consumed amounts (per-unit × quantity) together come to 6 staple portions and 800 kcal
-- **THEN** the day log reports 6 staple portions and 800 kcal in its totals
-
-#### Scenario: Unclassified item adds nutrients but no portions
-- **WHEN** a day includes an unclassified meal item whose consumed amount is 200 kcal and zero portions
-- **THEN** the day's kcal total includes that 200 kcal while its portion totals are unchanged by that item
-
-### Requirement: Delete a meal
-
-The system SHALL let an authenticated user delete one of their own meals, and
-deleting a meal SHALL also delete all of that meal's items (cascade). A user MUST
-NOT be able to delete another user's meal (treated as not found, making no
-change).
-
-#### Scenario: Deleting a meal removes it and its items
-- **WHEN** a user deletes one of their own meals
-- **THEN** the meal and all its items no longer appear in that day's log and no longer count toward that day's nutrient or portion totals
-
-#### Scenario: Cannot delete another user's meal
-- **WHEN** a user attempts to delete a meal they do not own
-- **THEN** the system reports not found and makes no change
-

@@ -49,6 +49,11 @@ export function optionalPositiveFiniteNumber(value: unknown, field: string): num
 /** Optional timestamp (ISO string), returned as a `Date`; throws when present but not a valid timestamp. */
 export function optionalTimestamp(value: unknown, field: string): Date | undefined {
   if (value === undefined || value === null) return undefined;
+  return requireTimestamp(value, field);
+}
+
+/** A required timestamp (ISO string), returned as a `Date`; throws when missing or not a valid timestamp. */
+export function requireTimestamp(value: unknown, field: string): Date {
   if (typeof value !== "string") throw new BadRequestError(`${field} must be a valid timestamp`);
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new BadRequestError(`${field} must be a valid timestamp`);

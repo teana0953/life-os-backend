@@ -2,21 +2,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
-import type { DietLogRepository } from "../../contexts/health/domain/diet-log-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
+import type { MealRepository } from "../../contexts/health/domain/meal-repository";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
   createGetDailyTargetHandler,
   createSetDailyTargetHandler,
 } from "./routes/daily-target";
-import {
-  createDeleteFoodEntryHandler,
-  createGetDayDietLogHandler,
-  createGetLoggedDaysHandler,
-  createLogFoodEntryHandler,
-  createUpdateFoodEntryHandler,
-} from "./routes/diet-entries";
 import {
   createCustomFoodItemHandler,
   createFavoriteFoodItemHandler,
@@ -25,6 +18,15 @@ import {
   createUnfavoriteFoodItemHandler,
 } from "./routes/food-dictionary";
 import { createHealthHandler } from "./routes/health";
+import {
+  createCreateMealHandler,
+  createDeleteMealHandler,
+  createDeleteMealItemHandler,
+  createGetDayMealsHandler,
+  createGetLoggedDaysHandler,
+  createUpdateMealItemHandler,
+  createUpdateMealTimeHandler,
+} from "./routes/meals";
 import { createMeHandler } from "./routes/me";
 import { BadRequestError } from "./validation";
 
@@ -42,7 +44,7 @@ export interface CreateAppOptions {
   jwks: JWTVerifyGetKey;
   userRepository: UserRepository;
   foodDictionaryRepository: FoodDictionaryRepository;
-  dietLogRepository: DietLogRepository;
+  mealRepository: MealRepository;
   dailyTargetRepository: DailyTargetRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
@@ -84,21 +86,23 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/food-items/:id/favorite", authMiddleware, createFavoriteFoodItemHandler(foodDictionaryOptions));
   app.delete("/api/food-items/:id/favorite", authMiddleware, createUnfavoriteFoodItemHandler(foodDictionaryOptions));
 
-  const dietEntryOptions = {
+  const mealOptions = {
     userRepository: options.userRepository,
-    dietLogRepository: options.dietLogRepository,
+    mealRepository: options.mealRepository,
     foodDictionaryRepository: options.foodDictionaryRepository,
   };
-  app.post("/api/diet-entries", authMiddleware, createLogFoodEntryHandler(dietEntryOptions));
-  app.get("/api/diet-entries", authMiddleware, createGetDayDietLogHandler(dietEntryOptions));
-  app.get("/api/diet-entries/logged-days", authMiddleware, createGetLoggedDaysHandler(dietEntryOptions));
-  app.delete("/api/diet-entries/:id", authMiddleware, createDeleteFoodEntryHandler(dietEntryOptions));
-  app.patch("/api/diet-entries/:id", authMiddleware, createUpdateFoodEntryHandler(dietEntryOptions));
+  app.post("/api/meals", authMiddleware, createCreateMealHandler(mealOptions));
+  app.get("/api/meals/logged-days", authMiddleware, createGetLoggedDaysHandler(mealOptions));
+  app.get("/api/meals", authMiddleware, createGetDayMealsHandler(mealOptions));
+  app.patch("/api/meals/:id", authMiddleware, createUpdateMealTimeHandler(mealOptions));
+  app.delete("/api/meals/:id", authMiddleware, createDeleteMealHandler(mealOptions));
+  app.patch("/api/meal-items/:id", authMiddleware, createUpdateMealItemHandler(mealOptions));
+  app.delete("/api/meal-items/:id", authMiddleware, createDeleteMealItemHandler(mealOptions));
 
   const dailyTargetOptions = {
     userRepository: options.userRepository,
     dailyTargetRepository: options.dailyTargetRepository,
-    dietLogRepository: options.dietLogRepository,
+    mealRepository: options.mealRepository,
   };
   app.get("/api/daily-target", authMiddleware, createGetDailyTargetHandler(dailyTargetOptions));
   app.put("/api/daily-target", authMiddleware, createSetDailyTargetHandler(dailyTargetOptions));
