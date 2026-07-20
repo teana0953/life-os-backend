@@ -3,8 +3,8 @@ import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
-import type { DietLogRepository } from "../../../src/contexts/health/domain/diet-log-repository";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
+import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -20,12 +20,14 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   unfavorite: notImplemented,
   listFavorites: notImplemented,
 };
-const stubDietLogRepository: DietLogRepository = {
-  create: notImplemented,
-  listByDay: notImplemented,
-  delete: notImplemented,
-  update: notImplemented,
+const stubMealRepository: MealRepository = {
+  upsertMealWithItems: notImplemented,
+  listMealsByDay: notImplemented,
   listLoggedDays: notImplemented,
+  updateMealTime: notImplemented,
+  deleteMeal: notImplemented,
+  updateItem: notImplemented,
+  deleteItem: notImplemented,
 };
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
@@ -102,7 +104,7 @@ function buildApp(
     jwks,
     userRepository: overrides.userRepository ?? new InMemoryUserRepository(),
     foodDictionaryRepository: stubFoodDictionaryRepository,
-    dietLogRepository: stubDietLogRepository,
+    mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,

@@ -10,7 +10,7 @@ export const users = pgTable("users", {
 
 export const foodEntrySource = pgEnum("food_entry_source", ["manual", "ai_photo", "dict"]);
 
-// Shared atomic-nutrient columns for food_item and food_entry (both axes: D1 in design.md).
+// Shared atomic-nutrient columns for food_item and meal_item (both axes: D1 in design.md).
 const nutrientColumns = {
   carbG: numeric("carb_g").notNull(),
   proteinG: numeric("protein_g").notNull(),
@@ -52,21 +52,38 @@ export const foodFavorite = pgTable(
   (t) => [unique().on(t.userId, t.foodItemId)],
 );
 
-export const foodEntry = pgTable("food_entry", {
+export const mealEntry = pgTable(
+  "meal_entry",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    meal: text("meal").notNull(),
+    time: timestamp("time", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.userId, t.day, t.meal)],
+);
+
+// meal_item stores per-unit portions + nutrients (the amount for quantity = 1);
+// the consumed amount (per-unit x quantity) is derived on read, never stored (D3).
+export const mealItem = pgTable("meal_item", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
+  mealEntryId: uuid("meal_entry_id")
     .notNull()
-    .references(() => users.id),
-  day: date("day").notNull(),
-  meal: text("meal").notNull(),
+    .references(() => mealEntry.id, { onDelete: "cascade" }),
+  foodItemId: uuid("food_item_id").references(() => foodItem.id, { onDelete: "set null" }),
   name: text("name"),
   photoRef: text("photo_ref"),
   source: foodEntrySource("source").notNull(),
   unclassified: boolean("unclassified").notNull().default(false),
   ...nutrientColumns,
   ...portionColumns,
-  eatenAt: timestamp("eaten_at", { withTimezone: true }).notNull().defaultNow(),
-  loggedAt: timestamp("logged_at", { withTimezone: true }).notNull().defaultNow(),
+  quantity: numeric("quantity").notNull().default("1"),
+  baseGrams: numeric("base_grams"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const dailyTarget = pgTable(

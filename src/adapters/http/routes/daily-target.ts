@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { getDailyTargetWithRemaining } from "../../../contexts/health/application/get-daily-target-with-remaining";
 import { setDailyTarget } from "../../../contexts/health/application/set-daily-target";
 import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
-import type { DietLogRepository } from "../../../contexts/health/domain/diet-log-repository";
+import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
@@ -11,7 +11,7 @@ import { optionalFiniteNumberOrUndefined, requireDay, requireFiniteNumber } from
 export interface DailyTargetHandlerOptions {
   userRepository: UserRepository;
   dailyTargetRepository: DailyTargetRepository;
-  dietLogRepository: DietLogRepository;
+  mealRepository: MealRepository;
 }
 
 /** Protected `GET /api/daily-target?day=`: effective target (base+bonus) and remaining portions for a day. */
@@ -20,7 +20,7 @@ export function createGetDailyTargetHandler(options: DailyTargetHandlerOptions) 
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getDailyTargetWithRemaining(
       options.dailyTargetRepository,
-      options.dietLogRepository,
+      options.mealRepository,
       userId,
       requireDay(c.req.query("day")),
     );
