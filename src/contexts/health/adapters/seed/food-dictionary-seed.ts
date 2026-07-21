@@ -26,7 +26,7 @@ export interface SeedFoodItem {
   fruit: number;
   veg: number;
   baseAmount: number | null;
-  measureUnit: "g" | "ml" | null;
+  measureUnit: string | null;
 }
 
 /**
@@ -48,13 +48,33 @@ const BASE_GRAMS_PATTERN = /\/\s*(\d+(?:\.\d+)?)\s*(?:g\b|克)/;
  */
 const BASE_ML_PATTERN = /\/\s*(\d+(?:\.\d+)?)\s*(?:ml\b|毫升|cc\b)/i;
 
-/** Parses the base measure (amount + unit) from the row name's unit token; null when the unit is a household measure (D4, G2). */
-function parseBaseMeasure(name: string): { amount: number; unit: "g" | "ml" } | null {
+/**
+ * Countable household quantifiers that carry a definite amount (design.md D2).
+ * Only these 12, all present in the source TSV; no speculative units. Kept
+ * verbatim (`個` != `顆`, never merged). Packaging words (瓶/盒/包/罐), `份`,
+ * `卡`, and vague sizes (掌心大/指寬) are deliberately excluded so they fall to null.
+ */
+const QUANTIFIER_UNITS = ["個", "顆", "碗", "片", "杯", "條", "隻", "根", "湯匙", "球", "圈", "截"];
+
+/**
+ * Matches a whitelisted household quantifier immediately after `/<number>` in
+ * the row name (e.g. `/9顆`, `/1碗`, `/3圈`). Anchored exactly like the g/ml
+ * patterns — slash, number, then the unit right after — so `馬鈴薯/3分之2碗`
+ * (slash → `3` → `分`, not whitelisted) never captures the trailing `2碗`, and a
+ * suffix after the unit (e.g. `1碗(陽春麵…)`, `1個雞蛋大小`) is ignored.
+ */
+const BASE_QUANTIFIER_PATTERN = new RegExp(`\\/\\s*(\\d+(?:\\.\\d+)?)\\s*(${QUANTIFIER_UNITS.join("|")})`);
+
+/** Parses the base measure (amount + unit) from the row name's unit token; null when the unit has no structured amount (D2/D4, G2). */
+function parseBaseMeasure(name: string): { amount: number; unit: string } | null {
   const gramMatch = BASE_GRAMS_PATTERN.exec(name);
   if (gramMatch) return { amount: Number(gramMatch[1]), unit: "g" };
 
   const mlMatch = BASE_ML_PATTERN.exec(name);
   if (mlMatch) return { amount: Number(mlMatch[1]), unit: "ml" };
+
+  const quantifierMatch = BASE_QUANTIFIER_PATTERN.exec(name);
+  if (quantifierMatch) return { amount: Number(quantifierMatch[1]), unit: quantifierMatch[2] };
 
   return null;
 }

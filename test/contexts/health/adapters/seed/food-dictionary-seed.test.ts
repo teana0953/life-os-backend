@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FOOD_SEED_ROWS } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed-data";
 import { seedRowToFoodItem } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed";
 
 describe("seedRowToFoodItem", () => {
@@ -46,22 +47,24 @@ describe("seedRowToFoodItem", () => {
     expect(item.measureUnit).toBe("g");
   });
 
-  it("leaves the measure basis null for a household-unit row", () => {
+  it("backfills a countable household quantifier basis (碗)", () => {
     const item = seedRowToFoodItem({ id: 7, name: "飯/1碗", staple: 4, meat: 0, fruit: 0, veg: 0 });
 
-    expect(item.baseAmount).toBeNull();
-    expect(item.measureUnit).toBeNull();
+    expect(item.baseAmount).toBe(1);
+    expect(item.measureUnit).toBe("碗");
   });
 
-  it("leaves the measure basis null for other household units (根, 掌心大, 湯匙)", () => {
+  it("backfills other whitelisted household quantifiers verbatim (根, 個, 湯匙)", () => {
     const banana = seedRowToFoodItem({ id: 8, name: "香蕉/1根", staple: 0, meat: 0, fruit: 2, veg: 0 });
     const bun = seedRowToFoodItem({ id: 9, name: "肉包掌心大/1個", staple: 3, meat: 1, fruit: 0, veg: 0 });
     const oats = seedRowToFoodItem({ id: 10, name: "麥片/2湯匙", staple: 1, meat: 0, fruit: 0, veg: 0 });
 
-    for (const item of [banana, bun, oats]) {
-      expect(item.baseAmount).toBeNull();
-      expect(item.measureUnit).toBeNull();
-    }
+    expect(banana.baseAmount).toBe(1);
+    expect(banana.measureUnit).toBe("根");
+    expect(bun.baseAmount).toBe(1);
+    expect(bun.measureUnit).toBe("個");
+    expect(oats.baseAmount).toBe(2);
+    expect(oats.measureUnit).toBe("湯匙");
   });
 
   it("backfills a gram measure basis from a Chinese 克 gram unit", () => {
@@ -74,11 +77,11 @@ describe("seedRowToFoodItem", () => {
     expect(lotusRoot.measureUnit).toBe("g");
   });
 
-  it("does not mistake a 克 inside a brand name for a gram unit", () => {
+  it("does not mistake a 克 inside a brand name for a gram unit; uses the anchored 杯 quantifier instead", () => {
     const item = seedRowToFoodItem({ id: 13, name: "星巴克拿鐵(大杯)/1杯", staple: 0, meat: 3, fruit: 0, veg: 0 });
 
-    expect(item.baseAmount).toBeNull();
-    expect(item.measureUnit).toBeNull();
+    expect(item.baseAmount).toBe(1);
+    expect(item.measureUnit).toBe("杯");
   });
 
   it("backfills a millilitre measure basis from an mL unit token", () => {
@@ -124,5 +127,69 @@ describe("seedRowToFoodItem", () => {
       const item = seedRowToFoodItem(row);
       expect(item.baseAmount === null).toBe(item.measureUnit === null);
     }
+  });
+});
+
+/**
+ * Anchored measure parsing (design.md D2/G2): `/\/\s*(\d+(?:\.\d+)?)\s*(unit)/`
+ * — slash, number, then the unit immediately after. g/克->'g', ml/mL/毫升/cc->'ml',
+ * whitelisted quantifiers (個顆碗片杯條隻根湯匙球圈截) kept verbatim; anything else null.
+ */
+describe("seedRowToFoodItem measure parsing (anchored quantifier whitelist)", () => {
+  const base = (name: string) => {
+    const item = seedRowToFoodItem({ id: 1, name, staple: 0, meat: 0, fruit: 0, veg: 0 });
+    return { amount: item.baseAmount, unit: item.measureUnit };
+  };
+
+  it.each([
+    ["櫻桃/9顆", 9, "顆"],
+    ["飯/1碗", 1, "碗"],
+    ["芭樂/1顆", 1, "顆"],
+    ["星巴克拿鐵(大杯)/1杯", 1, "杯"],
+    ["花枝/墨魚/3圈", 3, "圈"],
+    ["熟麵/1碗(陽春麵…)", 1, "碗"],
+    ["吐司/1片三角形", 1, "片"],
+    ["地瓜/1個雞蛋大小", 1, "個"],
+    ["飯/50g", 50, "g"],
+    ["雞胸肉水餃/140克", 140, "g"],
+    ["無糖豆漿/240mL", 240, "ml"],
+    ["啤酒/100ml", 100, "ml"],
+  ])("parses %s -> (%d, %s)", (name, amount, unit) => {
+    expect(base(name)).toEqual({ amount, unit });
+  });
+
+  it.each([
+    ["馬鈴薯/3分之2碗"], // fraction: slash is followed by 3 then 分 (not whitelisted); "2碗" has no leading slash
+    ["290mL/1瓶"], // packaging count 瓶 not whitelisted (mL substring earlier must not be mistaken)
+    ["養樂多(紅)/1罐"], // packaging count 罐
+    ["中華嫩豆腐/1盒"], // packaging count 盒
+    ["POP CORNERS…/1份"], // 份 not whitelisted
+    ["熟肉/掌心大"], // vague size, no leading number
+    ["營養標示卡路里/60卡"], // 卡 not whitelisted
+  ])("leaves %s null (both base_amount and measure_unit)", (name) => {
+    expect(base(name)).toEqual({ amount: null, unit: null });
+  });
+});
+
+/**
+ * Coverage over the full seeded catalog (design.md D4). Generalizing the parser
+ * from g/ml only to the household quantifier whitelist moves the previous 195
+ * null rows down to 63; the rest gain a base measure. Counts verified against
+ * the current `food-dictionary-seed-data.ts`.
+ */
+describe("seed measure-basis coverage over the 271-row catalog", () => {
+  it("tallies g / ml / quantifier-with-base / still-null exactly", () => {
+    const counts = { g: 0, ml: 0, quantifier: 0, nul: 0 };
+    for (const row of FOOD_SEED_ROWS) {
+      const { measureUnit } = seedRowToFoodItem(row);
+      if (measureUnit === null) counts.nul++;
+      else if (measureUnit === "g") counts.g++;
+      else if (measureUnit === "ml") counts.ml++;
+      else counts.quantifier++;
+    }
+
+    expect(FOOD_SEED_ROWS.length).toBe(271);
+    expect(counts).toEqual({ g: 61, ml: 15, quantifier: 132, nul: 63 });
+    expect(counts.g + counts.ml + counts.quantifier + counts.nul).toBe(FOOD_SEED_ROWS.length);
   });
 });

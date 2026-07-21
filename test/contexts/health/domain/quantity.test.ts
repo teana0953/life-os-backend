@@ -40,6 +40,10 @@ describe("measureToQuantity", () => {
     expect(measureToQuantity(120, 240)).toBe(0.5);
   });
 
+  it("converts a household-quantifier measure to a quantity via its base_amount (18 顆 / 9 = 2)", () => {
+    expect(measureToQuantity(18, 9)).toBe(2);
+  });
+
   it("throws NullBaseMeasureError when base_amount is null", () => {
     expect(() => measureToQuantity(33, null)).toThrow(NullBaseMeasureError);
   });

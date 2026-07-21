@@ -289,6 +289,23 @@ const soyMilk = {
   measureUnit: "ml",
 } as const;
 
+const cherries = {
+  ownerUserId: null,
+  name: "櫻桃/9顆",
+  carbG: 30,
+  proteinG: 0,
+  fatG: 0,
+  sugarG: 30,
+  fiberG: 0,
+  kcal: 120,
+  staple: 0,
+  meat: 0,
+  fruit: 2,
+  veg: 0,
+  baseAmount: 9,
+  measureUnit: "顆",
+} as const;
+
 describe("meal HTTP routes", () => {
   it("requires auth for POST /api/meals", async () => {
     const { app } = buildApp();
@@ -412,6 +429,24 @@ describe("meal HTTP routes", () => {
     expect(body.items[0]?.quantity).toBe(0.5);
     expect(body.items[0]?.base_amount).toBe(240);
     expect(body.items[0]?.measure_unit).toBe("ml");
+  });
+
+  it("converts a household-quantifier dictionary item to a quantity via base_amount (no longer a blanket 400)", async () => {
+    const { app, foodDictionaryRepository } = buildApp();
+    const item = foodDictionaryRepository.seed(cherries);
+    const token = await validToken();
+
+    const res = await app.request("/api/meals", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", meal: "breakfast", items: [{ food_item_id: item.id, measure: 18 }] }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { items: { quantity: number; base_amount: number | null; measure_unit: string | null }[] };
+    expect(body.items[0]?.quantity).toBe(2);
+    expect(body.items[0]?.base_amount).toBe(9);
+    expect(body.items[0]?.measure_unit).toBe("顆");
   });
 
   it("rejects a measure-based item when the dictionary item has no base_amount, as 400", async () => {
