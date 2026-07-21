@@ -47,7 +47,12 @@ export const foodFavorite = pgTable(
       .references(() => users.id),
     foodItemId: uuid("food_item_id")
       .notNull()
-      .references(() => foodItem.id),
+      // A favorite is meaningless once its food item is gone, so cascade-delete
+      // it (unlike meal_item, which keeps the historical log row and only nulls
+      // the link). This also lets the seed reseed shared items — a delete +
+      // reinsert — without a foreign-key violation from favorites still
+      // pointing at the old rows.
+      .references(() => foodItem.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.userId, t.foodItemId)],
