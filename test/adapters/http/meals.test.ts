@@ -20,6 +20,7 @@ import type {
 import { measureToQuantity } from "../../../src/contexts/health/domain/quantity";
 import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -261,6 +262,15 @@ class InMemoryWaterRepository implements WaterRepository {
   }
 }
 
+const stubBowelRepository: BowelRepository = {
+  get: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  set: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+};
+
 function buildApp() {
   const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
   const mealRepository = new InMemoryMealRepository();
@@ -274,6 +284,7 @@ function buildApp() {
     mealRepository,
     dailyTargetRepository,
     waterRepository,
+    bowelRepository: stubBowelRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

@@ -1,4 +1,4 @@
-import { boolean, date, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, integer, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -135,6 +135,21 @@ export const waterTarget = pgTable(
       .references(() => users.id),
     day: date("day").notNull(),
     targetMl: numeric("target_ml").notNull(),
+  },
+  (t) => [unique().on(t.userId, t.day)],
+);
+
+export const bowelLog = pgTable(
+  "bowel_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    count: integer("count").notNull(),
+    isNormal: boolean("is_normal"),
+    note: text("note").notNull().default(""),
   },
   (t) => [unique().on(t.userId, t.day)],
 );

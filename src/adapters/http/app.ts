@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
@@ -18,6 +19,7 @@ import {
   createSearchFoodDictionaryHandler,
   createUnfavoriteFoodItemHandler,
 } from "./routes/food-dictionary";
+import { createGetBowelHandler, createSetBowelHandler } from "./routes/bowel";
 import { createHealthHandler } from "./routes/health";
 import {
   createCreateMealHandler,
@@ -53,6 +55,7 @@ export interface CreateAppOptions {
   mealRepository: MealRepository;
   dailyTargetRepository: DailyTargetRepository;
   waterRepository: WaterRepository;
+  bowelRepository: BowelRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -121,6 +124,13 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/water", authMiddleware, createGetWaterHandler(waterOptions));
   app.post("/api/water", authMiddleware, createAddWaterHandler(waterOptions));
   app.put("/api/water/target", authMiddleware, createSetWaterTargetHandler(waterOptions));
+
+  const bowelOptions = {
+    userRepository: options.userRepository,
+    bowelRepository: options.bowelRepository,
+  };
+  app.get("/api/bowel", authMiddleware, createGetBowelHandler(bowelOptions));
+  app.put("/api/bowel", authMiddleware, createSetBowelHandler(bowelOptions));
 
   return app;
 }

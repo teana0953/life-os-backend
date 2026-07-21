@@ -6,6 +6,7 @@ import type { DailyTargetRepository } from "../../../src/contexts/health/domain/
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -41,6 +42,10 @@ const stubWaterRepository: WaterRepository = {
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,
+};
+const stubBowelRepository: BowelRepository = {
+  get: notImplemented,
+  set: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
@@ -115,6 +120,7 @@ function buildApp(
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository: stubWaterRepository,
+    bowelRepository: stubBowelRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });
