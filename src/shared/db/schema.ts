@@ -112,3 +112,29 @@ export const dailyTarget = pgTable(
   },
   (t) => [unique().on(t.userId, t.day)],
 );
+
+export const waterIntake = pgTable(
+  "water_intake",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    totalMl: numeric("total_ml").notNull(),
+  },
+  (t) => [unique().on(t.userId, t.day)],
+);
+
+export const waterTarget = pgTable(
+  "water_target",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    targetMl: numeric("target_ml").notNull(),
+  },
+  (t) => [unique().on(t.userId, t.day)],
+);
