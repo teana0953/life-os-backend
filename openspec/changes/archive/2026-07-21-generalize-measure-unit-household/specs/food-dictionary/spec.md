@@ -1,8 +1,5 @@
-# food-dictionary Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-diet-tracking. Update Purpose after archive.
-## Requirements
 ### Requirement: Food dictionary catalog
 
 The system SHALL provide a catalog of food items. Each item SHALL be identified
@@ -40,20 +37,6 @@ quantity via `base_amount`.
 #### Scenario: Item without a structured amount carries no measure basis
 - **WHEN** a client reads a food item whose unit has no structured amount (e.g. `熟肉/掌心大`, `POP CORNERS/1份`)
 - **THEN** both its `base_amount` and its `measure_unit` are null
-
-### Requirement: Dictionary search
-
-The system SHALL let an authenticated user search the dictionary by a
-case-insensitive substring of the item name and SHALL return the matching
-items.
-
-#### Scenario: Substring match
-- **WHEN** an authenticated user searches with a name substring that occurs in one or more item names
-- **THEN** the system returns those items and excludes non-matching items
-
-#### Scenario: No match
-- **WHEN** an authenticated user searches with a substring that matches no item name
-- **THEN** the system returns an empty result set
 
 ### Requirement: Seeded shared catalog
 
@@ -95,32 +78,3 @@ vague size (`掌心大`, `2指寬`), `份`, or `卡` — SHALL leave both null.
 #### Scenario: Seed leaves an ambiguous unit token null
 - **WHEN** the seed loads a row whose token is a fraction, packaging count, vague size, or `份` (e.g. `馬鈴薯/3分之2碗`, `養樂多(紅)/1罐`, `熟肉/掌心大`)
 - **THEN** the created food item's base_amount and measure_unit are both null
-
-### Requirement: User-custom food items
-
-The system SHALL let an authenticated user create custom food items owned by
-that user. A custom item SHALL be visible only to its owner, while seeded
-(shared) items SHALL be visible to all users. A user's search SHALL return both
-shared items and that user's own custom items.
-
-#### Scenario: Custom item is private to owner
-- **WHEN** user A creates a custom food item
-- **THEN** the item appears in user A's dictionary search and does not appear in user B's search
-
-#### Scenario: Another user cannot reach a private custom item by id
-- **WHEN** user B attempts to log or favorite user A's custom item by its id
-- **THEN** the system treats the item as not found for user B and neither logs nor favorites it
-
-### Requirement: Favorite food items
-
-The system SHALL let an authenticated user mark and unmark dictionary items as
-favorites, and SHALL let the user list their favorites.
-
-#### Scenario: Mark and list favorite
-- **WHEN** a user marks an item as a favorite and then lists favorites
-- **THEN** the item appears in that user's favorites list
-
-#### Scenario: Unmark favorite
-- **WHEN** a user unmarks a previously favorited item and then lists favorites
-- **THEN** the item no longer appears in that user's favorites list
-
