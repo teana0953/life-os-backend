@@ -50,6 +50,13 @@
       "when": 1784606411881,
       "tag": "0006_violet_captain_cross",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784631297021,
+      "tag": "0007_bitter_tomas",
+      "breakpoints": true
     }
   ]
 }

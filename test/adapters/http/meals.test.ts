@@ -18,6 +18,8 @@ import type {
   UpsertMealWithItemsInput,
 } from "../../../src/contexts/health/domain/meal-repository";
 import { measureToQuantity } from "../../../src/contexts/health/domain/quantity";
+import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
+import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -222,10 +224,48 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
   }
 }
 
+class InMemoryWaterRepository implements WaterRepository {
+  private intakeByUserDay = new Map<string, WaterIntake>();
+  private targetByUserDay = new Map<string, WaterTarget>();
+
+  async getIntake(userId: string, day: string): Promise<WaterIntake | null> {
+    return this.intakeByUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async addIntake(userId: string, day: string, addMl: number): Promise<WaterIntake> {
+    const current = this.intakeByUserDay.get(`${userId}:${day}`);
+    const totalMl = Math.max(0, (current?.totalMl ?? 0) + addMl);
+    const intake: WaterIntake = { userId, day, totalMl };
+    this.intakeByUserDay.set(`${userId}:${day}`, intake);
+    return intake;
+  }
+
+  async getTarget(userId: string, day: string): Promise<WaterTarget | null> {
+    return this.targetByUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async getLatestTargetOnOrBefore(userId: string, day: string): Promise<WaterTarget | null> {
+    let latest: WaterTarget | null = null;
+    for (const target of this.targetByUserDay.values()) {
+      if (target.userId === userId && target.day <= day && (!latest || target.day > latest.day)) {
+        latest = target;
+      }
+    }
+    return latest;
+  }
+
+  async setTarget(input: SetWaterTargetInput): Promise<WaterTarget> {
+    const target: WaterTarget = { userId: input.userId, day: input.day, targetMl: input.targetMl };
+    this.targetByUserDay.set(`${input.userId}:${input.day}`, target);
+    return target;
+  }
+}
+
 function buildApp() {
   const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
   const mealRepository = new InMemoryMealRepository();
   const dailyTargetRepository = new InMemoryDailyTargetRepository();
+  const waterRepository = new InMemoryWaterRepository();
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
@@ -233,6 +273,7 @@ function buildApp() {
     foodDictionaryRepository,
     mealRepository,
     dailyTargetRepository,
+    waterRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

@@ -4,6 +4,7 @@ import type { JWTVerifyGetKey } from "jose";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
+import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
@@ -28,6 +29,11 @@ import {
   createUpdateMealTimeHandler,
 } from "./routes/meals";
 import { createMeHandler } from "./routes/me";
+import {
+  createAddWaterHandler,
+  createGetWaterHandler,
+  createSetWaterTargetHandler,
+} from "./routes/water";
 import { BadRequestError } from "./validation";
 
 /**
@@ -46,6 +52,7 @@ export interface CreateAppOptions {
   foodDictionaryRepository: FoodDictionaryRepository;
   mealRepository: MealRepository;
   dailyTargetRepository: DailyTargetRepository;
+  waterRepository: WaterRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -106,6 +113,14 @@ export function createApp(options: CreateAppOptions) {
   };
   app.get("/api/daily-target", authMiddleware, createGetDailyTargetHandler(dailyTargetOptions));
   app.put("/api/daily-target", authMiddleware, createSetDailyTargetHandler(dailyTargetOptions));
+
+  const waterOptions = {
+    userRepository: options.userRepository,
+    waterRepository: options.waterRepository,
+  };
+  app.get("/api/water", authMiddleware, createGetWaterHandler(waterOptions));
+  app.post("/api/water", authMiddleware, createAddWaterHandler(waterOptions));
+  app.put("/api/water/target", authMiddleware, createSetWaterTargetHandler(waterOptions));
 
   return app;
 }

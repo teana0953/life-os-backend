@@ -3,6 +3,7 @@ import { createApp } from "./adapters/http/app";
 import { DrizzleDailyTargetRepository } from "./contexts/health/adapters/drizzle-daily-target-repository";
 import { DrizzleFoodDictionaryRepository } from "./contexts/health/adapters/drizzle-food-dictionary-repository";
 import { DrizzleMealRepository } from "./contexts/health/adapters/drizzle-meal-repository";
+import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
 import { createDbClient, type Db } from "./shared/db/client";
@@ -32,6 +33,7 @@ export default {
     const foodDictionaryRepository = new DrizzleFoodDictionaryRepository(getDb);
     const mealRepository = new DrizzleMealRepository(getDb);
     const dailyTargetRepository = new DrizzleDailyTargetRepository(getDb);
+    const waterRepository = new DrizzleWaterRepository(getDb);
 
     const app = createApp({
       projectId: env.FIREBASE_PROJECT_ID,
@@ -40,6 +42,7 @@ export default {
       foodDictionaryRepository,
       mealRepository,
       dailyTargetRepository,
+      waterRepository,
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
         await getDb().execute(sql`select 1`);

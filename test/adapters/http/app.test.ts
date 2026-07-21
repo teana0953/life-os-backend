@@ -5,6 +5,7 @@ import { createApp } from "../../../src/adapters/http/app";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
+import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -33,6 +34,13 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
   getLatestOnOrBefore: notImplemented,
   set: notImplemented,
+};
+const stubWaterRepository: WaterRepository = {
+  getIntake: notImplemented,
+  addIntake: notImplemented,
+  getTarget: notImplemented,
+  getLatestTargetOnOrBefore: notImplemented,
+  setTarget: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
@@ -106,6 +114,7 @@ function buildApp(
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
+    waterRepository: stubWaterRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });
