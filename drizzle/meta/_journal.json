@@ -43,6 +43,13 @@
       "when": 1784602839107,
       "tag": "0005_moaning_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784606411881,
+      "tag": "0006_violet_captain_cross",
+      "breakpoints": true
     }
   ]
 }
