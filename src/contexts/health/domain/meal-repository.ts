@@ -19,7 +19,7 @@ export interface CreateMealItemInput {
   veg: number;
   quantity: number;
   baseAmount: number | null;
-  measureUnit: "g" | "ml" | null;
+  measureUnit: string | null;
 }
 
 export interface UpsertMealWithItemsInput {

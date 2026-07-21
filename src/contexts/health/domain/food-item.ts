@@ -13,9 +13,9 @@ export interface FoodItem {
   meat: number;
   fruit: number;
   veg: number;
-  /** Amount of one dictionary unit in `measureUnit`, used to convert a measure amount to a quantity; both null when the unit has no defined measure basis (household unit). */
+  /** Amount of one dictionary unit in `measureUnit`, used to convert a measure amount to a quantity; both null when the unit has no structured measure basis (a fraction, vague size, packaging count, or `份`). */
   baseAmount: number | null;
-  /** Unit `baseAmount` is expressed in ('g' or 'ml'); null iff baseAmount is null. */
-  measureUnit: "g" | "ml" | null;
+  /** Unit `baseAmount` is expressed in: any open string ('g', 'ml', or a household quantifier word e.g. '顆'); null iff baseAmount is null. */
+  measureUnit: string | null;
   createdAt: Date;
 }

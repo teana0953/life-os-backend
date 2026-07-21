@@ -10,8 +10,6 @@ export const users = pgTable("users", {
 
 export const foodEntrySource = pgEnum("food_entry_source", ["manual", "ai_photo", "dict"]);
 
-export const foodMeasureUnit = pgEnum("food_measure_unit", ["g", "ml"]);
-
 // Shared atomic-nutrient columns for food_item and meal_item (both axes: D1 in design.md).
 const nutrientColumns = {
   carbG: numeric("carb_g").notNull(),
@@ -36,7 +34,7 @@ export const foodItem = pgTable("food_item", {
   ...nutrientColumns,
   ...portionColumns,
   baseAmount: numeric("base_amount"),
-  measureUnit: foodMeasureUnit("measure_unit"),
+  measureUnit: text("measure_unit"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -86,7 +84,7 @@ export const mealItem = pgTable("meal_item", {
   ...portionColumns,
   quantity: numeric("quantity").notNull().default("1"),
   baseAmount: numeric("base_amount"),
-  measureUnit: foodMeasureUnit("measure_unit"),
+  measureUnit: text("measure_unit"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -26,8 +26,8 @@ export interface MealItem {
   quantity: number;
   /** Amount of one unit in `measureUnit`, copied from the dictionary item at add time; both null when not directly measurable. */
   baseAmount: number | null;
-  /** Unit `baseAmount` is expressed in ('g' or 'ml'); null iff baseAmount is null. */
-  measureUnit: "g" | "ml" | null;
+  /** Unit `baseAmount` is expressed in: any open string ('g', 'ml', or a household quantifier word e.g. '顆'); null iff baseAmount is null. */
+  measureUnit: string | null;
   createdAt: Date;
 }
 
