@@ -279,4 +279,24 @@ describe("vitals HTTP routes", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it.each([
+    ["a negative weight", { weight_kg: -1 }],
+    ["a body-fat percentage over 100", { body_fat_pct: 150 }],
+    ["a negative systolic", { bp_readings: [{ systolic: -1, diastolic: 80 }] }],
+    ["a negative glucose value", { glucose_readings: [{ label: "餐前", value: -5 }] }],
+    ["an SpO2 over 100", { spo2_readings: [{ spo2: 150 }] }],
+    ["a negative pulse", { spo2_readings: [{ spo2: 98, pulse: -3 }] }],
+  ])("rejects %s, as 400", async (_desc, patch) => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", ...patch }),
+    });
+
+    expect(res.status).toBe(400);
+  });
 });

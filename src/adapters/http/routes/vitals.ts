@@ -6,7 +6,7 @@ import type { VitalsRepository } from "../../../contexts/health/domain/vitals-re
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { BadRequestError, requireDay, requireFiniteNumber } from "../validation";
+import { BadRequestError, requireDay, requireNumberInRange } from "../validation";
 
 export interface VitalsHandlerOptions {
   userRepository: UserRepository;
@@ -25,9 +25,9 @@ function toJson(record: { day: string; weightKg: number | null; bodyFatPct: numb
   };
 }
 
-/** Optional finite number or null: `null`/absent → null, else validated. */
-function nullableFiniteNumber(value: unknown, field: string): number | null {
-  return value == null ? null : requireFiniteNumber(value, field);
+/** Optional non-negative number or null: `null`/absent → null, else validated ≥ 0 (with an optional upper bound). */
+function nullableNumber(value: unknown, field: string, min = 0, max?: number): number | null {
+  return value == null ? null : requireNumberInRange(value, field, min, max);
 }
 
 /** Validates an array field: absent → `[]`; a non-array → 400; each item mapped via `mapItem`. */
@@ -59,20 +59,21 @@ export function createSetVitalsHandler(options: VitalsHandlerOptions) {
     const record: VitalsRecord = await setVitalsDay(options.vitalsRepository, {
       userId,
       day: requireDay(body.day),
-      weightKg: nullableFiniteNumber(body.weight_kg, "weight_kg"),
-      bodyFatPct: nullableFiniteNumber(body.body_fat_pct, "body_fat_pct"),
+      // Percentages are capped at 100; every other measurement is non-negative.
+      weightKg: nullableNumber(body.weight_kg, "weight_kg"),
+      bodyFatPct: nullableNumber(body.body_fat_pct, "body_fat_pct", 0, 100),
       bpReadings: requireReadingArray(body.bp_readings, "bp_readings", (item, i) => ({
-        systolic: requireFiniteNumber(item.systolic, `bp_readings[${i}].systolic`),
-        diastolic: requireFiniteNumber(item.diastolic, `bp_readings[${i}].diastolic`),
-        pulse: nullableFiniteNumber(item.pulse, `bp_readings[${i}].pulse`),
+        systolic: requireNumberInRange(item.systolic, `bp_readings[${i}].systolic`, 0),
+        diastolic: requireNumberInRange(item.diastolic, `bp_readings[${i}].diastolic`, 0),
+        pulse: nullableNumber(item.pulse, `bp_readings[${i}].pulse`),
       })),
       glucoseReadings: requireReadingArray(body.glucose_readings, "glucose_readings", (item, i) => ({
         label: typeof item.label === "string" ? item.label : "",
-        value: requireFiniteNumber(item.value, `glucose_readings[${i}].value`),
+        value: requireNumberInRange(item.value, `glucose_readings[${i}].value`, 0),
       })),
       spo2Readings: requireReadingArray(body.spo2_readings, "spo2_readings", (item, i) => ({
-        spo2: requireFiniteNumber(item.spo2, `spo2_readings[${i}].spo2`),
-        pulse: nullableFiniteNumber(item.pulse, `spo2_readings[${i}].pulse`),
+        spo2: requireNumberInRange(item.spo2, `spo2_readings[${i}].spo2`, 0, 100),
+        pulse: nullableNumber(item.pulse, `spo2_readings[${i}].pulse`),
       })),
     });
     return c.json(toJson(record));
