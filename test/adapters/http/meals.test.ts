@@ -22,6 +22,7 @@ import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/doma
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
+import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -279,6 +280,17 @@ const stubVitalsRepository: VitalsRepository = {
     throw new Error("not implemented in this test's fakes");
   },
 };
+const stubExerciseRepository: ExerciseRepository = {
+  addEntry: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  listByDay: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  deleteEntry: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+};
 
 function buildApp() {
   const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
@@ -295,6 +307,7 @@ function buildApp() {
     waterRepository,
     bowelRepository: stubBowelRepository,
     vitalsRepository: stubVitalsRepository,
+    exerciseRepository: stubExerciseRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };
