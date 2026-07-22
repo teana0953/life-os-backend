@@ -217,7 +217,7 @@ describe("exercise HTTP routes", () => {
     expect(day.total_minutes).toBe(50);
   });
 
-  it("rejects a missing day, unknown activity, and non-positive duration as 400", async () => {
+  it("rejects a missing day, unknown activity, and a non-positive or non-integer duration as 400", async () => {
     const { app, exerciseRepository } = buildApp();
     const token = await validToken();
 
@@ -226,6 +226,7 @@ describe("exercise HTTP routes", () => {
     expect((await authedPost(app, token, { day: "2026-07-18", activity_id: "jogging", duration_minutes: 0 })).status).toBe(400);
     expect((await authedPost(app, token, { day: "2026-07-18", activity_id: "jogging", duration_minutes: -5 })).status).toBe(400);
     expect((await authedPost(app, token, { day: "2026-07-18", activity_id: "jogging", duration_minutes: "abc" })).status).toBe(400);
+    expect((await authedPost(app, token, { day: "2026-07-18", activity_id: "jogging", duration_minutes: 30.5 })).status).toBe(400);
     expect(exerciseRepository.entries).toHaveLength(0);
   });
 

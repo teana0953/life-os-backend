@@ -58,7 +58,9 @@ export function createLogExerciseHandler(options: ExerciseHandlerOptions) {
     const activity = findActivity(activityId);
     if (!activity) throw new BadRequestError(`unknown activity_id: ${activityId}`);
     const durationMinutes = requireFiniteNumber(body.duration_minutes, "duration_minutes");
-    if (!(durationMinutes > 0)) throw new BadRequestError("duration_minutes must be greater than 0");
+    if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) {
+      throw new BadRequestError("duration_minutes must be a positive integer");
+    }
     const note = typeof body.note === "string" ? body.note : "";
 
     const entry = await logExercise(options.exerciseRepository, { userId, day, activityId, durationMinutes, note });
