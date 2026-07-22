@@ -276,6 +276,22 @@ describe("menstrual HTTP routes", () => {
     expect((await res.json()) as Record<string, unknown>).toMatchObject({ start_date: "2026-05-01", end_date: null });
   });
 
+  it("rejects a non-string, non-null end_date as 400 (POST) without clearing on PATCH", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+    // POST: a junk end_date value is rejected, not silently treated as "no end".
+    expect((await app.request("/api/menstrual", authed(token, "POST", { start_date: "2026-05-01", end_date: 0 }))).status).toBe(400);
+    // PATCH: a junk end_date must NOT silently clear the stored end date.
+    const created = (await (await app.request("/api/menstrual", authed(token, "POST", { start_date: "2026-05-01", end_date: "2026-05-05" }))).json()) as { id: string };
+    const res = await app.request(`/api/menstrual/${created.id}`, authed(token, "PATCH", { end_date: 0 }));
+    expect(res.status).toBe(400);
+    // the stored end date is untouched
+    const overview = (await (await app.request("/api/menstrual", authed(token, "GET"))).json()) as {
+      periods: { id: string; end_date: string | null }[];
+    };
+    expect(overview.periods.find((p) => p.id === created.id)?.end_date).toBe("2026-05-05");
+  });
+
   it("PATCH rejects a merged end_date earlier than start_date as 400", async () => {
     const { app } = buildApp();
     const token = await validToken();

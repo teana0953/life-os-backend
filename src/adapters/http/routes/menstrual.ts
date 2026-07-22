@@ -41,6 +41,18 @@ export function createGetMenstrualHandler(options: MenstrualHandlerOptions) {
   };
 }
 
+/**
+ * Parse an `end_date` field value: a day string → a validated day; an explicit
+ * `null` or an absent field → null; anything else (a number, boolean, object)
+ * → 400. This stops a junk value from being silently treated as "no end date",
+ * which on PATCH would clear a stored end date (silent data loss).
+ */
+function parseEndDate(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return requireDay(value, "end_date");
+  throw new BadRequestError("end_date must be a date string or null");
+}
+
 /** Protected `POST /api/menstrual`: add a period and return it. */
 export function createAddMenstrualHandler(options: MenstrualHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
@@ -48,7 +60,7 @@ export function createAddMenstrualHandler(options: MenstrualHandlerOptions) {
     const body = await c.req.json<Record<string, unknown>>();
 
     const startDate = requireDay(body.start_date, "start_date");
-    const endDate = typeof body.end_date === "string" ? requireDay(body.end_date, "end_date") : null;
+    const endDate = parseEndDate(body.end_date);
 
     try {
       const period = await addPeriod(options.menstrualRepository, { userId, startDate, endDate });
@@ -70,7 +82,7 @@ export function createUpdateMenstrualHandler(options: MenstrualHandlerOptions) {
     // explicit `end_date: null` clears the stored end date.
     const patch: UpdatePeriodPatch = {};
     if ("start_date" in body) patch.startDate = requireDay(body.start_date, "start_date");
-    if ("end_date" in body) patch.endDate = typeof body.end_date === "string" ? requireDay(body.end_date, "end_date") : null;
+    if ("end_date" in body) patch.endDate = parseEndDate(body.end_date);
 
     try {
       const period = await updatePeriod(options.menstrualRepository, userId, c.req.param("id") ?? "", patch);
