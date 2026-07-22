@@ -1,7 +1,9 @@
 import type { Context } from "hono";
 import { getVitalsDay } from "../../../contexts/health/application/get-vitals-day";
+import { getVitalsRange } from "../../../contexts/health/application/get-vitals-range";
 import { setVitalsDay } from "../../../contexts/health/application/set-vitals-day";
 import type { BpReading, GlucoseReading, Spo2Reading, VitalsRecord } from "../../../contexts/health/domain/vitals";
+import type { VitalsSeries } from "../../../contexts/health/domain/vitals-series";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
@@ -48,6 +50,31 @@ export function createGetVitalsHandler(options: VitalsHandlerOptions) {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getVitalsDay(options.vitalsRepository, userId, requireDay(c.req.query("day")));
     return c.json(toJson(result));
+  };
+}
+
+/** Serializes the per-metric series to its snake_case JSON shape. */
+function seriesToJson(series: VitalsSeries) {
+  return {
+    weight: series.weight,
+    body_fat: series.bodyFat,
+    systolic: series.systolic,
+    diastolic: series.diastolic,
+    pulse: series.pulse,
+    glucose: series.glucose,
+    spo2: series.spo2,
+  };
+}
+
+/** Protected `GET /api/vitals/range?from=&to=`: per-metric daily series over `[from, to]`. */
+export function createGetVitalsRangeHandler(options: VitalsHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const from = requireDay(c.req.query("from"), "from");
+    const to = requireDay(c.req.query("to"), "to");
+    if (from > to) throw new BadRequestError("from must not be later than to");
+    const { series } = await getVitalsRange(options.vitalsRepository, userId, from, to);
+    return c.json({ from, to, series: seriesToJson(series) });
   };
 }
 

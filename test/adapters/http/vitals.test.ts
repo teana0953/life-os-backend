@@ -118,6 +118,11 @@ class InMemoryUserRepository implements UserRepository {
 class InMemoryVitalsRepository implements VitalsRepository {
   private byUserDay = new Map<string, VitalsRecord>();
 
+  /** Test helper: seed a whole record for a user/day. */
+  seed(record: VitalsRecord) {
+    this.byUserDay.set(`${record.userId}:${record.day}`, record);
+  }
+
   async get(userId: string, day: string): Promise<VitalsRecord | null> {
     return this.byUserDay.get(`${userId}:${day}`) ?? null;
   }
@@ -150,6 +155,12 @@ class InMemoryVitalsRepository implements VitalsRepository {
     withWeight.sort((a, b) => a.day.localeCompare(b.day));
     const record = which === "latest" ? withWeight[withWeight.length - 1] : withWeight[0];
     return record.weightKg;
+  }
+
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()]
+      .filter((r) => r.userId === userId && r.day >= from && r.day <= to)
+      .sort((a, b) => a.day.localeCompare(b.day));
   }
 }
 
@@ -359,6 +370,89 @@ describe("vitals HTTP routes", () => {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ day: "2026-07-18", ...patch }),
     });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("requires auth for GET /api/vitals/range", async () => {
+    const { app } = buildApp();
+
+    const res = await app.request("/api/vitals/range?from=2026-07-01&to=2026-07-31");
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the per-metric daily series over the range", async () => {
+    const { app, vitalsRepository } = buildApp();
+    const token = await validToken();
+    vitalsRepository.seed({
+      userId: "user-1",
+      day: "2026-07-01",
+      weightKg: 52,
+      bodyFatPct: null,
+      bpReadings: [
+        { systolic: 118, diastolic: 76, pulse: 70, time: "08:00" },
+        { systolic: 122, diastolic: 80, pulse: null, time: "20:00" },
+      ],
+      glucoseReadings: [],
+      spo2Readings: [{ spo2: 98, pulse: 74, time: "08:00" }],
+    });
+    vitalsRepository.seed({
+      userId: "user-1",
+      day: "2026-07-03",
+      weightKg: 51.7,
+      bodyFatPct: null,
+      bpReadings: [],
+      glucoseReadings: [],
+      spo2Readings: [],
+    });
+
+    const res = await app.request("/api/vitals/range?from=2026-07-01&to=2026-07-31", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      from: "2026-07-01",
+      to: "2026-07-31",
+      series: {
+        weight: [
+          { day: "2026-07-01", value: 52 },
+          { day: "2026-07-03", value: 51.7 },
+        ],
+        body_fat: [],
+        systolic: [{ day: "2026-07-01", value: 120 }],
+        diastolic: [{ day: "2026-07-01", value: 78 }],
+        pulse: [{ day: "2026-07-01", value: 72 }],
+        glucose: [],
+        spo2: [{ day: "2026-07-01", value: 98 }],
+      },
+    });
+  });
+
+  it("rejects GET /api/vitals/range with a missing from, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals/range?to=2026-07-31", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects GET /api/vitals/range with an invalid to, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals/range?from=2026-07-01&to=nope", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects GET /api/vitals/range when from is later than to, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals/range?from=2026-07-31&to=2026-07-01", { headers: { Authorization: `Bearer ${token}` } });
 
     expect(res.status).toBe(400);
   });

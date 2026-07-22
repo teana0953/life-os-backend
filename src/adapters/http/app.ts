@@ -30,7 +30,7 @@ import {
   createListExerciseActivitiesHandler,
   createLogExerciseHandler,
 } from "./routes/exercise";
-import { createGetVitalsHandler, createSetVitalsHandler } from "./routes/vitals";
+import { createGetVitalsHandler, createGetVitalsRangeHandler, createSetVitalsHandler } from "./routes/vitals";
 import {
   createGetBodyProfileHandler,
   createGetWeightGoalHandler,
@@ -162,6 +162,7 @@ export function createApp(options: CreateAppOptions) {
     userRepository: options.userRepository,
     vitalsRepository: options.vitalsRepository,
   };
+  app.get("/api/vitals/range", authMiddleware, createGetVitalsRangeHandler(vitalsOptions));
   app.get("/api/vitals", authMiddleware, createGetVitalsHandler(vitalsOptions));
   app.put("/api/vitals", authMiddleware, createSetVitalsHandler(vitalsOptions));
 
