@@ -456,4 +456,13 @@ describe("vitals HTTP routes", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("rejects GET /api/vitals/range when the span exceeds the max, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals/range?from=2025-01-01&to=2026-12-31", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(400);
+  });
 });
