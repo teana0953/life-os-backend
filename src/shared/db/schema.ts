@@ -192,6 +192,17 @@ export const menstrualPeriod = pgTable(
   (t) => [index("menstrual_period_user_start_idx").on(t.userId, t.startDate)],
 );
 
+// body_profile holds one static-ish row per user: height and target weight
+// (both nullable until entered). Upserted by user_id (the primary key).
+export const bodyProfile = pgTable("body_profile", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id),
+  heightCm: numeric("height_cm"),
+  targetWeightKg: numeric("target_weight_kg"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const vitals = pgTable(
   "vitals",
   {

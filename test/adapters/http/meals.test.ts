@@ -21,6 +21,7 @@ import { measureToQuantity } from "../../../src/contexts/health/domain/quantity"
 import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
+import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
@@ -280,6 +281,20 @@ const stubVitalsRepository: VitalsRepository = {
   set: () => {
     throw new Error("not implemented in this test's fakes");
   },
+  getLatestWeight: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  getEarliestWeight: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+};
+const stubBodyProfileRepository: BodyProfileRepository = {
+  get: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  upsert: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: () => {
@@ -324,6 +339,7 @@ function buildApp() {
     vitalsRepository: stubVitalsRepository,
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
+    bodyProfileRepository: stubBodyProfileRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

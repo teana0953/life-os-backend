@@ -7,6 +7,7 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
+import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { ExerciseEntry } from "../../../src/contexts/health/domain/exercise-entry";
 import type { AddExerciseEntryInput, ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
@@ -53,6 +54,12 @@ const stubBowelRepository: BowelRepository = {
 const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
   set: notImplemented,
+  getLatestWeight: notImplemented,
+  getEarliestWeight: notImplemented,
+};
+const stubBodyProfileRepository: BodyProfileRepository = {
+  get: notImplemented,
+  upsert: notImplemented,
 };
 const stubMenstrualRepository: MenstrualRepository = {
   add: notImplemented,
@@ -156,6 +163,7 @@ function buildApp() {
     vitalsRepository: stubVitalsRepository,
     exerciseRepository,
     menstrualRepository: stubMenstrualRepository,
+    bodyProfileRepository: stubBodyProfileRepository,
     ping: async () => {},
   });
   return { app, exerciseRepository };
