@@ -39,9 +39,9 @@ describe("getVitalsDay", () => {
       day: "2026-07-18",
       weightKg: 65.5,
       bodyFatPct: 22.1,
-      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70 }],
-      glucoseReadings: [{ label: "餐前", value: 95 }],
-      spo2Readings: [{ spo2: 98, pulse: 71 }],
+      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
+      glucoseReadings: [{ label: "餐前", value: 95, time: "07:45" }],
+      spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
     });
 
     const result = await getVitalsDay(repo, "user-1", "2026-07-18");
@@ -50,9 +50,9 @@ describe("getVitalsDay", () => {
       day: "2026-07-18",
       weightKg: 65.5,
       bodyFatPct: 22.1,
-      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70 }],
-      glucoseReadings: [{ label: "餐前", value: 95 }],
-      spo2Readings: [{ spo2: 98, pulse: 71 }],
+      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
+      glucoseReadings: [{ label: "餐前", value: 95, time: "07:45" }],
+      spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
     });
   });
 
@@ -99,9 +99,9 @@ describe("setVitalsDay", () => {
       day: "2026-07-18",
       weightKg: 60,
       bodyFatPct: 20,
-      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70 }],
-      glucoseReadings: [{ label: "a", value: 90 }],
-      spo2Readings: [{ spo2: 97, pulse: 60 }],
+      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
+      glucoseReadings: [{ label: "a", value: 90, time: "07:45" }],
+      spo2Readings: [{ spo2: 97, pulse: 60, time: "08:30" }],
     });
 
     const record = await setVitalsDay(repo, {
@@ -110,33 +110,33 @@ describe("setVitalsDay", () => {
       weightKg: 65.5,
       bodyFatPct: 22.1,
       bpReadings: [
-        { systolic: 120, diastolic: 80, pulse: 70 },
-        { systolic: 118, diastolic: 78, pulse: 72 },
+        { systolic: 120, diastolic: 80, pulse: 70, time: "08:30" },
+        { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
       glucoseReadings: [
-        { label: "餐前", value: 95 },
-        { label: "餐後", value: 110 },
+        { label: "餐前", value: 95, time: "07:45" },
+        { label: "餐後", value: 110, time: "12:30" },
       ],
-      spo2Readings: [{ spo2: 98, pulse: null }],
+      spo2Readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     });
 
     expect(record.weightKg).toBe(65.5);
     expect(record.bpReadings).toHaveLength(2);
-    expect(record.spo2Readings).toEqual([{ spo2: 98, pulse: null }]);
+    expect(record.spo2Readings).toEqual([{ spo2: 98, pulse: null, time: "08:30" }]);
     expect(await repo.get("user-1", "2026-07-18")).toEqual({
       userId: "user-1",
       day: "2026-07-18",
       weightKg: 65.5,
       bodyFatPct: 22.1,
       bpReadings: [
-        { systolic: 120, diastolic: 80, pulse: 70 },
-        { systolic: 118, diastolic: 78, pulse: 72 },
+        { systolic: 120, diastolic: 80, pulse: 70, time: "08:30" },
+        { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
       glucoseReadings: [
-        { label: "餐前", value: 95 },
-        { label: "餐後", value: 110 },
+        { label: "餐前", value: 95, time: "07:45" },
+        { label: "餐後", value: 110, time: "12:30" },
       ],
-      spo2Readings: [{ spo2: 98, pulse: null }],
+      spo2Readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     });
   });
 });
