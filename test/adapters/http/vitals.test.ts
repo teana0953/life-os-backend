@@ -185,11 +185,11 @@ describe("vitals HTTP routes", () => {
       weight_kg: 65.5,
       body_fat_pct: 22.1,
       bp_readings: [
-        { systolic: 120, diastolic: 80, pulse: 70 },
-        { systolic: 118, diastolic: 78, pulse: 72 },
+        { systolic: 120, diastolic: 80, pulse: 70, time: "08:30" },
+        { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
-      glucose_readings: [{ label: "餐前", value: 95 }],
-      spo2_readings: [{ spo2: 98, pulse: null }],
+      glucose_readings: [{ label: "餐前", value: 95, time: "07:45" }],
+      spo2_readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     };
 
     const put = await app.request("/api/vitals", {
@@ -275,6 +275,32 @@ describe("vitals HTTP routes", () => {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ day: "2026-07-18", glucose_readings: [{ label: "餐前" }] }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a reading missing a time, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", bp_readings: [{ systolic: 120, diastolic: 80, pulse: 70 }] }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a reading with an empty time, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", glucose_readings: [{ label: "餐前", value: 95, time: "" }] }),
     });
 
     expect(res.status).toBe(400);

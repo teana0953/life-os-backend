@@ -6,7 +6,7 @@ import type { VitalsRepository } from "../../../contexts/health/domain/vitals-re
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { BadRequestError, requireDay, requireNumberInRange } from "../validation";
+import { BadRequestError, requireDay, requireNumberInRange, requireString } from "../validation";
 
 export interface VitalsHandlerOptions {
   userRepository: UserRepository;
@@ -66,14 +66,17 @@ export function createSetVitalsHandler(options: VitalsHandlerOptions) {
         systolic: requireNumberInRange(item.systolic, `bp_readings[${i}].systolic`, 0),
         diastolic: requireNumberInRange(item.diastolic, `bp_readings[${i}].diastolic`, 0),
         pulse: nullableNumber(item.pulse, `bp_readings[${i}].pulse`),
+        time: requireString(item.time, `bp_readings[${i}].time`),
       })),
       glucoseReadings: requireReadingArray(body.glucose_readings, "glucose_readings", (item, i) => ({
         label: typeof item.label === "string" ? item.label : "",
         value: requireNumberInRange(item.value, `glucose_readings[${i}].value`, 0),
+        time: requireString(item.time, `glucose_readings[${i}].time`),
       })),
       spo2Readings: requireReadingArray(body.spo2_readings, "spo2_readings", (item, i) => ({
         spo2: requireNumberInRange(item.spo2, `spo2_readings[${i}].spo2`, 0, 100),
         pulse: nullableNumber(item.pulse, `spo2_readings[${i}].pulse`),
+        time: requireString(item.time, `spo2_readings[${i}].time`),
       })),
     });
     return c.json(toJson(record));

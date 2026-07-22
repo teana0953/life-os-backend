@@ -165,15 +165,15 @@ export const vitals = pgTable(
     weightKg: numeric("weight_kg"),
     bodyFatPct: numeric("body_fat_pct"),
     bpReadings: jsonb("bp_readings")
-      .$type<{ systolic: number; diastolic: number; pulse: number | null }[]>()
+      .$type<{ systolic: number; diastolic: number; pulse: number | null; time: string }[]>()
       .notNull()
       .default([]),
     glucoseReadings: jsonb("glucose_readings")
-      .$type<{ label: string; value: number }[]>()
+      .$type<{ label: string; value: number; time: string }[]>()
       .notNull()
       .default([]),
     spo2Readings: jsonb("spo2_readings")
-      .$type<{ spo2: number; pulse: number | null }[]>()
+      .$type<{ spo2: number; pulse: number | null; time: string }[]>()
       .notNull()
       .default([]),
   },

@@ -3,6 +3,8 @@ export interface BpReading {
   diastolic: number;
   /** Pulse the reading was taken with; null when not recorded. */
   pulse: number | null;
+  /** Time-of-day the reading was taken, `HH:mm`; empty string for legacy data. */
+  time: string;
 }
 
 export interface GlucoseReading {
@@ -10,6 +12,8 @@ export interface GlucoseReading {
   label: string;
   /** mg/dL. */
   value: number;
+  /** Time-of-day the reading was taken, `HH:mm`; empty string for legacy data. */
+  time: string;
 }
 
 export interface Spo2Reading {
@@ -17,6 +21,8 @@ export interface Spo2Reading {
   spo2: number;
   /** Optional pulse; null when not recorded. */
   pulse: number | null;
+  /** Time-of-day the reading was taken, `HH:mm`; empty string for legacy data. */
+  time: string;
 }
 
 export interface VitalsRecord {

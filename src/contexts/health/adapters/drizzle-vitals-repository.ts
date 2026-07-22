@@ -12,9 +12,10 @@ function toDomain(row: VitalsRow): VitalsRecord {
     day: row.day,
     weightKg: row.weightKg == null ? null : Number(row.weightKg),
     bodyFatPct: row.bodyFatPct == null ? null : Number(row.bodyFatPct),
-    bpReadings: row.bpReadings,
-    glucoseReadings: row.glucoseReadings,
-    spo2Readings: row.spo2Readings,
+    // Legacy readings predate `time`; coerce a missing/non-string time to "".
+    bpReadings: row.bpReadings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
+    glucoseReadings: row.glucoseReadings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
+    spo2Readings: row.spo2Readings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
   };
 }
 
