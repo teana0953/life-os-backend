@@ -9,6 +9,7 @@ import type { WaterRepository } from "../../../src/contexts/health/domain/water-
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
+import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
@@ -60,6 +61,10 @@ const stubMenstrualRepository: MenstrualRepository = {
   listByUser: notImplemented,
   update: notImplemented,
   delete: notImplemented,
+};
+const stubBodyProfileRepository: BodyProfileRepository = {
+  get: notImplemented,
+  upsert: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
@@ -130,6 +135,22 @@ class InMemoryVitalsRepository implements VitalsRepository {
     this.byUserDay.set(`${input.userId}:${input.day}`, record);
     return record;
   }
+
+  async getLatestWeight(userId: string): Promise<number | null> {
+    return this.weightAtExtreme(userId, "latest");
+  }
+
+  async getEarliestWeight(userId: string): Promise<number | null> {
+    return this.weightAtExtreme(userId, "earliest");
+  }
+
+  private weightAtExtreme(userId: string, which: "latest" | "earliest"): number | null {
+    const withWeight = [...this.byUserDay.values()].filter((r) => r.userId === userId && r.weightKg !== null);
+    if (withWeight.length === 0) return null;
+    withWeight.sort((a, b) => a.day.localeCompare(b.day));
+    const record = which === "latest" ? withWeight[withWeight.length - 1] : withWeight[0];
+    return record.weightKg;
+  }
 }
 
 function buildApp() {
@@ -146,6 +167,7 @@ function buildApp() {
     vitalsRepository,
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
+    bodyProfileRepository: stubBodyProfileRepository,
     ping: async () => {},
   });
   return { app, vitalsRepository };

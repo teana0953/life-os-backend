@@ -24,6 +24,22 @@ class InMemoryVitalsRepository implements VitalsRepository {
     this.byUserDay.set(`${input.userId}:${input.day}`, record);
     return record;
   }
+
+  async getLatestWeight(userId: string): Promise<number | null> {
+    return this.weightAtExtreme(userId, "latest");
+  }
+
+  async getEarliestWeight(userId: string): Promise<number | null> {
+    return this.weightAtExtreme(userId, "earliest");
+  }
+
+  private weightAtExtreme(userId: string, which: "latest" | "earliest"): number | null {
+    const withWeight = [...this.byUserDay.values()].filter((r) => r.userId === userId && r.weightKg !== null);
+    if (withWeight.length === 0) return null;
+    withWeight.sort((a, b) => a.day.localeCompare(b.day));
+    const record = which === "latest" ? withWeight[withWeight.length - 1] : withWeight[0];
+    return record.weightKg;
+  }
 }
 
 let repo: InMemoryVitalsRepository;

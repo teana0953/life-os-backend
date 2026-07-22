@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
 import type { ExerciseRepository } from "../../contexts/health/domain/exercise-repository";
@@ -30,6 +31,11 @@ import {
   createLogExerciseHandler,
 } from "./routes/exercise";
 import { createGetVitalsHandler, createSetVitalsHandler } from "./routes/vitals";
+import {
+  createGetBodyProfileHandler,
+  createGetWeightGoalHandler,
+  createSetBodyProfileHandler,
+} from "./routes/body-profile";
 import {
   createAddMenstrualHandler,
   createDeleteMenstrualHandler,
@@ -75,6 +81,7 @@ export interface CreateAppOptions {
   vitalsRepository: VitalsRepository;
   exerciseRepository: ExerciseRepository;
   menstrualRepository: MenstrualRepository;
+  bodyProfileRepository: BodyProfileRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -175,6 +182,15 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/menstrual", authMiddleware, createAddMenstrualHandler(menstrualOptions));
   app.patch("/api/menstrual/:id", authMiddleware, createUpdateMenstrualHandler(menstrualOptions));
   app.delete("/api/menstrual/:id", authMiddleware, createDeleteMenstrualHandler(menstrualOptions));
+
+  const bodyProfileOptions = {
+    userRepository: options.userRepository,
+    bodyProfileRepository: options.bodyProfileRepository,
+    vitalsRepository: options.vitalsRepository,
+  };
+  app.get("/api/body-profile", authMiddleware, createGetBodyProfileHandler(bodyProfileOptions));
+  app.put("/api/body-profile", authMiddleware, createSetBodyProfileHandler(bodyProfileOptions));
+  app.get("/api/weight-goal", authMiddleware, createGetWeightGoalHandler(bodyProfileOptions));
 
   return app;
 }

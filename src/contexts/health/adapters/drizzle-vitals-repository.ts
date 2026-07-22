@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { vitals } from "../../../shared/db/schema";
 import type { VitalsRecord } from "../domain/vitals";
@@ -51,5 +51,24 @@ export class DrizzleVitalsRepository implements VitalsRepository {
       .returning();
     if (!row) throw new Error("failed to set vitals");
     return toDomain(row);
+  }
+
+  async getLatestWeight(userId: string): Promise<number | null> {
+    return this.readWeight(userId, "latest");
+  }
+
+  async getEarliestWeight(userId: string): Promise<number | null> {
+    return this.readWeight(userId, "earliest");
+  }
+
+  private async readWeight(userId: string, which: "latest" | "earliest"): Promise<number | null> {
+    const db = this.getDb();
+    const [row] = await db
+      .select({ weightKg: vitals.weightKg })
+      .from(vitals)
+      .where(and(eq(vitals.userId, userId), isNotNull(vitals.weightKg)))
+      .orderBy(which === "latest" ? desc(vitals.day) : asc(vitals.day))
+      .limit(1);
+    return row?.weightKg == null ? null : Number(row.weightKg);
   }
 }
