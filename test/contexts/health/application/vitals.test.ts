@@ -40,6 +40,12 @@ class InMemoryVitalsRepository implements VitalsRepository {
     const record = which === "latest" ? withWeight[withWeight.length - 1] : withWeight[0];
     return record.weightKg;
   }
+
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()]
+      .filter((r) => r.userId === userId && r.day >= from && r.day <= to)
+      .sort((a, b) => a.day.localeCompare(b.day));
+  }
 }
 
 let repo: InMemoryVitalsRepository;

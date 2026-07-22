@@ -173,6 +173,12 @@ class InMemoryVitalsRepository implements VitalsRepository {
     withWeight.sort((a, b) => a.day.localeCompare(b.day));
     return (which === "latest" ? withWeight[withWeight.length - 1] : withWeight[0]).weightKg;
   }
+
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()]
+      .filter((r) => r.userId === userId && r.day >= from && r.day <= to)
+      .sort((a, b) => a.day.localeCompare(b.day));
+  }
 }
 
 function buildApp() {

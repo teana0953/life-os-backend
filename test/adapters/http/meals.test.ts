@@ -287,6 +287,9 @@ const stubVitalsRepository: VitalsRepository = {
   getEarliestWeight: () => {
     throw new Error("not implemented in this test's fakes");
   },
+  listRange: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
 };
 const stubBodyProfileRepository: BodyProfileRepository = {
   get: () => {

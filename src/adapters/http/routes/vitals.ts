@@ -1,7 +1,9 @@
 import type { Context } from "hono";
 import { getVitalsDay } from "../../../contexts/health/application/get-vitals-day";
+import { getVitalsRange } from "../../../contexts/health/application/get-vitals-range";
 import { setVitalsDay } from "../../../contexts/health/application/set-vitals-day";
 import type { BpReading, GlucoseReading, Spo2Reading, VitalsRecord } from "../../../contexts/health/domain/vitals";
+import type { VitalsSeries } from "../../../contexts/health/domain/vitals-series";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
@@ -48,6 +50,46 @@ export function createGetVitalsHandler(options: VitalsHandlerOptions) {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getVitalsDay(options.vitalsRepository, userId, requireDay(c.req.query("day")));
     return c.json(toJson(result));
+  };
+}
+
+/** Serializes the per-metric series to its snake_case JSON shape. */
+function seriesToJson(series: VitalsSeries) {
+  return {
+    weight: series.weight,
+    body_fat: series.bodyFat,
+    systolic: series.systolic,
+    diastolic: series.diastolic,
+    pulse: series.pulse,
+    glucose: series.glucose,
+    spo2: series.spo2,
+  };
+}
+
+/** Protected `GET /api/vitals/range?from=&to=`: per-metric daily series over `[from, to]`. */
+/** Max span (in days) the range endpoint will serve; the trend UI needs ≤ ~90. */
+const MAX_RANGE_DAYS = 366;
+
+/** Whole-day span between two ISO `YYYY-MM-DD` dates, via UTC (no DST drift). */
+function daySpan(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return (Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000;
+}
+
+export function createGetVitalsRangeHandler(options: VitalsHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const from = requireDay(c.req.query("from"), "from");
+    const to = requireDay(c.req.query("to"), "to");
+    if (from > to) throw new BadRequestError("from must not be later than to");
+    // Bound the span so an over-wide range can't request an unbounded response
+    // (the trend UI asks for at most ~90 days).
+    if (daySpan(from, to) > MAX_RANGE_DAYS) {
+      throw new BadRequestError(`range must not exceed ${MAX_RANGE_DAYS} days`);
+    }
+    const { series } = await getVitalsRange(options.vitalsRepository, userId, from, to);
+    return c.json({ from, to, series: seriesToJson(series) });
   };
 }
 

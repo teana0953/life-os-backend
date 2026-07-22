@@ -48,6 +48,9 @@ class FakeVitalsRepository implements VitalsRepository {
   async getEarliestWeight(): Promise<number | null> {
     return this.earliest;
   }
+  async listRange(): Promise<VitalsRecord[]> {
+    throw new Error("not used");
+  }
 }
 
 let repo: InMemoryBodyProfileRepository;

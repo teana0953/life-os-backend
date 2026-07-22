@@ -49,6 +49,7 @@ const stubVitalsRepository: VitalsRepository = {
   set: notImplemented,
   getLatestWeight: notImplemented,
   getEarliestWeight: notImplemented,
+  listRange: notImplemented,
 };
 const stubBodyProfileRepository: BodyProfileRepository = {
   get: notImplemented,

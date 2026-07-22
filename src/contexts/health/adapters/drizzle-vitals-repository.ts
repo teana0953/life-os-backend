@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { vitals } from "../../../shared/db/schema";
 import type { VitalsRecord } from "../domain/vitals";
@@ -51,6 +51,16 @@ export class DrizzleVitalsRepository implements VitalsRepository {
       .returning();
     if (!row) throw new Error("failed to set vitals");
     return toDomain(row);
+  }
+
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(vitals)
+      .where(and(eq(vitals.userId, userId), gte(vitals.day, from), lte(vitals.day, to)))
+      .orderBy(asc(vitals.day));
+    return rows.map(toDomain);
   }
 
   async getLatestWeight(userId: string): Promise<number | null> {
