@@ -10,6 +10,7 @@ import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-
 import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
+import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -53,6 +54,12 @@ const stubExerciseRepository: ExerciseRepository = {
   addEntry: notImplemented,
   listByDay: notImplemented,
   deleteEntry: notImplemented,
+};
+const stubMenstrualRepository: MenstrualRepository = {
+  add: notImplemented,
+  listByUser: notImplemented,
+  update: notImplemented,
+  delete: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
@@ -138,6 +145,7 @@ function buildApp() {
     bowelRepository: stubBowelRepository,
     vitalsRepository,
     exerciseRepository: stubExerciseRepository,
+    menstrualRepository: stubMenstrualRepository,
     ping: async () => {},
   });
   return { app, vitalsRepository };

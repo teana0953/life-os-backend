@@ -5,6 +5,7 @@ import { DrizzleDailyTargetRepository } from "./contexts/health/adapters/drizzle
 import { DrizzleExerciseRepository } from "./contexts/health/adapters/drizzle-exercise-repository";
 import { DrizzleFoodDictionaryRepository } from "./contexts/health/adapters/drizzle-food-dictionary-repository";
 import { DrizzleMealRepository } from "./contexts/health/adapters/drizzle-meal-repository";
+import { DrizzleMenstrualRepository } from "./contexts/health/adapters/drizzle-menstrual-repository";
 import { DrizzleVitalsRepository } from "./contexts/health/adapters/drizzle-vitals-repository";
 import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
@@ -40,6 +41,7 @@ export default {
     const bowelRepository = new DrizzleBowelRepository(getDb);
     const vitalsRepository = new DrizzleVitalsRepository(getDb);
     const exerciseRepository = new DrizzleExerciseRepository(getDb);
+    const menstrualRepository = new DrizzleMenstrualRepository(getDb);
 
     const app = createApp({
       projectId: env.FIREBASE_PROJECT_ID,
@@ -52,6 +54,7 @@ export default {
       bowelRepository,
       vitalsRepository,
       exerciseRepository,
+      menstrualRepository,
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
         await getDb().execute(sql`select 1`);
