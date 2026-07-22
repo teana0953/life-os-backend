@@ -6,6 +6,7 @@ import type { DailyTargetRepository } from "../../contexts/health/domain/daily-t
 import type { ExerciseRepository } from "../../contexts/health/domain/exercise-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
+import type { MenstrualRepository } from "../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
@@ -29,6 +30,12 @@ import {
   createLogExerciseHandler,
 } from "./routes/exercise";
 import { createGetVitalsHandler, createSetVitalsHandler } from "./routes/vitals";
+import {
+  createAddMenstrualHandler,
+  createDeleteMenstrualHandler,
+  createGetMenstrualHandler,
+  createUpdateMenstrualHandler,
+} from "./routes/menstrual";
 import { createHealthHandler } from "./routes/health";
 import {
   createCreateMealHandler,
@@ -67,6 +74,7 @@ export interface CreateAppOptions {
   bowelRepository: BowelRepository;
   vitalsRepository: VitalsRepository;
   exerciseRepository: ExerciseRepository;
+  menstrualRepository: MenstrualRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -158,6 +166,15 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/exercise", authMiddleware, createGetExerciseHandler(exerciseOptions));
   app.post("/api/exercise", authMiddleware, createLogExerciseHandler(exerciseOptions));
   app.delete("/api/exercise/:id", authMiddleware, createDeleteExerciseHandler(exerciseOptions));
+
+  const menstrualOptions = {
+    userRepository: options.userRepository,
+    menstrualRepository: options.menstrualRepository,
+  };
+  app.get("/api/menstrual", authMiddleware, createGetMenstrualHandler(menstrualOptions));
+  app.post("/api/menstrual", authMiddleware, createAddMenstrualHandler(menstrualOptions));
+  app.patch("/api/menstrual/:id", authMiddleware, createUpdateMenstrualHandler(menstrualOptions));
+  app.delete("/api/menstrual/:id", authMiddleware, createDeleteMenstrualHandler(menstrualOptions));
 
   return app;
 }

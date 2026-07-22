@@ -174,6 +174,24 @@ export const exerciseLog = pgTable(
   (t) => [index("exercise_log_user_day_idx").on(t.userId, t.day)],
 );
 
+// menstrual_period holds a per-user *list* of periods (one row per cycle: a
+// required start_date and a nullable end_date set when the period ends). Many
+// rows per user, no unique constraint. Cycle statistics are derived on read,
+// not stored.
+export const menstrualPeriod = pgTable(
+  "menstrual_period",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("menstrual_period_user_start_idx").on(t.userId, t.startDate)],
+);
+
 export const vitals = pgTable(
   "vitals",
   {
