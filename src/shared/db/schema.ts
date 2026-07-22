@@ -1,4 +1,4 @@
-import { boolean, date, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -152,6 +152,26 @@ export const bowelLog = pgTable(
     note: text("note").notNull().default(""),
   },
   (t) => [unique().on(t.userId, t.day)],
+);
+
+// exercise_log holds a per-user, per-day *list* of entries (many per day,
+// including repeats of the same activity): no unique constraint. activity_id
+// references the static in-code library (validated at write time), so there is
+// no foreign key here. Reads enrich name/category from that library.
+export const exerciseLog = pgTable(
+  "exercise_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    activityId: text("activity_id").notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    note: text("note").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("exercise_log_user_day_idx").on(t.userId, t.day)],
 );
 
 export const vitals = pgTable(

@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
+import type { ExerciseRepository } from "../../contexts/health/domain/exercise-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
 import type { VitalsRepository } from "../../contexts/health/domain/vitals-repository";
@@ -21,6 +22,12 @@ import {
   createUnfavoriteFoodItemHandler,
 } from "./routes/food-dictionary";
 import { createGetBowelHandler, createSetBowelHandler } from "./routes/bowel";
+import {
+  createDeleteExerciseHandler,
+  createGetExerciseHandler,
+  createListExerciseActivitiesHandler,
+  createLogExerciseHandler,
+} from "./routes/exercise";
 import { createGetVitalsHandler, createSetVitalsHandler } from "./routes/vitals";
 import { createHealthHandler } from "./routes/health";
 import {
@@ -59,6 +66,7 @@ export interface CreateAppOptions {
   waterRepository: WaterRepository;
   bowelRepository: BowelRepository;
   vitalsRepository: VitalsRepository;
+  exerciseRepository: ExerciseRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -141,6 +149,15 @@ export function createApp(options: CreateAppOptions) {
   };
   app.get("/api/vitals", authMiddleware, createGetVitalsHandler(vitalsOptions));
   app.put("/api/vitals", authMiddleware, createSetVitalsHandler(vitalsOptions));
+
+  const exerciseOptions = {
+    userRepository: options.userRepository,
+    exerciseRepository: options.exerciseRepository,
+  };
+  app.get("/api/exercise/activities", authMiddleware, createListExerciseActivitiesHandler(exerciseOptions));
+  app.get("/api/exercise", authMiddleware, createGetExerciseHandler(exerciseOptions));
+  app.post("/api/exercise", authMiddleware, createLogExerciseHandler(exerciseOptions));
+  app.delete("/api/exercise/:id", authMiddleware, createDeleteExerciseHandler(exerciseOptions));
 
   return app;
 }
