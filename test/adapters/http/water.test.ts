@@ -8,6 +8,7 @@ import type { DailyTargetRepository } from "../../../src/contexts/health/domain/
 import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
+import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -37,6 +38,10 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   set: notImplemented,
 };
 const stubBowelRepository: BowelRepository = {
+  get: notImplemented,
+  set: notImplemented,
+};
+const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
   set: notImplemented,
 };
@@ -137,6 +142,7 @@ function buildApp() {
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository,
     bowelRepository: stubBowelRepository,
+    vitalsRepository: stubVitalsRepository,
     ping: async () => {},
   });
   return { app, waterRepository };

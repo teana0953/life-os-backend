@@ -1,0 +1,54 @@
+import { and, eq } from "drizzle-orm";
+import type { Db } from "../../../shared/db/client";
+import { vitals } from "../../../shared/db/schema";
+import type { VitalsRecord } from "../domain/vitals";
+import type { SetVitalsInput, VitalsRepository } from "../domain/vitals-repository";
+
+type VitalsRow = typeof vitals.$inferSelect;
+
+function toDomain(row: VitalsRow): VitalsRecord {
+  return {
+    userId: row.userId,
+    day: row.day,
+    weightKg: row.weightKg == null ? null : Number(row.weightKg),
+    bodyFatPct: row.bodyFatPct == null ? null : Number(row.bodyFatPct),
+    bpReadings: row.bpReadings,
+    glucoseReadings: row.glucoseReadings,
+    spo2Readings: row.spo2Readings,
+  };
+}
+
+/** Driven adapter: implements VitalsRepository via Drizzle + Neon. */
+export class DrizzleVitalsRepository implements VitalsRepository {
+  constructor(private readonly getDb: () => Db) {}
+
+  async get(userId: string, day: string): Promise<VitalsRecord | null> {
+    const db = this.getDb();
+    const [row] = await db
+      .select()
+      .from(vitals)
+      .where(and(eq(vitals.userId, userId), eq(vitals.day, day)))
+      .limit(1);
+    return row ? toDomain(row) : null;
+  }
+
+  async set(input: SetVitalsInput): Promise<VitalsRecord> {
+    const db = this.getDb();
+    const values = {
+      userId: input.userId,
+      day: input.day,
+      weightKg: input.weightKg == null ? null : String(input.weightKg),
+      bodyFatPct: input.bodyFatPct == null ? null : String(input.bodyFatPct),
+      bpReadings: input.bpReadings,
+      glucoseReadings: input.glucoseReadings,
+      spo2Readings: input.spo2Readings,
+    };
+    const [row] = await db
+      .insert(vitals)
+      .values(values)
+      .onConflictDoUpdate({ target: [vitals.userId, vitals.day], set: values })
+      .returning();
+    if (!row) throw new Error("failed to set vitals");
+    return toDomain(row);
+  }
+}

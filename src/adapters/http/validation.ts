@@ -26,6 +26,14 @@ export function requireFiniteNumber(value: unknown, field: string): number {
   return n;
 }
 
+/** Finite number that is at least `min` and (when given) at most `max`; throws 400 otherwise. */
+export function requireNumberInRange(value: unknown, field: string, min: number, max?: number): number {
+  const n = requireFiniteNumber(value, field);
+  if (n < min) throw new BadRequestError(`${field} must be at least ${min}`);
+  if (max !== undefined && n > max) throw new BadRequestError(`${field} must be at most ${max}`);
+  return n;
+}
+
 /** Optional finite number: returns `fallback` when absent, else validates. */
 export function optionalFiniteNumber(value: unknown, field: string, fallback: number): number {
   if (value === undefined || value === null) return fallback;
