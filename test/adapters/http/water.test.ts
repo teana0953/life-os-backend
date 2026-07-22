@@ -7,6 +7,7 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -33,6 +34,10 @@ const stubMealRepository: MealRepository = {
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
   getLatestOnOrBefore: notImplemented,
+  set: notImplemented,
+};
+const stubBowelRepository: BowelRepository = {
+  get: notImplemented,
   set: notImplemented,
 };
 
@@ -131,6 +136,7 @@ function buildApp() {
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository,
+    bowelRepository: stubBowelRepository,
     ping: async () => {},
   });
   return { app, waterRepository };
