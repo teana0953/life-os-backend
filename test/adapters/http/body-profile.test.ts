@@ -240,6 +240,20 @@ describe("body-profile HTTP routes", () => {
     expect(await res.json()).toEqual({ height_cm: 165, target_weight_kg: 51 });
   });
 
+  it("PUT with an empty body is a no-op that leaves the profile unchanged", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+    // On an unset profile: no-op returns the nulls, without inserting a bare row.
+    const first = await app.request("/api/body-profile", authed(token, "PUT", {}));
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ height_cm: null, target_weight_kg: null });
+    // After setting: an empty PUT leaves the stored values untouched.
+    await app.request("/api/body-profile", authed(token, "PUT", { height_cm: 165, target_weight_kg: 51 }));
+    const res = await app.request("/api/body-profile", authed(token, "PUT", {}));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ height_cm: 165, target_weight_kg: 51 });
+  });
+
   it.each([
     ["a negative height", { height_cm: -1 }],
     ["a zero target weight", { target_weight_kg: 0 }],
