@@ -6,9 +6,9 @@ import type { FoodDictionaryRepository } from "../../../src/contexts/health/doma
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
-import type { BowelLog } from "../../../src/contexts/health/domain/bowel";
-import type { SetBowelLogInput, BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
-import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
+import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
+import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
+import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -44,7 +44,7 @@ const stubWaterRepository: WaterRepository = {
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,
 };
-const stubVitalsRepository: VitalsRepository = {
+const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
 };
@@ -97,28 +97,30 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
-class InMemoryBowelRepository implements BowelRepository {
-  private byUserDay = new Map<string, BowelLog>();
+class InMemoryVitalsRepository implements VitalsRepository {
+  private byUserDay = new Map<string, VitalsRecord>();
 
-  async get(userId: string, day: string): Promise<BowelLog | null> {
+  async get(userId: string, day: string): Promise<VitalsRecord | null> {
     return this.byUserDay.get(`${userId}:${day}`) ?? null;
   }
 
-  async set(input: SetBowelLogInput): Promise<BowelLog> {
-    const log: BowelLog = {
+  async set(input: SetVitalsInput): Promise<VitalsRecord> {
+    const record: VitalsRecord = {
       userId: input.userId,
       day: input.day,
-      count: input.count,
-      isNormal: input.isNormal,
-      note: input.note,
+      weightKg: input.weightKg,
+      bodyFatPct: input.bodyFatPct,
+      bpReadings: input.bpReadings,
+      glucoseReadings: input.glucoseReadings,
+      spo2Readings: input.spo2Readings,
     };
-    this.byUserDay.set(`${input.userId}:${input.day}`, log);
-    return log;
+    this.byUserDay.set(`${input.userId}:${input.day}`, record);
+    return record;
   }
 }
 
 function buildApp() {
-  const bowelRepository = new InMemoryBowelRepository();
+  const vitalsRepository = new InMemoryVitalsRepository();
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
@@ -127,29 +129,38 @@ function buildApp() {
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository: stubWaterRepository,
-    bowelRepository,
-    vitalsRepository: stubVitalsRepository,
+    bowelRepository: stubBowelRepository,
+    vitalsRepository,
     ping: async () => {},
   });
-  return { app, bowelRepository };
+  return { app, vitalsRepository };
 }
 
-describe("bowel HTTP routes", () => {
-  it("requires auth for GET /api/bowel", async () => {
+const EMPTY_DAY = {
+  day: "2026-07-18",
+  weight_kg: null,
+  body_fat_pct: null,
+  bp_readings: [],
+  glucose_readings: [],
+  spo2_readings: [],
+};
+
+describe("vitals HTTP routes", () => {
+  it("requires auth for GET /api/vitals", async () => {
     const { app } = buildApp();
 
-    const res = await app.request("/api/bowel?day=2026-07-18");
+    const res = await app.request("/api/vitals?day=2026-07-18");
 
     expect(res.status).toBe(401);
   });
 
-  it("requires auth for PUT /api/bowel", async () => {
+  it("requires auth for PUT /api/vitals", async () => {
     const { app } = buildApp();
 
-    const res = await app.request("/api/bowel", {
+    const res = await app.request("/api/vitals", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", count: 2, is_normal: true, note: "fine" }),
+      body: JSON.stringify({ day: "2026-07-18" }),
     });
 
     expect(res.status).toBe(401);
@@ -159,60 +170,111 @@ describe("bowel HTTP routes", () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/bowel?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
+    const res = await app.request("/api/vitals?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ day: "2026-07-18", count: 0, is_normal: null, note: "" });
+    expect(await res.json()).toEqual(EMPTY_DAY);
   });
 
-  it("upserts a day's record and returns it", async () => {
+  it("upserts a day's whole record with multiple readings and round-trips (incl. null pulse)", async () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const put = await app.request("/api/bowel", {
+    const payload = {
+      day: "2026-07-18",
+      weight_kg: 65.5,
+      body_fat_pct: 22.1,
+      bp_readings: [
+        { systolic: 120, diastolic: 80, pulse: 70 },
+        { systolic: 118, diastolic: 78, pulse: 72 },
+      ],
+      glucose_readings: [{ label: "餐前", value: 95 }],
+      spo2_readings: [{ spo2: 98, pulse: null }],
+    };
+
+    const put = await app.request("/api/vitals", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", count: 2, is_normal: true, note: "fine" }),
+      body: JSON.stringify(payload),
     });
 
     expect(put.status).toBe(200);
-    expect(await put.json()).toEqual({ day: "2026-07-18", count: 2, is_normal: true, note: "fine" });
+    expect(await put.json()).toEqual(payload);
 
-    const get = await app.request("/api/bowel?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
-    expect(await get.json()).toEqual({ day: "2026-07-18", count: 2, is_normal: true, note: "fine" });
+    const get = await app.request("/api/vitals?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
+    expect(await get.json()).toEqual(payload);
   });
 
-  it("allows a null flag and an empty note", async () => {
+  it("accepts null scalars and empty arrays", async () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/bowel", {
+    const res = await app.request("/api/vitals", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", count: 1 }),
+      body: JSON.stringify({ day: "2026-07-18" }),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ day: "2026-07-18", count: 1, is_normal: null, note: "" });
+    expect(await res.json()).toEqual(EMPTY_DAY);
   });
 
-  it("rejects GET /api/bowel with a missing day, as 400", async () => {
+  it("rejects GET /api/vitals with a missing day, as 400", async () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/bowel", { headers: { Authorization: `Bearer ${token}` } });
+    const res = await app.request("/api/vitals", { headers: { Authorization: `Bearer ${token}` } });
 
     expect(res.status).toBe(400);
   });
 
-  it("rejects PUT /api/bowel with a non-numeric count, as 400", async () => {
+  it("rejects PUT /api/vitals with a non-numeric scalar, as 400", async () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/bowel", {
+    const res = await app.request("/api/vitals", {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ day: "2026-07-18", count: "abc" }),
+      body: JSON.stringify({ day: "2026-07-18", weight_kg: "abc" }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a non-array reading list, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", bp_readings: "nope" }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a reading that is a primitive, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", bp_readings: [42] }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a reading missing a required numeric value, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", glucose_readings: [{ label: "餐前" }] }),
     });
 
     expect(res.status).toBe(400);

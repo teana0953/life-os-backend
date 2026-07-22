@@ -5,6 +5,7 @@ import type { BowelRepository } from "../../contexts/health/domain/bowel-reposit
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
+import type { VitalsRepository } from "../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
@@ -20,6 +21,7 @@ import {
   createUnfavoriteFoodItemHandler,
 } from "./routes/food-dictionary";
 import { createGetBowelHandler, createSetBowelHandler } from "./routes/bowel";
+import { createGetVitalsHandler, createSetVitalsHandler } from "./routes/vitals";
 import { createHealthHandler } from "./routes/health";
 import {
   createCreateMealHandler,
@@ -56,6 +58,7 @@ export interface CreateAppOptions {
   dailyTargetRepository: DailyTargetRepository;
   waterRepository: WaterRepository;
   bowelRepository: BowelRepository;
+  vitalsRepository: VitalsRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -131,6 +134,13 @@ export function createApp(options: CreateAppOptions) {
   };
   app.get("/api/bowel", authMiddleware, createGetBowelHandler(bowelOptions));
   app.put("/api/bowel", authMiddleware, createSetBowelHandler(bowelOptions));
+
+  const vitalsOptions = {
+    userRepository: options.userRepository,
+    vitalsRepository: options.vitalsRepository,
+  };
+  app.get("/api/vitals", authMiddleware, createGetVitalsHandler(vitalsOptions));
+  app.put("/api/vitals", authMiddleware, createSetVitalsHandler(vitalsOptions));
 
   return app;
 }

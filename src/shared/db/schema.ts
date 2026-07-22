@@ -1,4 +1,4 @@
-import { boolean, date, integer, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -150,6 +150,32 @@ export const bowelLog = pgTable(
     count: integer("count").notNull(),
     isNormal: boolean("is_normal"),
     note: text("note").notNull().default(""),
+  },
+  (t) => [unique().on(t.userId, t.day)],
+);
+
+export const vitals = pgTable(
+  "vitals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    day: date("day").notNull(),
+    weightKg: numeric("weight_kg"),
+    bodyFatPct: numeric("body_fat_pct"),
+    bpReadings: jsonb("bp_readings")
+      .$type<{ systolic: number; diastolic: number; pulse: number | null }[]>()
+      .notNull()
+      .default([]),
+    glucoseReadings: jsonb("glucose_readings")
+      .$type<{ label: string; value: number }[]>()
+      .notNull()
+      .default([]),
+    spo2Readings: jsonb("spo2_readings")
+      .$type<{ spo2: number; pulse: number | null }[]>()
+      .notNull()
+      .default([]),
   },
   (t) => [unique().on(t.userId, t.day)],
 );
