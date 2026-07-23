@@ -10,6 +10,7 @@ import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-
 import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
+import type { ChaodaysClient } from "../../../src/contexts/health/domain/chaodays-client";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
@@ -18,6 +19,10 @@ import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
 }
+const stubChaodaysClient: ChaodaysClient = {
+  signIn: notImplemented,
+  fetchWeightRecords: notImplemented,
+};
 const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   search: notImplemented,
   findById: notImplemented,
@@ -186,6 +191,7 @@ function buildApp() {
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: { listLoggedDays: async () => [] },
+    chaodaysClient: stubChaodaysClient,
     ping: async () => {},
   });
   return { app, vitalsRepository };
