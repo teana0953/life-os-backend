@@ -32,9 +32,10 @@ const stubBodyProfileRepository = { get: notImplemented, upsert: notImplemented 
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: async () => null,
   getLatestOnOrBefore: async (): Promise<DailyTarget | null> => null,
+  listInRange: async () => [],
   set: notImplemented,
 };
-const stubMealRepository = { upsertMealWithItems: notImplemented, listMealsByDay: async () => [], listLoggedDays: notImplemented, updateMealTime: notImplemented, deleteMeal: notImplemented, updateItem: notImplemented, deleteItem: notImplemented } as unknown as MealRepository;
+const stubMealRepository = { upsertMealWithItems: notImplemented, listMealsByDay: async () => [], listMealsInRange: async () => [], listLoggedDays: notImplemented, updateMealTime: notImplemented, deleteMeal: notImplemented, updateItem: notImplemented, deleteItem: notImplemented } as unknown as MealRepository;
 
 class FakeCalendarRepository implements HealthCalendarRepository {
   constructor(private readonly days: string[]) {}
@@ -125,6 +126,26 @@ describe("health-calendar HTTP route", () => {
       logging_rate: 6, // round(100 * 2 / 31)
       diet_adherence_rate: 0, // no targets set
     });
+  });
+
+  it("uses a client-supplied today to bound the current month", async () => {
+    // With today=2026-07-05, month 2026-07 has 5 elapsed days regardless of the clock.
+    const { app } = buildApp(["2026-07-02"]);
+    const token = await validToken();
+
+    const res = await app.request("/api/health-calendar?month=2026-07&today=2026-07-05", authed(token));
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days_elapsed: number; logging_rate: number };
+    expect(body.days_elapsed).toBe(5);
+    expect(body.logging_rate).toBe(20); // round(100 * 1 / 5)
+  });
+
+  it("rejects a malformed today with 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+    const res = await app.request("/api/health-calendar?month=2026-07&today=07-05-2026", authed(token));
+    expect(res.status).toBe(400);
   });
 
   it("rejects a missing month with 400", async () => {

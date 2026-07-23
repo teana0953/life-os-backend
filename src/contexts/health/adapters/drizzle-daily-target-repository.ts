@@ -1,4 +1,4 @@
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { dailyTarget } from "../../../shared/db/schema";
 import type { DailyTarget } from "../domain/daily-target";
@@ -45,6 +45,16 @@ export class DrizzleDailyTargetRepository implements DailyTargetRepository {
       .orderBy(desc(dailyTarget.day))
       .limit(1);
     return row ? toDomain(row) : null;
+  }
+
+  async listInRange(userId: string, from: string, to: string): Promise<DailyTarget[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(dailyTarget)
+      .where(and(eq(dailyTarget.userId, userId), gte(dailyTarget.day, from), lte(dailyTarget.day, to)))
+      .orderBy(asc(dailyTarget.day));
+    return rows.map(toDomain);
   }
 
   async set(input: SetDailyTargetInput): Promise<DailyTarget> {

@@ -51,6 +51,8 @@ export interface MealRepository {
   upsertMealWithItems(input: UpsertMealWithItemsInput): Promise<MealEntry>;
   /** All of the user's meals on `day`, each with its items. */
   listMealsByDay(userId: string, day: string): Promise<MealEntry[]>;
+  /** All of the user's meals with `day` in `[from, to]`, each with its items. */
+  listMealsInRange(userId: string, from: string, to: string): Promise<MealEntry[]>;
   /** Distinct calendar days in `month` (YYYY-MM) on which the user has at least one meal, ascending. */
   listLoggedDays(userId: string, month: string): Promise<string[]>;
   /** Updates a meal's time if owned by userId; does not change `day`. Returns null if not owned/found. */

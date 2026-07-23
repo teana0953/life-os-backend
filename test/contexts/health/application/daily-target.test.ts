@@ -19,6 +19,10 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     return this.targetsByUserDay.get(`${userId}:${day}`) ?? null;
   }
 
+  async listInRange(): Promise<DailyTarget[]> {
+    throw new Error("not used in this test");
+  }
+
   async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
     let latest: DailyTarget | null = null;
     for (const target of this.targetsByUserDay.values()) {
@@ -124,6 +128,10 @@ class InMemoryMealRepository implements MealRepository {
 
   async listMealsByDay(userId: string, day: string): Promise<MealEntry[]> {
     return this.meals.filter((m) => m.userId === userId && m.day === day);
+  }
+
+  async listMealsInRange(): Promise<MealEntry[]> {
+    throw new Error("not used in this test");
   }
 
   async listLoggedDays(_userId: string, _month: string): Promise<string[]> {

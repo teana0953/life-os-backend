@@ -1,7 +1,8 @@
+import type { Portions } from "../domain/conversion";
 import type { DailyTargetRepository } from "../domain/daily-target-repository";
 import type { HealthCalendarRepository } from "../domain/health-calendar-repository";
 import type { MealRepository } from "../domain/meal-repository";
-import { getDailyTargetWithRemaining } from "./get-daily-target-with-remaining";
+import { scaleByQuantity } from "../domain/quantity";
 
 export interface HealthCalendarSummary {
   year: number;
@@ -19,6 +20,7 @@ export interface HealthCalendarSummary {
 }
 
 const EPSILON = 1e-9;
+const ZERO_PORTIONS: Portions = { staple: 0, meat: 0, fruit: 0, veg: 0 };
 
 function pad2(n: number): string {
   return n.toString().padStart(2, "0");
@@ -67,19 +69,60 @@ export async function getHealthCalendar(
   const elapsedBoundary = `${year}-${pad2(month)}-${pad2(daysElapsed)}`;
   const loggedInElapsed = loggedDays.filter((day) => day <= elapsedBoundary).length;
 
-  const days = Array.from({ length: daysElapsed }, (_, i) => `${year}-${pad2(month)}-${pad2(i + 1)}`);
-  const targets = await Promise.all(
-    days.map((day) => getDailyTargetWithRemaining(dailyTargetRepository, mealRepository, userId, day)),
-  );
-  const metDays = targets.filter((t) => {
-    const hasTarget = t.effective.staple + t.effective.meat + t.effective.fruit + t.effective.veg > 0;
+  // Batched diet adherence: fetch the month's targets and meals once and resolve
+  // each day in memory (rather than ~3 queries per day), keeping the request well
+  // under the Workers subrequest limit. `dayBefore` carries a target set before the
+  // month into day 1, matching getDailyTargetWithRemaining's carry-forward.
+  const dayBefore = new Date(Date.UTC(year, month - 1, 1) - 86_400_000).toISOString().slice(0, 10);
+  const [carryBefore, targetsInRange, meals] = await Promise.all([
+    dailyTargetRepository.getLatestOnOrBefore(userId, dayBefore),
+    dailyTargetRepository.listInRange(userId, from, elapsedBoundary),
+    mealRepository.listMealsInRange(userId, from, elapsedBoundary),
+  ]);
+
+  const loggedByDay = new Map<string, Portions>();
+  for (const meal of meals) {
+    const acc = loggedByDay.get(meal.day) ?? { ...ZERO_PORTIONS };
+    for (const item of meal.items) {
+      const consumed = scaleByQuantity(item, item.quantity);
+      acc.staple += consumed.staple;
+      acc.meat += consumed.meat;
+      acc.fruit += consumed.fruit;
+      acc.veg += consumed.veg;
+    }
+    loggedByDay.set(meal.day, acc);
+  }
+  const exactByDay = new Map(targetsInRange.map((t) => [t.day, t]));
+
+  // Walk the elapsed days ascending, carrying the most recent target's base forward
+  // (bonus applies only on a target's exact day).
+  let base: Portions = carryBefore
+    ? { staple: carryBefore.baseStaple, meat: carryBefore.baseMeat, fruit: carryBefore.baseFruit, veg: carryBefore.baseVeg }
+    : { ...ZERO_PORTIONS };
+  let metDays = 0;
+  for (let d = 1; d <= daysElapsed; d++) {
+    const day = `${year}-${pad2(month)}-${pad2(d)}`;
+    const exact = exactByDay.get(day);
+    let bonus: Portions = ZERO_PORTIONS;
+    if (exact) {
+      base = { staple: exact.baseStaple, meat: exact.baseMeat, fruit: exact.baseFruit, veg: exact.baseVeg };
+      bonus = { staple: exact.bonusStaple, meat: exact.bonusMeat, fruit: exact.bonusFruit, veg: exact.bonusVeg };
+    }
+    const effective = {
+      staple: base.staple + bonus.staple,
+      meat: base.meat + bonus.meat,
+      fruit: base.fruit + bonus.fruit,
+      veg: base.veg + bonus.veg,
+    };
+    const logged = loggedByDay.get(day) ?? ZERO_PORTIONS;
+    const hasTarget = effective.staple + effective.meat + effective.fruit + effective.veg > 0;
     const allMet =
-      t.remaining.staple <= EPSILON &&
-      t.remaining.meat <= EPSILON &&
-      t.remaining.fruit <= EPSILON &&
-      t.remaining.veg <= EPSILON;
-    return hasTarget && allMet;
-  }).length;
+      effective.staple - logged.staple <= EPSILON &&
+      effective.meat - logged.meat <= EPSILON &&
+      effective.fruit - logged.fruit <= EPSILON &&
+      effective.veg - logged.veg <= EPSILON;
+    if (hasTarget && allMet) metDays++;
+  }
 
   return {
     year,

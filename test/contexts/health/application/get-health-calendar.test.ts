@@ -40,6 +40,9 @@ class FakeDailyTargetRepository implements DailyTargetRepository {
     }
     return latest;
   }
+  async listInRange(_userId: string, from: string, to: string): Promise<DailyTarget[]> {
+    return [...this.byDay.values()].filter((t) => t.day >= from && t.day <= to).sort((a, b) => a.day.localeCompare(b.day));
+  }
   async set(_input: SetDailyTargetInput): Promise<DailyTarget> {
     throw new Error("not used");
   }
@@ -77,12 +80,17 @@ class FakeMealRepository implements MealRepository {
   seed(day: string, items: MealItem[]): void {
     this.byDay.set(day, items);
   }
+  private meal(day: string, items: MealItem[]): MealEntry {
+    return { id: "meal", userId: "user-1", day, meal: "lunch", time: new Date(0), createdAt: new Date(0), items };
+  }
   async listMealsByDay(_userId: string, day: string): Promise<MealEntry[]> {
     const items = this.byDay.get(day);
-    if (!items) return [];
-    return [
-      { id: "meal", userId: "user-1", day, meal: "lunch", time: new Date(0), createdAt: new Date(0), items },
-    ];
+    return items ? [this.meal(day, items)] : [];
+  }
+  async listMealsInRange(_userId: string, from: string, to: string): Promise<MealEntry[]> {
+    return [...this.byDay.entries()]
+      .filter(([day]) => day >= from && day <= to)
+      .map(([day, items]) => this.meal(day, items));
   }
   // Unused by the calendar use case.
   upsertMealWithItems(): never { throw new Error("not used"); }
@@ -163,6 +171,26 @@ describe("getHealthCalendar", () => {
     );
 
     // Day 1 is met; days 2–30 carry the target but have no meals → unmet.
+    expect(summary.dietAdherenceRate).toBe(3); // round(100 * 1 / 30)
+  });
+
+  it("carries a target set in a prior month into the requested month", async () => {
+    const targets = new FakeDailyTargetRepository();
+    targets.seed("2026-05-20", 1); // set last month → carries into all of June
+    const meals = new FakeMealRepository();
+    meals.seed("2026-06-04", [mealItem(1)]); // meets the carried 1-staple target on June 4
+
+    const summary = await getHealthCalendar(
+      new FakeCalendarRepository([]),
+      targets,
+      meals,
+      "user-1",
+      2026,
+      6,
+      "2026-07-01",
+    );
+
+    // The carried target makes every June day have a target; only June 4 is met.
     expect(summary.dietAdherenceRate).toBe(3); // round(100 * 1 / 30)
   });
 });

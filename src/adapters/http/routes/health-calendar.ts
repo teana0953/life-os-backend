@@ -6,7 +6,7 @@ import type { MealRepository } from "../../../contexts/health/domain/meal-reposi
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { requireMonth } from "../validation";
+import { BadRequestError, requireMonth } from "../validation";
 
 export interface HealthCalendarHandlerOptions {
   userRepository: UserRepository;
@@ -15,12 +15,21 @@ export interface HealthCalendarHandlerOptions {
   mealRepository: MealRepository;
 }
 
-/** Protected `GET /api/health-calendar?month=YYYY-MM`: the month's logged days + rates. */
+/** The client's `today` (`YYYY-MM-DD`) if given and well-formed, else the server's UTC date. */
+function requireTodayOrServerUtc(raw: string | undefined): string {
+  if (raw == null) return new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw new BadRequestError("today must be in YYYY-MM-DD format");
+  return raw;
+}
+
+/** Protected `GET /api/health-calendar?month=YYYY-MM&today=YYYY-MM-DD`: the month's logged days + rates. */
 export function createGetHealthCalendarHandler(options: HealthCalendarHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const [year, month] = requireMonth(c.req.query("month")).split("-").map(Number);
-    const today = new Date().toISOString().slice(0, 10);
+    // The client passes its local date so a UTC+n user's "days elapsed" is judged
+    // against their calendar day, not the server's UTC day; fall back to server UTC.
+    const today = requireTodayOrServerUtc(c.req.query("today"));
     const summary = await getHealthCalendar(
       options.healthCalendarRepository,
       options.dailyTargetRepository,

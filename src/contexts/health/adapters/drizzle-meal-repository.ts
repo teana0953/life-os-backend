@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { mealEntry, mealItem } from "../../../shared/db/schema";
 import { portionsToNutrients } from "../domain/conversion";
@@ -99,6 +99,33 @@ export class DrizzleMealRepository implements MealRepository {
       .select()
       .from(mealEntry)
       .where(and(eq(mealEntry.userId, userId), eq(mealEntry.day, day)));
+    if (meals.length === 0) return [];
+
+    const items = await db
+      .select()
+      .from(mealItem)
+      .where(
+        inArray(
+          mealItem.mealEntryId,
+          meals.map((m) => m.id),
+        ),
+      );
+    const itemsByMeal = new Map<string, MealItemRow[]>();
+    for (const item of items) {
+      const list = itemsByMeal.get(item.mealEntryId) ?? [];
+      list.push(item);
+      itemsByMeal.set(item.mealEntryId, list);
+    }
+
+    return meals.map((meal) => ({ ...toMealSummary(meal), items: (itemsByMeal.get(meal.id) ?? []).map(toMealItem) }));
+  }
+
+  async listMealsInRange(userId: string, from: string, to: string): Promise<MealEntry[]> {
+    const db = this.getDb();
+    const meals = await db
+      .select()
+      .from(mealEntry)
+      .where(and(eq(mealEntry.userId, userId), gte(mealEntry.day, from), lte(mealEntry.day, to)));
     if (meals.length === 0) return [];
 
     const items = await db
