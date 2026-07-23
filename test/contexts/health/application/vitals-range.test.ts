@@ -49,8 +49,8 @@ describe("getVitalsRange", () => {
     expect(result.from).toBe("2026-07-01");
     expect(result.to).toBe("2026-07-31");
     expect(result.series.weight).toEqual([
-      { day: "2026-07-01", value: 52 },
-      { day: "2026-07-03", value: 51.7 },
+      { day: "2026-07-01", time: "", value: 52 },
+      { day: "2026-07-03", time: "", value: 51.7 },
     ]);
   });
 });

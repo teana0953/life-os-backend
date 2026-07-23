@@ -1,8 +1,5 @@
-# vitals-trends Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-vitals-range. Update Purpose after archive.
-## Requirements
 ### Requirement: Vitals metrics as daily time series over a range
 
 The system SHALL derive, from the user's vitals records in a given date range, a per-metric time series for weight, body fat, systolic and diastolic blood pressure, pulse, glucose, and blood oxygen. Each series SHALL be a list of `{ day, time, value }` points ordered by day then time-of-day. For the scalar metrics (weight, body fat) the series SHALL carry one point per recorded day with an empty `time` and the value reported to one decimal. For the reading-based metrics the series SHALL carry one point per reading at the reading's time-of-day (`HH:mm`), rounded to a whole number: systolic and diastolic from each blood-pressure reading; pulse from every recorded pulse across blood-pressure and blood-oxygen readings; glucose from each glucose reading; blood oxygen from each blood-oxygen reading. Each glucose point SHALL additionally carry its meal context (`fasting` / `pre_meal` / `post_meal` / null). A day with no reading for a metric SHALL contribute no point.
@@ -38,20 +35,3 @@ The system SHALL expose the vitals time series over an authenticated HTTP API. `
 #### Scenario: Unauthenticated range is rejected
 - **WHEN** an unauthenticated request hits `GET /api/vitals/range`
 - **THEN** the response is 401
-
-### Requirement: Glucose readings carry a structured meal context
-
-A glucose reading SHALL carry a meal context of `fasting`, `pre_meal`, `post_meal`, or none (null). On `PUT /api/vitals` the reading's `meal_context` field, when present and non-null, MUST be exactly one of `fasting` / `pre_meal` / `post_meal`; any other value SHALL be rejected with 400. An absent or null `meal_context` SHALL be accepted and stored as no context. The context SHALL round-trip through storage and be returned as `meal_context` in the vitals record JSON.
-
-#### Scenario: A valid meal context is accepted and returned
-- **WHEN** a user saves a glucose reading with `meal_context` `fasting`
-- **THEN** the save succeeds and reading back the day returns that reading with `meal_context` `fasting`
-
-#### Scenario: An unknown meal context is rejected
-- **WHEN** a user saves a glucose reading with `meal_context` `"brunch"`
-- **THEN** the response is 400
-
-#### Scenario: A missing meal context is stored as none
-- **WHEN** a user saves a glucose reading with no `meal_context` field
-- **THEN** the save succeeds and the reading reads back with `meal_context` null
-
