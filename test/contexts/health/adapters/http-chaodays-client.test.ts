@@ -121,4 +121,96 @@ describe("HttpChaodaysClient", () => {
       await expect(client.fetchWeightRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
     });
   });
+
+  describe("fetchDietRecords", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("sends the three headers, parses the data envelope dropping oil/sugar, and returns the rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const body = JSON.stringify({
+        data: [
+          {
+            date: "2026-07-01",
+            record_type: "lunch",
+            recorded_at: "2026-07-01 12:30",
+            staple: 2,
+            meat: 1,
+            fruit: 0,
+            veg: 1,
+            oil: 1,
+            sugar: 0,
+            diet_record_items: [
+              { name: "白飯", staple: 2, meat: 0, fruit: 0, veg: 0, oil: 0, sugar: 0 },
+              { name: "前血糖：93", staple: 0, meat: 0, fruit: 0, veg: 0, oil: 0, sugar: 0 },
+            ],
+          },
+        ],
+      });
+      const response = new Response(body, {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const result = await client.fetchDietRecords(session, "2026-07-01", "2026-07-02");
+
+      expect(result.session).toEqual({ accessToken: "token-2", client: "client-1", uid: "uid-1" });
+      expect(result.records).toEqual([
+        {
+          date: "2026-07-01",
+          recordType: "lunch",
+          recordedAt: "2026-07-01 12:30",
+          items: [
+            { name: "白飯", staple: 2, meat: 0, fruit: 0, veg: 0 },
+            { name: "前血糖：93", staple: 0, meat: 0, fruit: 0, veg: 0 },
+          ],
+        },
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/diet_records?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 whose record has a non-array diet_record_items (→ 502, not 500)", async () => {
+      const response = new Response(
+        JSON.stringify({ data: [{ date: "2026-07-01", record_type: "lunch", recorded_at: "2026-07-01 12:30", diet_record_items: "oops" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
 });

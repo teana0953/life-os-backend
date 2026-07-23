@@ -318,6 +318,9 @@ const stubChaodaysClient: ChaodaysClient = {
   fetchWeightRecords: () => {
     throw new Error("not implemented in this test's fakes");
   },
+  fetchDietRecords: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: () => {
