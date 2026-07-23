@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
+import type { ChaodaysClient } from "../../../src/contexts/health/domain/chaodays-client";
 import type { DailyTarget } from "../../../src/contexts/health/domain/daily-target";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
@@ -27,6 +28,7 @@ const stubExerciseRepository = { addEntry: notImplemented, listByDay: notImpleme
 const stubMenstrualRepository = { add: notImplemented, listByUser: notImplemented, update: notImplemented, delete: notImplemented } as unknown as MenstrualRepository;
 const stubVitalsRepository = { get: notImplemented, set: notImplemented, getLatestWeight: notImplemented, getEarliestWeight: notImplemented, getWeightDayCount: notImplemented, listRange: notImplemented } as unknown as VitalsRepository;
 const stubBodyProfileRepository = { get: notImplemented, upsert: notImplemented } as unknown as BodyProfileRepository;
+const stubChaodaysClient = { signIn: notImplemented, fetchWeightRecords: notImplemented } as unknown as ChaodaysClient;
 
 // No diet targets → diet adherence is 0; only meals/calendar matter here.
 const stubDailyTargetRepository: DailyTargetRepository = {
@@ -100,6 +102,7 @@ function buildApp(days: string[] = []) {
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: new FakeCalendarRepository(days),
+    chaodaysClient: stubChaodaysClient,
     ping: async () => {},
   });
   return { app };

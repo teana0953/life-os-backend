@@ -8,6 +8,7 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
+import type { ChaodaysClient } from "../../../src/contexts/health/domain/chaodays-client";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
@@ -75,6 +76,10 @@ const stubMenstrualRepository: MenstrualRepository = {
   listByUser: notImplemented,
   update: notImplemented,
   delete: notImplemented,
+};
+const stubChaodaysClient: ChaodaysClient = {
+  signIn: notImplemented,
+  fetchWeightRecords: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
@@ -155,6 +160,7 @@ function buildApp(
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: { listLoggedDays: async () => [] },
+    chaodaysClient: stubChaodaysClient,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });

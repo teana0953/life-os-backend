@@ -22,6 +22,7 @@ import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/doma
 import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
+import type { ChaodaysClient } from "../../../src/contexts/health/domain/chaodays-client";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
@@ -310,6 +311,14 @@ const stubBodyProfileRepository: BodyProfileRepository = {
     throw new Error("not implemented in this test's fakes");
   },
 };
+const stubChaodaysClient: ChaodaysClient = {
+  signIn: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  fetchWeightRecords: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+};
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: () => {
     throw new Error("not implemented in this test's fakes");
@@ -355,6 +364,7 @@ function buildApp() {
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: { listLoggedDays: async () => [] },
+    chaodaysClient: stubChaodaysClient,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

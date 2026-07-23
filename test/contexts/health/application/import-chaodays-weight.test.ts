@@ -1,0 +1,199 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { importChaodaysWeight } from "../../../../src/contexts/health/application/import-chaodays-weight";
+import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import type { ChaodaysClient, ChaodaysSession, ChaodaysWeightRecord } from "../../../../src/contexts/health/domain/chaodays-client";
+import type { VitalsRecord } from "../../../../src/contexts/health/domain/vitals";
+import type { SetVitalsInput, VitalsRepository } from "../../../../src/contexts/health/domain/vitals-repository";
+
+class InMemoryVitalsRepository implements VitalsRepository {
+  private byUserDay = new Map<string, VitalsRecord>();
+
+  /** Test helper: seed a whole record for a user/day. */
+  seed(record: VitalsRecord) {
+    this.byUserDay.set(`${record.userId}:${record.day}`, record);
+  }
+
+  async get(userId: string, day: string): Promise<VitalsRecord | null> {
+    return this.byUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async set(input: SetVitalsInput): Promise<VitalsRecord> {
+    const record: VitalsRecord = {
+      userId: input.userId,
+      day: input.day,
+      weightKg: input.weightKg,
+      bodyFatPct: input.bodyFatPct,
+      bpReadings: input.bpReadings,
+      glucoseReadings: input.glucoseReadings,
+      spo2Readings: input.spo2Readings,
+    };
+    this.byUserDay.set(`${input.userId}:${input.day}`, record);
+    return record;
+  }
+
+  async getLatestWeight(): Promise<number | null> {
+    throw new Error("not used in this test");
+  }
+
+  async getEarliestWeight(): Promise<number | null> {
+    throw new Error("not used in this test");
+  }
+
+  async getWeightDayCount(): Promise<number> {
+    throw new Error("not used in this test");
+  }
+
+  async listRange(): Promise<VitalsRecord[]> {
+    throw new Error("not used in this test");
+  }
+}
+
+const SESSION: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+class FakeChaodaysClient implements ChaodaysClient {
+  signInError: Error | null = null;
+  records: ChaodaysWeightRecord[] = [];
+  // Captured args, so tests can assert the use case threads them through.
+  signInArgs: { uid: string; password: string } | null = null;
+  fetchArgs: { from: string; to: string } | null = null;
+
+  async signIn(uid: string, password: string): Promise<ChaodaysSession> {
+    this.signInArgs = { uid, password };
+    if (this.signInError) throw this.signInError;
+    return SESSION;
+  }
+
+  async fetchWeightRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
+    this.fetchArgs = { from, to };
+    return { session, records: this.records };
+  }
+}
+
+let vitalsRepository: InMemoryVitalsRepository;
+let chaodaysClient: FakeChaodaysClient;
+
+beforeEach(() => {
+  vitalsRepository = new InMemoryVitalsRepository();
+  chaodaysClient = new FakeChaodaysClient();
+});
+
+describe("importChaodaysWeight", () => {
+  it("writes weight and body fat for each record and reports the summary", async () => {
+    chaodaysClient.records = [
+      { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
+      { date: "2026-07-02", weight: 65.2, bodyFatPct: null },
+    ];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
+
+    expect(summary).toEqual({ imported: 2, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
+    // The credentials and range thread through to the client unchanged.
+    expect(chaodaysClient.signInArgs).toEqual({ uid: "chaodays-uid", password: "chaodays-pw" });
+    expect(chaodaysClient.fetchArgs).toEqual({ from: "2026-07-01", to: "2026-07-02" });
+    expect(await vitalsRepository.get("user-1", "2026-07-01")).toEqual({
+      userId: "user-1",
+      day: "2026-07-01",
+      weightKg: 65.5,
+      bodyFatPct: 22.1,
+      bpReadings: [],
+      glucoseReadings: [],
+      spo2Readings: [],
+    });
+    expect((await vitalsRepository.get("user-1", "2026-07-02"))?.bodyFatPct).toBeNull();
+  });
+
+  it("preserves existing bp/glucose/spo2 readings on the day (read-modify-write)", async () => {
+    vitalsRepository.seed({
+      userId: "user-1",
+      day: "2026-07-01",
+      weightKg: 60,
+      bodyFatPct: 20,
+      bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
+      glucoseReadings: [{ label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" }],
+      spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
+    });
+    chaodaysClient.records = [{ date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 }];
+
+    await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-01",
+    });
+
+    const record = await vitalsRepository.get("user-1", "2026-07-01");
+    expect(record?.weightKg).toBe(65.5);
+    expect(record?.bodyFatPct).toBe(22.1);
+    expect(record?.bpReadings).toEqual([{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }]);
+    expect(record?.glucoseReadings).toEqual([{ label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" }]);
+    expect(record?.spo2Readings).toEqual([{ spo2: 98, pulse: 71, time: "08:30" }]);
+  });
+
+  it("does not erase an existing body fat when the chaodays record has none", async () => {
+    vitalsRepository.seed({
+      userId: "user-1",
+      day: "2026-07-01",
+      weightKg: 60,
+      bodyFatPct: 20,
+      bpReadings: [],
+      glucoseReadings: [],
+      spo2Readings: [],
+    });
+    chaodaysClient.records = [{ date: "2026-07-01", weight: 65.5, bodyFatPct: null }];
+
+    await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-01",
+    });
+
+    const record = await vitalsRepository.get("user-1", "2026-07-01");
+    expect(record?.weightKg).toBe(65.5);
+    expect(record?.bodyFatPct).toBe(20);
+  });
+
+  it("skips records with no weight and counts them", async () => {
+    chaodaysClient.records = [
+      { date: "2026-07-01", weight: 65.5, bodyFatPct: null },
+      { date: "2026-07-02", weight: null, bodyFatPct: null },
+    ];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
+
+    expect(summary).toEqual({ imported: 1, skipped: 1, from: "2026-07-01", to: "2026-07-02" });
+    expect(await vitalsRepository.get("user-1", "2026-07-02")).toBeNull();
+  });
+
+  it("propagates a chaodays sign-in auth failure", async () => {
+    chaodaysClient.signInError = new ChaodaysAuthError();
+
+    await expect(
+      importChaodaysWeight(vitalsRepository, chaodaysClient, {
+        userId: "user-1",
+        uid: "chaodays-uid",
+        password: "wrong-password",
+        from: "2026-07-01",
+        to: "2026-07-02",
+      }),
+    ).rejects.toThrow(ChaodaysAuthError);
+  });
+});

@@ -3,6 +3,8 @@ import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
+import type { ChaodaysClient } from "../../contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../contexts/health/domain/chaodays-client";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
 import type { HealthCalendarRepository } from "../../contexts/health/domain/health-calendar-repository";
 import type { ExerciseRepository } from "../../contexts/health/domain/exercise-repository";
@@ -45,6 +47,7 @@ import {
 } from "./routes/menstrual";
 import { createGetHealthCalendarHandler } from "./routes/health-calendar";
 import { createHealthHandler } from "./routes/health";
+import { createImportChaodaysWeightHandler } from "./routes/import-chaodays";
 import {
   createCreateMealHandler,
   createDeleteMealHandler,
@@ -85,6 +88,7 @@ export interface CreateAppOptions {
   menstrualRepository: MenstrualRepository;
   bodyProfileRepository: BodyProfileRepository;
   healthCalendarRepository: HealthCalendarRepository;
+  chaodaysClient: ChaodaysClient;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -108,6 +112,12 @@ export function createApp(options: CreateAppOptions) {
   app.onError((err, c) => {
     if (err instanceof BadRequestError) {
       return c.json({ error: "bad_request", message: err.message }, 400);
+    }
+    if (err instanceof ChaodaysAuthError) {
+      return c.json({ error: "chaodays_auth_failed" }, 400);
+    }
+    if (err instanceof ChaodaysUpstreamError) {
+      return c.json({ error: "chaodays_unavailable" }, 502);
     }
     console.error(err);
     return c.json({ error: "internal" }, 500);
@@ -204,6 +214,13 @@ export function createApp(options: CreateAppOptions) {
     mealRepository: options.mealRepository,
   };
   app.get("/api/health-calendar", authMiddleware, createGetHealthCalendarHandler(healthCalendarOptions));
+
+  const importChaodaysOptions = {
+    userRepository: options.userRepository,
+    vitalsRepository: options.vitalsRepository,
+    chaodaysClient: options.chaodaysClient,
+  };
+  app.post("/api/import/chaodays/weight", authMiddleware, createImportChaodaysWeightHandler(importChaodaysOptions));
 
   return app;
 }

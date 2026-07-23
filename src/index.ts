@@ -3,6 +3,7 @@ import { createApp } from "./adapters/http/app";
 import { DrizzleBodyProfileRepository } from "./contexts/health/adapters/drizzle-body-profile-repository";
 import { DrizzleBowelRepository } from "./contexts/health/adapters/drizzle-bowel-repository";
 import { DrizzleDailyTargetRepository } from "./contexts/health/adapters/drizzle-daily-target-repository";
+import { HttpChaodaysClient } from "./contexts/health/adapters/http-chaodays-client";
 import { DrizzleExerciseRepository } from "./contexts/health/adapters/drizzle-exercise-repository";
 import { DrizzleHealthCalendarRepository } from "./contexts/health/adapters/drizzle-health-calendar-repository";
 import { DrizzleFoodDictionaryRepository } from "./contexts/health/adapters/drizzle-food-dictionary-repository";
@@ -23,6 +24,9 @@ export interface Env {
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
 const jwks = createGoogleSecuretokenJwks();
+// Base URL is a public constant and chaodays credentials come from the request
+// body, so this needs no env binding — module-scope like `jwks` above.
+const chaodaysClient = new HttpChaodaysClient();
 
 export default {
   fetch(request, env, ctx) {
@@ -61,6 +65,7 @@ export default {
       menstrualRepository,
       bodyProfileRepository,
       healthCalendarRepository,
+      chaodaysClient,
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
         await getDb().execute(sql`select 1`);

@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vitest";
+import { HttpChaodaysClient } from "../../../../src/contexts/health/adapters/http-chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
+import type { ChaodaysSession } from "../../../../src/contexts/health/domain/chaodays-client";
+
+interface FetchCall {
+  url: string;
+  init?: RequestInit;
+}
+
+function fakeFetch(response: Response, calls: FetchCall[]): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    return response;
+  }) as typeof fetch;
+}
+
+describe("HttpChaodaysClient", () => {
+  describe("signIn", () => {
+    it("posts uid/password and reads the session triple from response headers", async () => {
+      const calls: FetchCall[] = [];
+      const response = new Response("{}", {
+        status: 200,
+        headers: { "access-token": "token-1", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const session = await client.signIn("chaodays-uid", "secret-pw");
+
+      expect(session).toEqual({ accessToken: "token-1", client: "client-1", uid: "uid-1" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe("https://api.chaodays.app/api/v1/users/sign_in");
+      expect(calls[0].init?.method).toBe("POST");
+      expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+        user: { uid: "chaodays-uid", password: "secret-pw" },
+      });
+    });
+
+    it("throws ChaodaysAuthError on a 401 response", async () => {
+      const response = new Response("{}", { status: 401 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.signIn("chaodays-uid", "wrong-pw")).rejects.toThrow(ChaodaysAuthError);
+    });
+
+    it("throws ChaodaysUpstreamError on a non-401 non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.signIn("chaodays-uid", "pw")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError when the network request fails", async () => {
+      const throwingFetch = (async () => {
+        throw new Error("network down");
+      }) as typeof fetch;
+      const client = new HttpChaodaysClient(throwingFetch);
+
+      await expect(client.signIn("chaodays-uid", "pw")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
+
+  describe("fetchWeightRecords", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("sends the three headers, parses the data envelope, and returns the rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const body = JSON.stringify({
+        data: [
+          { id: 1, date: "2026-07-01", weight: 65.5, body_fat_pct: 22.1 },
+          { id: 2, date: "2026-07-02", weight: 65.2, body_fat_pct: null },
+        ],
+      });
+      const response = new Response(body, {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const result = await client.fetchWeightRecords(session, "2026-07-01", "2026-07-02");
+
+      expect(result.session).toEqual({ accessToken: "token-2", client: "client-1", uid: "uid-1" });
+      expect(result.records).toEqual([
+        { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
+        { date: "2026-07-02", weight: 65.2, bodyFatPct: null },
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/weight_records?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWeightRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWeightRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWeightRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
+});
