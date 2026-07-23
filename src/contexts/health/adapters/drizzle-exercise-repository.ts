@@ -48,12 +48,12 @@ export class DrizzleExerciseRepository implements ExerciseRepository {
     return rows.map(toDomain);
   }
 
-  async deleteEntry(userId: string, entryId: string): Promise<boolean> {
+  async deleteEntry(userId: string, entryId: string): Promise<string | null> {
     const db = this.getDb();
     const deleted = await db
       .delete(exerciseLog)
       .where(and(eq(exerciseLog.id, entryId), eq(exerciseLog.userId, userId)))
-      .returning({ id: exerciseLog.id });
-    return deleted.length > 0;
+      .returning({ day: exerciseLog.day });
+    return deleted[0]?.day ?? null;
   }
 }

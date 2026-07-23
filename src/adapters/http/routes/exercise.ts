@@ -1,8 +1,10 @@
 import type { Context } from "hono";
+import { applyExerciseBonus } from "../../../contexts/health/application/apply-exercise-bonus";
 import { deleteExerciseEntry } from "../../../contexts/health/application/delete-exercise-entry";
 import { getExerciseDay, type ExerciseDayEntry } from "../../../contexts/health/application/get-exercise-day";
 import { listExerciseActivities } from "../../../contexts/health/application/list-exercise-activities";
 import { logExercise } from "../../../contexts/health/application/log-exercise";
+import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
 import { findActivity } from "../../../contexts/health/domain/exercise-activity";
 import type { ExerciseRepository } from "../../../contexts/health/domain/exercise-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -13,6 +15,7 @@ import { BadRequestError, requireDay, requireFiniteNumber, requireString } from 
 export interface ExerciseHandlerOptions {
   userRepository: UserRepository;
   exerciseRepository: ExerciseRepository;
+  dailyTargetRepository: DailyTargetRepository;
 }
 
 function entryToJson(entry: ExerciseDayEntry) {
@@ -64,6 +67,10 @@ export function createLogExerciseHandler(options: ExerciseHandlerOptions) {
     const note = typeof body.note === "string" ? body.note : "";
 
     const entry = await logExercise(options.exerciseRepository, { userId, day, activityId, durationMinutes, note });
+    // Couple exercise → food: recompute the day's bonus target. Not transactional
+    // with the append above — if this throws the entry is still saved and the next
+    // exercise change re-syncs the bonus (the ports expose no shared transaction).
+    await applyExerciseBonus(options.dailyTargetRepository, options.exerciseRepository, userId, day);
     return c.json(
       entryToJson({
         id: entry.id,
@@ -82,7 +89,11 @@ export function createLogExerciseHandler(options: ExerciseHandlerOptions) {
 export function createDeleteExerciseHandler(options: ExerciseHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const deleted = await deleteExerciseEntry(options.exerciseRepository, userId, c.req.param("id") ?? "");
-    return c.json({ deleted });
+    const day = await deleteExerciseEntry(options.exerciseRepository, userId, c.req.param("id") ?? "");
+    // Recompute the day's bonus so removing exercise lowers the food target.
+    if (day !== null) {
+      await applyExerciseBonus(options.dailyTargetRepository, options.exerciseRepository, userId, day);
+    }
+    return c.json({ deleted: day !== null });
   };
 }

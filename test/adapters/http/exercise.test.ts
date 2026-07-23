@@ -4,7 +4,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
-import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
+import type { DailyTarget } from "../../../src/contexts/health/domain/daily-target";
+import type { DailyTargetRepository, SetDailyTargetInput } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
@@ -35,12 +36,6 @@ const stubMealRepository: MealRepository = {
   deleteMeal: notImplemented,
   updateItem: notImplemented,
   deleteItem: notImplemented,
-};
-const stubDailyTargetRepository: DailyTargetRepository = {
-  get: notImplemented,
-  getLatestOnOrBefore: notImplemented,
-  listInRange: notImplemented,
-  set: notImplemented,
 };
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
@@ -145,23 +140,60 @@ class InMemoryExerciseRepository implements ExerciseRepository {
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
-  async deleteEntry(userId: string, entryId: string): Promise<boolean> {
+  async deleteEntry(userId: string, entryId: string): Promise<string | null> {
     const idx = this.entries.findIndex((e) => e.id === entryId && e.userId === userId);
-    if (idx === -1) return false;
-    this.entries.splice(idx, 1);
-    return true;
+    if (idx === -1) return null;
+    const [removed] = this.entries.splice(idx, 1);
+    return removed.day;
+  }
+}
+
+/** Minimal in-memory daily target so the exercise→food coupling can be asserted. */
+class InMemoryDailyTargetRepository implements DailyTargetRepository {
+  targets: DailyTarget[] = [];
+  async get(userId: string, day: string): Promise<DailyTarget | null> {
+    return this.targets.find((t) => t.userId === userId && t.day === day) ?? null;
+  }
+  async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
+    return (
+      this.targets
+        .filter((t) => t.userId === userId && t.day <= day)
+        .sort((a, b) => b.day.localeCompare(a.day))[0] ?? null
+    );
+  }
+  async listInRange(): Promise<DailyTarget[]> {
+    return [];
+  }
+  async set(input: SetDailyTargetInput): Promise<DailyTarget> {
+    const target: DailyTarget = {
+      id: `${input.userId}:${input.day}`,
+      userId: input.userId,
+      day: input.day,
+      baseStaple: input.baseStaple,
+      baseMeat: input.baseMeat,
+      baseFruit: input.baseFruit,
+      baseVeg: input.baseVeg,
+      bonusStaple: input.bonusStaple ?? 0,
+      bonusMeat: input.bonusMeat ?? 0,
+      bonusFruit: input.bonusFruit ?? 0,
+      bonusVeg: input.bonusVeg ?? 0,
+    };
+    this.targets = this.targets.filter((t) => !(t.userId === input.userId && t.day === input.day));
+    this.targets.push(target);
+    return target;
   }
 }
 
 function buildApp() {
   const exerciseRepository = new InMemoryExerciseRepository();
+  const dailyTargetRepository = new InMemoryDailyTargetRepository();
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
     userRepository: new InMemoryUserRepository(),
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
-    dailyTargetRepository: stubDailyTargetRepository,
+    dailyTargetRepository,
     waterRepository: stubWaterRepository,
     bowelRepository: stubBowelRepository,
     vitalsRepository: stubVitalsRepository,
@@ -171,7 +203,7 @@ function buildApp() {
     healthCalendarRepository: { listLoggedDays: async () => [] },
     ping: async () => {},
   });
-  return { app, exerciseRepository };
+  return { app, exerciseRepository, dailyTargetRepository };
 }
 
 async function authedPost(app: ReturnType<typeof buildApp>["app"], token: string, body: unknown) {
@@ -278,5 +310,26 @@ describe("exercise HTTP routes", () => {
 
     const ownerDay = (await (await app.request("/api/exercise?day=2026-07-18", { headers: { Authorization: `Bearer ${owner}` } })).json()) as { entries: unknown[] };
     expect(ownerDay.entries).toHaveLength(1);
+  });
+
+  it("couples exercise to the day's food target: logging raises the bonus, deleting lowers it", async () => {
+    const { app, dailyTargetRepository } = buildApp();
+    const token = await validToken();
+
+    await authedPost(app, token, { day: "2026-07-18", activity_id: "jogging", duration_minutes: 60, note: "" });
+    // 60 min → 2 portions, added to staple + meat.
+    expect(await dailyTargetRepository.get("user-1", "2026-07-18")).toMatchObject({
+      bonusStaple: 2,
+      bonusMeat: 2,
+      bonusFruit: 0,
+    });
+
+    const second = (await (await authedPost(app, token, { day: "2026-07-18", activity_id: "squats", duration_minutes: 30, note: "" })).json()) as { id: string };
+    // 90 min total → 3 portions.
+    expect(await dailyTargetRepository.get("user-1", "2026-07-18")).toMatchObject({ bonusStaple: 3, bonusMeat: 3 });
+
+    await app.request(`/api/exercise/${second.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    // Back to 60 min → 2 portions.
+    expect(await dailyTargetRepository.get("user-1", "2026-07-18")).toMatchObject({ bonusStaple: 2, bonusMeat: 2 });
   });
 });
