@@ -14,7 +14,12 @@ function toDomain(row: VitalsRow): VitalsRecord {
     bodyFatPct: row.bodyFatPct == null ? null : Number(row.bodyFatPct),
     // Legacy readings predate `time`; coerce a missing/non-string time to "".
     bpReadings: row.bpReadings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
-    glucoseReadings: row.glucoseReadings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
+    glucoseReadings: row.glucoseReadings.map((r) => ({
+      ...r,
+      // Legacy readings predate `mealContext`; coerce a missing one to null.
+      mealContext: r.mealContext ?? null,
+      time: typeof r.time === "string" ? r.time : "",
+    })),
     spo2Readings: row.spo2Readings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
   };
 }

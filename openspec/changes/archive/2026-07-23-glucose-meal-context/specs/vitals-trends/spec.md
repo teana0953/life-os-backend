@@ -1,8 +1,5 @@
-# vitals-trends Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-vitals-range. Update Purpose after archive.
-## Requirements
 ### Requirement: Vitals metrics as daily time series over a range
 
 The system SHALL derive, from the user's vitals records in a given date range, a per-metric daily time series for weight, body fat, systolic and diastolic blood pressure, pulse, glucose, and blood oxygen. Each series SHALL be a list of `{ day, value }` points ordered by day, with one point per day that has a value for that metric and no point for a day that has none. For the scalar metrics (weight, body fat) the point value SHALL be that day's recorded scalar. For the reading-based metrics the point value SHALL be the daily mean of that day's readings: systolic and diastolic from the blood-pressure readings; pulse from every recorded pulse that day (across blood-pressure and blood-oxygen readings); glucose from the glucose readings; blood oxygen from the blood-oxygen readings. In addition, the system SHALL derive four glucose sub-series split by the readings' meal context — fasting, pre-meal, post-meal, and unspecified (readings with no meal context) — each the daily mean of that context's glucose readings. Weight and body fat SHALL be reported to one decimal; the reading-based means SHALL be rounded to whole numbers.
@@ -39,6 +36,8 @@ The system SHALL expose the vitals time series over an authenticated HTTP API. `
 - **WHEN** an unauthenticated request hits `GET /api/vitals/range`
 - **THEN** the response is 401
 
+## ADDED Requirements
+
 ### Requirement: Glucose readings carry a structured meal context
 
 A glucose reading SHALL carry a meal context of `fasting`, `pre_meal`, `post_meal`, or none (null). On `PUT /api/vitals` the reading's `meal_context` field, when present and non-null, MUST be exactly one of `fasting` / `pre_meal` / `post_meal`; any other value SHALL be rejected with 400. An absent or null `meal_context` SHALL be accepted and stored as no context. The context SHALL round-trip through storage and be returned as `meal_context` in the vitals record JSON.
@@ -54,4 +53,3 @@ A glucose reading SHALL carry a meal context of `fasting`, `pre_meal`, `post_mea
 #### Scenario: A missing meal context is stored as none
 - **WHEN** a user saves a glucose reading with no `meal_context` field
 - **THEN** the save succeeds and the reading reads back with `meal_context` null
-

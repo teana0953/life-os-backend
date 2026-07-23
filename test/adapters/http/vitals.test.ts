@@ -240,7 +240,7 @@ describe("vitals HTTP routes", () => {
         { systolic: 120, diastolic: 80, pulse: 70, time: "08:30" },
         { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
-      glucose_readings: [{ label: "餐前", value: 95, time: "07:45" }],
+      glucose_readings: [{ label: "餐前", value: 95, meal_context: "pre_meal", time: "07:45" }],
       spo2_readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     };
 
@@ -358,6 +358,40 @@ describe("vitals HTTP routes", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a glucose reading with an unknown meal_context, as 400", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        day: "2026-07-18",
+        glucose_readings: [{ label: "", value: 95, meal_context: "brunch", time: "07:45" }],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("accepts a glucose reading with no meal_context, storing it as null", async () => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        day: "2026-07-18",
+        glucose_readings: [{ label: "", value: 95, time: "07:45" }],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { glucose_readings: { meal_context: unknown }[] };
+    expect(body.glucose_readings[0].meal_context).toBeNull();
+  });
+
   it.each([
     ["a negative weight", { weight_kg: -1 }],
     ["a body-fat percentage over 100", { body_fat_pct: 150 }],
@@ -429,6 +463,10 @@ describe("vitals HTTP routes", () => {
         diastolic: [{ day: "2026-07-01", value: 78 }],
         pulse: [{ day: "2026-07-01", value: 72 }],
         glucose: [],
+        glucose_fasting: [],
+        glucose_pre_meal: [],
+        glucose_post_meal: [],
+        glucose_unspecified: [],
         spo2: [{ day: "2026-07-01", value: 98 }],
       },
     });

@@ -80,8 +80,8 @@ describe("buildVitalsSeries", () => {
       record({
         day: "2026-07-01",
         glucoseReadings: [
-          { label: "餐前", value: 95, time: "07:45" },
-          { label: "餐後", value: 110, time: "12:30" },
+          { label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" },
+          { label: "餐後", value: 110, mealContext: "post_meal", time: "12:30" },
         ],
         spo2Readings: [
           { spo2: 97, pulse: null, time: "08:00" },
@@ -92,6 +92,26 @@ describe("buildVitalsSeries", () => {
 
     expect(series.glucose).toEqual([{ day: "2026-07-01", value: 103 }]);
     expect(series.spo2).toEqual([{ day: "2026-07-01", value: 98 }]);
+  });
+
+  it("splits glucose into per-meal-context sub-series (unspecified = no context)", () => {
+    const series = buildVitalsSeries([
+      record({
+        day: "2026-07-01",
+        glucoseReadings: [
+          { label: "", value: 95, mealContext: "fasting", time: "07:00" },
+          { label: "", value: 130, mealContext: "post_meal", time: "13:00" },
+          { label: "", value: 110, mealContext: null, time: "18:00" },
+        ],
+      }),
+    ]);
+
+    // The combined series is the mean of all three (95+130+110)/3 = 111.67 → 112.
+    expect(series.glucose).toEqual([{ day: "2026-07-01", value: 112 }]);
+    expect(series.glucoseFasting).toEqual([{ day: "2026-07-01", value: 95 }]);
+    expect(series.glucosePostMeal).toEqual([{ day: "2026-07-01", value: 130 }]);
+    expect(series.glucoseUnspecified).toEqual([{ day: "2026-07-01", value: 110 }]);
+    expect(series.glucosePreMeal).toEqual([]);
   });
 
   it("ignores null pulses when both reading lists lack any pulse", () => {

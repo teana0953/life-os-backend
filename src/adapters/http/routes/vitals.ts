@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { getVitalsDay } from "../../../contexts/health/application/get-vitals-day";
 import { getVitalsRange } from "../../../contexts/health/application/get-vitals-range";
 import { setVitalsDay } from "../../../contexts/health/application/set-vitals-day";
-import type { BpReading, GlucoseReading, Spo2Reading, VitalsRecord } from "../../../contexts/health/domain/vitals";
+import type { BpReading, GlucoseMealContext, GlucoseReading, Spo2Reading, VitalsRecord } from "../../../contexts/health/domain/vitals";
 import type { VitalsSeries } from "../../../contexts/health/domain/vitals-series";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -22,7 +22,12 @@ function toJson(record: { day: string; weightKg: number | null; bodyFatPct: numb
     weight_kg: record.weightKg,
     body_fat_pct: record.bodyFatPct,
     bp_readings: record.bpReadings,
-    glucose_readings: record.glucoseReadings,
+    glucose_readings: record.glucoseReadings.map((r) => ({
+      label: r.label,
+      value: r.value,
+      meal_context: r.mealContext,
+      time: r.time,
+    })),
     spo2_readings: record.spo2Readings,
   };
 }
@@ -30,6 +35,17 @@ function toJson(record: { day: string; weightKg: number | null; bodyFatPct: numb
 /** Optional non-negative number or null: `null`/absent → null, else validated ≥ 0 (with an optional upper bound). */
 function nullableNumber(value: unknown, field: string, min = 0, max?: number): number | null {
   return value == null ? null : requireNumberInRange(value, field, min, max);
+}
+
+const GLUCOSE_MEAL_CONTEXTS: readonly GlucoseMealContext[] = ["fasting", "pre_meal", "post_meal"];
+
+/** Optional glucose meal context: `null`/absent → null; one of the three → itself; anything else → 400. */
+function optionalMealContext(value: unknown, field: string): GlucoseMealContext | null {
+  if (value == null) return null;
+  if (typeof value === "string" && GLUCOSE_MEAL_CONTEXTS.includes(value as GlucoseMealContext)) {
+    return value as GlucoseMealContext;
+  }
+  throw new BadRequestError(`${field} must be one of ${GLUCOSE_MEAL_CONTEXTS.join(", ")}`);
 }
 
 /** Validates an array field: absent → `[]`; a non-array → 400; each item mapped via `mapItem`. */
@@ -62,6 +78,10 @@ function seriesToJson(series: VitalsSeries) {
     diastolic: series.diastolic,
     pulse: series.pulse,
     glucose: series.glucose,
+    glucose_fasting: series.glucoseFasting,
+    glucose_pre_meal: series.glucosePreMeal,
+    glucose_post_meal: series.glucosePostMeal,
+    glucose_unspecified: series.glucoseUnspecified,
     spo2: series.spo2,
   };
 }
@@ -113,6 +133,7 @@ export function createSetVitalsHandler(options: VitalsHandlerOptions) {
       glucoseReadings: requireReadingArray(body.glucose_readings, "glucose_readings", (item, i) => ({
         label: typeof item.label === "string" ? item.label : "",
         value: requireNumberInRange(item.value, `glucose_readings[${i}].value`, 0),
+        mealContext: optionalMealContext(item.meal_context, `glucose_readings[${i}].meal_context`),
         time: requireString(item.time, `glucose_readings[${i}].time`),
       })),
       spo2Readings: requireReadingArray(body.spo2_readings, "spo2_readings", (item, i) => ({

@@ -66,7 +66,7 @@ describe("getVitalsDay", () => {
       weightKg: 65.5,
       bodyFatPct: 22.1,
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
-      glucoseReadings: [{ label: "餐前", value: 95, time: "07:45" }],
+      glucoseReadings: [{ label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" }],
       spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
     });
 
@@ -77,7 +77,7 @@ describe("getVitalsDay", () => {
       weightKg: 65.5,
       bodyFatPct: 22.1,
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
-      glucoseReadings: [{ label: "餐前", value: 95, time: "07:45" }],
+      glucoseReadings: [{ label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" }],
       spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
     });
   });
@@ -126,7 +126,7 @@ describe("setVitalsDay", () => {
       weightKg: 60,
       bodyFatPct: 20,
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
-      glucoseReadings: [{ label: "a", value: 90, time: "07:45" }],
+      glucoseReadings: [{ label: "a", value: 90, mealContext: null, time: "07:45" }],
       spo2Readings: [{ spo2: 97, pulse: 60, time: "08:30" }],
     });
 
@@ -140,8 +140,8 @@ describe("setVitalsDay", () => {
         { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
       glucoseReadings: [
-        { label: "餐前", value: 95, time: "07:45" },
-        { label: "餐後", value: 110, time: "12:30" },
+        { label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" },
+        { label: "餐後", value: 110, mealContext: "post_meal", time: "12:30" },
       ],
       spo2Readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     });
@@ -159,8 +159,8 @@ describe("setVitalsDay", () => {
         { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
       ],
       glucoseReadings: [
-        { label: "餐前", value: 95, time: "07:45" },
-        { label: "餐後", value: 110, time: "12:30" },
+        { label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" },
+        { label: "餐後", value: 110, mealContext: "post_meal", time: "12:30" },
       ],
       spo2Readings: [{ spo2: 98, pulse: null, time: "08:30" }],
     });

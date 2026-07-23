@@ -7,11 +7,16 @@ export interface BpReading {
   time: string;
 }
 
+/** When a glucose reading was taken relative to eating. */
+export type GlucoseMealContext = "fasting" | "pre_meal" | "post_meal";
+
 export interface GlucoseReading {
   /** Free-text label, e.g. "餐前"/"餐后" (empty string when none). */
   label: string;
   /** mg/dL. */
   value: number;
+  /** Meal context of the reading (fasting / pre-meal / post-meal); null when none. */
+  mealContext: GlucoseMealContext | null;
   /** Time-of-day the reading was taken, `HH:mm`; empty string for legacy data. */
   time: string;
 }
