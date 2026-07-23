@@ -213,4 +213,148 @@ describe("HttpChaodaysClient", () => {
       await expect(client.fetchDietRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
     });
   });
+
+  describe("fetchWaterRecords", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("sends the three headers, parses the data envelope, and returns the rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const body = JSON.stringify({
+        data: [
+          { date: "2026-07-01", water: 250, recorded_at: "2026-07-01 09:00" },
+          { date: "2026-07-01", water: 500, recorded_at: "2026-07-01 14:00" },
+        ],
+      });
+      const response = new Response(body, {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const result = await client.fetchWaterRecords(session, "2026-07-01", "2026-07-02");
+
+      expect(result.session).toEqual({ accessToken: "token-2", client: "client-1", uid: "uid-1" });
+      expect(result.records).toEqual([
+        { date: "2026-07-01", waterMl: 250, recordedAt: "2026-07-01 09:00" },
+        { date: "2026-07-01", waterMl: 500, recordedAt: "2026-07-01 14:00" },
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/water_records?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWaterRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWaterRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWaterRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 whose data array has a null record (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: [null] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchWaterRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
+
+  describe("fetchDefecationRecords", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("sends the three headers, parses the data envelope, and returns the rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const body = JSON.stringify({
+        data: [
+          { date: "2026-07-01", defecation: 1, is_abnormality: false, note: "正常" },
+          { date: "2026-07-01", defecation: 1, is_abnormality: true, note: "" },
+        ],
+      });
+      const response = new Response(body, {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const result = await client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02");
+
+      expect(result.session).toEqual({ accessToken: "token-2", client: "client-1", uid: "uid-1" });
+      expect(result.records).toEqual([
+        { date: "2026-07-01", count: 1, isAbnormality: false, note: "正常" },
+        { date: "2026-07-01", count: 1, isAbnormality: true, note: "" },
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/defecation_records?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 whose data array has a null record (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: [null] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
 });

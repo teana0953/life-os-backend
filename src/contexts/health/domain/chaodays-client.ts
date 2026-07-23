@@ -32,6 +32,24 @@ export interface ChaodaysDietRecord {
   items: ChaodaysDietItem[];
 }
 
+/** A single chaodays water record (one drink logged; a day can have several). */
+export interface ChaodaysWaterRecord {
+  /** ISO calendar date, e.g. "2026-07-18". */
+  date: string;
+  waterMl: number;
+  /** "YYYY-MM-DD HH:mm". */
+  recordedAt: string;
+}
+
+/** A single chaodays defecation record (a day can have several). */
+export interface ChaodaysDefecationRecord {
+  /** ISO calendar date, e.g. "2026-07-18". */
+  date: string;
+  count: number;
+  isAbnormality: boolean;
+  note: string;
+}
+
 /** Driven port for the external chaodays API. */
 export interface ChaodaysClient {
   signIn(uid: string, password: string): Promise<ChaodaysSession>;
@@ -47,6 +65,18 @@ export interface ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }>;
+  /** Returns the rotated session (devise token rotates each response) alongside the records. */
+  fetchWaterRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }>;
+  /** Returns the rotated session (devise token rotates each response) alongside the records. */
+  fetchDefecationRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }>;
 }
 
 /** chaodays rejected the sign-in (wrong uid/password). Message is fixed and generic — never embeds credentials. */

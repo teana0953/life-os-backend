@@ -1,5 +1,12 @@
 import { ChaodaysAuthError, ChaodaysUpstreamError } from "../domain/chaodays-client";
-import type { ChaodaysClient, ChaodaysDietRecord, ChaodaysSession, ChaodaysWeightRecord } from "../domain/chaodays-client";
+import type {
+  ChaodaysClient,
+  ChaodaysDefecationRecord,
+  ChaodaysDietRecord,
+  ChaodaysSession,
+  ChaodaysWaterRecord,
+  ChaodaysWeightRecord,
+} from "../domain/chaodays-client";
 
 /** Public, non-secret base URL for the chaodays API. */
 const BASE_URL = "https://api.chaodays.app/api/v1";
@@ -23,6 +30,19 @@ interface RawDietRecord {
   record_type: "breakfast" | "lunch" | "dinner" | "extra";
   recorded_at: string;
   diet_record_items: RawDietItem[];
+}
+
+interface RawWaterRecord {
+  date: string;
+  water: number;
+  recorded_at: string;
+}
+
+interface RawDefecationRecord {
+  date: string;
+  defecation: number;
+  is_abnormality: boolean;
+  note: string;
 }
 
 function authHeaders(session: ChaodaysSession): Record<string, string> {
@@ -117,6 +137,71 @@ export class HttpChaodaysClient implements ChaodaysClient {
           fruit: item.fruit ?? 0,
           veg: item.veg ?? 0,
         })),
+      }));
+    } catch {
+      throw new ChaodaysUpstreamError();
+    }
+    return { session: sessionFromHeaders(response.headers, session), records };
+  }
+
+  async fetchWaterRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }> {
+    const url = `${BASE_URL}/users/water_records?start_date=${from}&end_date=${to}`;
+    const response = await this.request(url, { headers: authHeaders(session) });
+    if (!response.ok) throw new ChaodaysUpstreamError();
+
+    // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
+    // failure (→ 502), not a lifeos-internal 500.
+    let data: unknown;
+    try {
+      data = ((await response.json()) as { data?: unknown }).data;
+    } catch {
+      throw new ChaodaysUpstreamError();
+    }
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    // Mapping a malformed record is still an upstream failure (→ 502), not a 500.
+    let records: ChaodaysWaterRecord[];
+    try {
+      records = (data as RawWaterRecord[]).map((raw) => ({
+        date: raw.date,
+        waterMl: raw.water ?? 0,
+        recordedAt: raw.recorded_at,
+      }));
+    } catch {
+      throw new ChaodaysUpstreamError();
+    }
+    return { session: sessionFromHeaders(response.headers, session), records };
+  }
+
+  async fetchDefecationRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }> {
+    const url = `${BASE_URL}/users/defecation_records?start_date=${from}&end_date=${to}`;
+    const response = await this.request(url, { headers: authHeaders(session) });
+    if (!response.ok) throw new ChaodaysUpstreamError();
+
+    // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
+    // failure (→ 502), not a lifeos-internal 500.
+    let data: unknown;
+    try {
+      data = ((await response.json()) as { data?: unknown }).data;
+    } catch {
+      throw new ChaodaysUpstreamError();
+    }
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    // Mapping a malformed record is still an upstream failure (→ 502), not a 500.
+    let records: ChaodaysDefecationRecord[];
+    try {
+      records = (data as RawDefecationRecord[]).map((raw) => ({
+        date: raw.date,
+        count: raw.defecation ?? 0,
+        isAbnormality: raw.is_abnormality ?? false,
+        note: raw.note ?? "",
       }));
     } catch {
       throw new ChaodaysUpstreamError();
