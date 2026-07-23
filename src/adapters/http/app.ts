@@ -172,6 +172,7 @@ export function createApp(options: CreateAppOptions) {
   const exerciseOptions = {
     userRepository: options.userRepository,
     exerciseRepository: options.exerciseRepository,
+    dailyTargetRepository: options.dailyTargetRepository,
   };
   app.get("/api/exercise/activities", authMiddleware, createListExerciseActivitiesHandler(exerciseOptions));
   app.get("/api/exercise", authMiddleware, createGetExerciseHandler(exerciseOptions));

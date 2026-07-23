@@ -33,11 +33,11 @@ class InMemoryExerciseRepository implements ExerciseRepository {
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
-  async deleteEntry(userId: string, entryId: string): Promise<boolean> {
+  async deleteEntry(userId: string, entryId: string): Promise<string | null> {
     const idx = this.entries.findIndex((e) => e.id === entryId && e.userId === userId);
-    if (idx === -1) return false;
-    this.entries.splice(idx, 1);
-    return true;
+    if (idx === -1) return null;
+    const [removed] = this.entries.splice(idx, 1);
+    return removed.day;
   }
 }
 
@@ -117,15 +117,15 @@ describe("getExerciseDay", () => {
 });
 
 describe("deleteExerciseEntry", () => {
-  it("returns true when the owned entry is deleted", async () => {
+  it("returns the day when the owned entry is deleted", async () => {
     const entry = await logExercise(repo, { userId: "user-1", day: "2026-07-18", activityId: "jogging", durationMinutes: 30, note: "" });
-    expect(await deleteExerciseEntry(repo, "user-1", entry.id)).toBe(true);
+    expect(await deleteExerciseEntry(repo, "user-1", entry.id)).toBe("2026-07-18");
     expect(repo.entries).toHaveLength(0);
   });
 
-  it("returns false for another user's entry", async () => {
+  it("returns null for another user's entry", async () => {
     const entry = await logExercise(repo, { userId: "user-1", day: "2026-07-18", activityId: "jogging", durationMinutes: 30, note: "" });
-    expect(await deleteExerciseEntry(repo, "user-2", entry.id)).toBe(false);
+    expect(await deleteExerciseEntry(repo, "user-2", entry.id)).toBeNull();
     expect(repo.entries).toHaveLength(1);
   });
 });
