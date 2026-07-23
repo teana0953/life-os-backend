@@ -43,7 +43,7 @@ describe("computeAchievementRate", () => {
     expect(computeAchievementRate(51, 52, 51)).toBeNull();
   });
 
-  it("returns null when baseline equals current (single recorded weight)", () => {
-    expect(computeAchievementRate(52, 52, 51)).toBeNull();
+  it("is 0 when baseline equals current (no progress) — not null", () => {
+    expect(computeAchievementRate(52, 52, 51)).toBe(0);
   });
 });

@@ -27,16 +27,23 @@ export async function getWeightGoal(
 
   const currentWeightKg = await vitalsRepository.getLatestWeight(userId);
   const baseline = await vitalsRepository.getEarliestWeight(userId);
+  const weightDayCount = await vitalsRepository.getWeightDayCount(userId);
 
   const remainingKg =
     currentWeightKg !== null && targetWeightKg !== null ? currentWeightKg - targetWeightKg : null;
+
+  // Progress needs a baseline distinct from today's measurement — i.e. weight on
+  // at least two different days. With fewer, there's no progress to show yet
+  // (null); the frontend shows a "record on another day" hint.
+  const achievementRate =
+    weightDayCount >= 2 ? computeAchievementRate(baseline, currentWeightKg, targetWeightKg) : null;
 
   return {
     heightCm,
     targetWeightKg,
     currentWeightKg,
     remainingKg,
-    achievementRate: computeAchievementRate(baseline, currentWeightKg, targetWeightKg),
+    achievementRate,
     bmi: computeBmi(currentWeightKg, heightCm),
   };
 }

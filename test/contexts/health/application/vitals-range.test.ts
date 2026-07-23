@@ -29,6 +29,9 @@ class FakeVitalsRepository implements VitalsRepository {
   async getEarliestWeight(): Promise<number | null> {
     return null;
   }
+  async getWeightDayCount(userId: string): Promise<number> {
+    return this.records.filter((r) => r.userId === userId && r.weightKg !== null).length;
+  }
   async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
     return this.records.filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }

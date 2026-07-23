@@ -25,7 +25,7 @@ The system SHALL persist, per user, a body profile holding a height in centimetr
 
 ### Requirement: Weight-goal overview
 
-The system SHALL derive, on read, a weight-goal overview from the user's body profile and their recorded weights (from the vitals tracker): the height, the target weight, the current weight (the most recent recorded weight, or null when none), the remaining weight to target (current − target, null when either is missing), the BMI (current ÷ (height/100)², to one decimal, null when either is missing), and the achievement rate. The achievement rate SHALL be `(baseline − current) / (baseline − target)` clamped to 0–100, where the baseline is the earliest recorded weight; it SHALL be null when there is no baseline, no current weight, no target, or the baseline equals the target.
+The system SHALL derive, on read, a weight-goal overview from the user's body profile and their recorded weights (from the vitals tracker): the height, the target weight, the current weight (the most recent recorded weight, or null when none), the remaining weight to target (current − target, null when either is missing), the BMI (current ÷ (height/100)², to one decimal, null when either is missing), and the achievement rate. The achievement rate SHALL be `(baseline − current) / (baseline − target)` clamped to 0–100, where the baseline is the earliest recorded weight; it SHALL be null when there is no current weight, no target, the baseline equals the target, or the user has recorded weight on fewer than two days (there is no progress to measure yet). When weight has been recorded on at least two days, an unchanged weight (baseline equals current) SHALL read 0, not null.
 
 #### Scenario: Full overview
 - **WHEN** a user has height 165, target weight 51, an earliest recorded weight of 55, and a latest recorded weight of 52
@@ -35,9 +35,13 @@ The system SHALL derive, on read, a weight-goal overview from the user's body pr
 - **WHEN** a user has no target weight set
 - **THEN** the remaining weight and the achievement rate are null (BMI still computes if height and a current weight exist)
 
-#### Scenario: Achievement rate is null without enough data
-- **WHEN** a user has a target and a current weight but only one recorded weight (baseline equals current)
+#### Scenario: Achievement rate is null without enough weight history
+- **WHEN** a user has a target and a current weight but has recorded weight on only one day
 - **THEN** the achievement rate is null
+
+#### Scenario: Unchanged weight over two days reads 0, not null
+- **WHEN** a user has recorded the same weight on two different days, with a target set
+- **THEN** the achievement rate is 0
 
 ### Requirement: Authenticated body-profile API
 
