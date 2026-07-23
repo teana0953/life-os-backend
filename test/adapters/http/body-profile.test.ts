@@ -167,6 +167,9 @@ class InMemoryVitalsRepository implements VitalsRepository {
   async getEarliestWeight(userId: string): Promise<number | null> {
     return this.extreme(userId, "earliest");
   }
+  async getWeightDayCount(userId: string): Promise<number> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.weightKg !== null).length;
+  }
   private extreme(userId: string, which: "latest" | "earliest"): number | null {
     const withWeight = [...this.byUserDay.values()].filter((r) => r.userId === userId && r.weightKg !== null);
     if (withWeight.length === 0) return null;

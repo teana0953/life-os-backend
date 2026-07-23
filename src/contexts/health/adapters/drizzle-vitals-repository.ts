@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { vitals } from "../../../shared/db/schema";
 import type { VitalsRecord } from "../domain/vitals";
@@ -69,6 +69,17 @@ export class DrizzleVitalsRepository implements VitalsRepository {
 
   async getEarliestWeight(userId: string): Promise<number | null> {
     return this.readWeight(userId, "earliest");
+  }
+
+  async getWeightDayCount(userId: string): Promise<number> {
+    const db = this.getDb();
+    // vitals holds one row per (user, day), so counting rows with a non-null
+    // weight counts the distinct days on which a weight was recorded.
+    const [row] = await db
+      .select({ count: count() })
+      .from(vitals)
+      .where(and(eq(vitals.userId, userId), isNotNull(vitals.weightKg)));
+    return Number(row?.count ?? 0);
   }
 
   private async readWeight(userId: string, which: "latest" | "earliest"): Promise<number | null> {

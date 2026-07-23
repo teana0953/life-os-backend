@@ -18,6 +18,8 @@ export interface VitalsRepository {
   getLatestWeight(userId: string): Promise<number | null>;
   /** The earliest recorded (non-null) weight for the user, or null when none. */
   getEarliestWeight(userId: string): Promise<number | null>;
+  /** The number of distinct days on which the user recorded a (non-null) weight. */
+  getWeightDayCount(userId: string): Promise<number>;
   /** The user's records with day in `[from, to]` (inclusive), ascending by day. */
   listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]>;
 }

@@ -13,10 +13,11 @@ export function computeBmi(weightKg: number | null, heightCm: number | null): nu
 
 /**
  * Achievement rate = (baseline − current) / (baseline − target) × 100, clamped
- * to 0–100 and rounded to an integer. Null when any input is null, when baseline
- * equals target (no progress denominator), or when baseline equals current — the
- * latter is the "only one recorded weight" case (earliest === latest), for which
- * no progress can yet be measured.
+ * to 0–100 and rounded to an integer. Null when any input is null or when
+ * baseline equals target (no progress denominator). When baseline equals current
+ * this is 0 (no progress yet) — NOT null; the "not enough history" case (fewer
+ * than two weight-recorded days) is decided by the caller via the day count, not
+ * here, so two same-value days read 0% rather than "no data".
  */
 export function computeAchievementRate(
   baseline: number | null,
@@ -24,7 +25,7 @@ export function computeAchievementRate(
   target: number | null,
 ): number | null {
   if (baseline === null || current === null || target === null) return null;
-  if (baseline === target || baseline === current) return null;
+  if (baseline === target) return null;
   const rate = ((baseline - current) / (baseline - target)) * 100;
   return Math.round(Math.max(0, Math.min(100, rate)));
 }

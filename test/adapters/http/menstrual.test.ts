@@ -60,6 +60,7 @@ const stubVitalsRepository: VitalsRepository = {
   set: notImplemented,
   getLatestWeight: notImplemented,
   getEarliestWeight: notImplemented,
+  getWeightDayCount: notImplemented,
   listRange: notImplemented,
 };
 const stubBodyProfileRepository: BodyProfileRepository = {

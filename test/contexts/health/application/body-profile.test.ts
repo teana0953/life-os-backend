@@ -35,6 +35,7 @@ class FakeVitalsRepository implements VitalsRepository {
   constructor(
     private readonly latest: number | null,
     private readonly earliest: number | null,
+    private readonly weightDays = 2,
   ) {}
   async get(): Promise<VitalsRecord | null> {
     throw new Error("not used");
@@ -47,6 +48,9 @@ class FakeVitalsRepository implements VitalsRepository {
   }
   async getEarliestWeight(): Promise<number | null> {
     return this.earliest;
+  }
+  async getWeightDayCount(): Promise<number> {
+    return this.weightDays;
   }
   async listRange(): Promise<VitalsRecord[]> {
     throw new Error("not used");
@@ -108,12 +112,19 @@ describe("getWeightGoal", () => {
     expect(overview.bmi).toBe(19.1);
   });
 
-  it("a single recorded weight (baseline === current) → achievement null", async () => {
+  it("weight on only one day → achievement null (not enough history)", async () => {
     await repo.upsert("user-1", { heightCm: 165, targetWeightKg: 51 });
-    const vitals = new FakeVitalsRepository(52, 52);
+    const vitals = new FakeVitalsRepository(52, 52, 1); // 1 weight day
     const overview = await getWeightGoal(repo, vitals, "user-1");
     expect(overview.achievementRate).toBeNull();
     expect(overview.currentWeightKg).toBe(52);
     expect(overview.remainingKg).toBe(1);
+  });
+
+  it("weight on two days at the same value → achievement 0 (no progress, not null)", async () => {
+    await repo.upsert("user-1", { heightCm: 165, targetWeightKg: 51 });
+    const vitals = new FakeVitalsRepository(52, 52, 2); // 2 weight days, same value
+    const overview = await getWeightGoal(repo, vitals, "user-1");
+    expect(overview.achievementRate).toBe(0);
   });
 });
