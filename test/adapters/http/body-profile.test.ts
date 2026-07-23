@@ -200,6 +200,7 @@ function buildApp() {
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository,
+    healthCalendarRepository: { listLoggedDays: async () => [] },
     ping: async () => {},
   });
   return { app, bodyProfileRepository, vitalsRepository };

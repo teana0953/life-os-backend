@@ -152,6 +152,7 @@ function buildApp(
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
+    healthCalendarRepository: { listLoggedDays: async () => [] },
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });

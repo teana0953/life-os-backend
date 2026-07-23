@@ -4,6 +4,7 @@ import type { JWTVerifyGetKey } from "jose";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../contexts/health/domain/daily-target-repository";
+import type { HealthCalendarRepository } from "../../contexts/health/domain/health-calendar-repository";
 import type { ExerciseRepository } from "../../contexts/health/domain/exercise-repository";
 import type { FoodDictionaryRepository } from "../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../contexts/health/domain/meal-repository";
@@ -42,6 +43,7 @@ import {
   createGetMenstrualHandler,
   createUpdateMenstrualHandler,
 } from "./routes/menstrual";
+import { createGetHealthCalendarHandler } from "./routes/health-calendar";
 import { createHealthHandler } from "./routes/health";
 import {
   createCreateMealHandler,
@@ -82,6 +84,7 @@ export interface CreateAppOptions {
   exerciseRepository: ExerciseRepository;
   menstrualRepository: MenstrualRepository;
   bodyProfileRepository: BodyProfileRepository;
+  healthCalendarRepository: HealthCalendarRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -192,6 +195,14 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/body-profile", authMiddleware, createGetBodyProfileHandler(bodyProfileOptions));
   app.put("/api/body-profile", authMiddleware, createSetBodyProfileHandler(bodyProfileOptions));
   app.get("/api/weight-goal", authMiddleware, createGetWeightGoalHandler(bodyProfileOptions));
+
+  const healthCalendarOptions = {
+    userRepository: options.userRepository,
+    healthCalendarRepository: options.healthCalendarRepository,
+    dailyTargetRepository: options.dailyTargetRepository,
+    mealRepository: options.mealRepository,
+  };
+  app.get("/api/health-calendar", authMiddleware, createGetHealthCalendarHandler(healthCalendarOptions));
 
   return app;
 }
