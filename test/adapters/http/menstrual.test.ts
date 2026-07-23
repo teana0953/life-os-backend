@@ -26,6 +26,7 @@ function notImplemented(): never {
 const stubChaodaysClient: ChaodaysClient = {
   signIn: notImplemented,
   fetchWeightRecords: notImplemented,
+  fetchDietRecords: notImplemented,
 };
 const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   search: notImplemented,

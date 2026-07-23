@@ -80,6 +80,7 @@ const stubMenstrualRepository: MenstrualRepository = {
 const stubChaodaysClient: ChaodaysClient = {
   signIn: notImplemented,
   fetchWeightRecords: notImplemented,
+  fetchDietRecords: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";

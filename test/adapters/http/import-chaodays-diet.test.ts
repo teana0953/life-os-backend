@@ -2,10 +2,21 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
-import type { ChaodaysClient, ChaodaysSession, ChaodaysWeightRecord } from "../../../src/contexts/health/domain/chaodays-client";
+import type {
+  ChaodaysClient,
+  ChaodaysDietRecord,
+  ChaodaysSession,
+  ChaodaysWeightRecord,
+} from "../../../src/contexts/health/domain/chaodays-client";
 import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../src/contexts/health/domain/chaodays-client";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
-import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
+import type { MealEntry, MealItem, MealSummary } from "../../../src/contexts/health/domain/meal-entry";
+import type {
+  CreateMealItemInput,
+  MealRepository,
+  UpdateMealItemPatch,
+  UpsertMealWithItemsInput,
+} from "../../../src/contexts/health/domain/meal-repository";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
@@ -27,16 +38,6 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   favorite: notImplemented,
   unfavorite: notImplemented,
   listFavorites: notImplemented,
-};
-const stubMealRepository: MealRepository = {
-  upsertMealWithItems: notImplemented,
-  listMealsByDay: notImplemented,
-  listMealsInRange: notImplemented,
-  listLoggedDays: notImplemented,
-  updateMealTime: notImplemented,
-  deleteMeal: notImplemented,
-  updateItem: notImplemented,
-  deleteItem: notImplemented,
 };
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
@@ -119,12 +120,68 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
+type StoredMeal = MealSummary & { items: MealItem[] };
+
+class InMemoryMealRepository implements MealRepository {
+  meals: StoredMeal[] = [];
+  private nextMealId = 1;
+  private nextItemId = 1;
+
+  async upsertMealWithItems(input: UpsertMealWithItemsInput): Promise<MealEntry> {
+    let meal = this.meals.find((m) => m.userId === input.userId && m.day === input.day && m.meal === input.meal);
+    if (!meal) {
+      meal = {
+        id: `meal-${this.nextMealId++}`,
+        userId: input.userId,
+        day: input.day,
+        meal: input.meal,
+        time: input.time ?? new Date(),
+        createdAt: new Date(),
+        items: [],
+      };
+      this.meals.push(meal);
+    }
+    for (const item of input.items) {
+      meal.items.push(this.toStoredItem(meal.id, item));
+    }
+    return meal;
+  }
+
+  private toStoredItem(mealEntryId: string, item: CreateMealItemInput): MealItem {
+    return { id: `item-${this.nextItemId++}`, mealEntryId, createdAt: new Date(), ...item };
+  }
+
+  async listMealsByDay(userId: string, day: string): Promise<MealEntry[]> {
+    return this.meals.filter((m) => m.userId === userId && m.day === day);
+  }
+
+  async listMealsInRange(): Promise<MealEntry[]> {
+    throw new Error("not used in this test");
+  }
+
+  async listLoggedDays(): Promise<string[]> {
+    throw new Error("not used in this test");
+  }
+
+  async updateMealTime(): Promise<MealSummary | null> {
+    throw new Error("not used in this test");
+  }
+
+  async deleteMeal(): Promise<boolean> {
+    throw new Error("not used in this test");
+  }
+
+  async updateItem(_userId: string, _itemId: string, _patch: UpdateMealItemPatch): Promise<MealItem | null> {
+    throw new Error("not used in this test");
+  }
+
+  async deleteItem(): Promise<boolean> {
+    throw new Error("not used in this test");
+  }
+}
+
 class InMemoryVitalsRepository implements VitalsRepository {
   private byUserDay = new Map<string, VitalsRecord>();
-
-  seed(record: VitalsRecord) {
-    this.byUserDay.set(`${record.userId}:${record.day}`, record);
-  }
 
   async get(userId: string, day: string): Promise<VitalsRecord | null> {
     return this.byUserDay.get(`${userId}:${day}`) ?? null;
@@ -165,7 +222,7 @@ const SESSION: ChaodaysSession = { accessToken: "token-1", client: "client-1", u
 
 class StubChaodaysClient implements ChaodaysClient {
   signInError: Error | null = null;
-  records: ChaodaysWeightRecord[] = [];
+  records: ChaodaysDietRecord[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
 
@@ -175,21 +232,22 @@ class StubChaodaysClient implements ChaodaysClient {
     return SESSION;
   }
 
-  async fetchWeightRecords(
+  async fetchWeightRecords(): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
+    throw new Error("not used in this test");
+  }
+
+  async fetchDietRecords(
     session: ChaodaysSession,
     from: string,
     to: string,
-  ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }> {
     this.fetchArgs = { from, to };
     return { session, records: this.records };
-  }
-
-  fetchDietRecords(): never {
-    throw new Error("not used in this test");
   }
 }
 
 function buildApp() {
+  const mealRepository = new InMemoryMealRepository();
   const vitalsRepository = new InMemoryVitalsRepository();
   const chaodaysClient = new StubChaodaysClient();
   const app = createApp({
@@ -197,7 +255,7 @@ function buildApp() {
     jwks,
     userRepository: new InMemoryUserRepository(),
     foodDictionaryRepository: stubFoodDictionaryRepository,
-    mealRepository: stubMealRepository,
+    mealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository: stubWaterRepository,
     bowelRepository: stubBowelRepository,
@@ -209,7 +267,7 @@ function buildApp() {
     chaodaysClient,
     ping: async () => {},
   });
-  return { app, vitalsRepository, chaodaysClient };
+  return { app, mealRepository, vitalsRepository, chaodaysClient };
 }
 
 const VALID_BODY = {
@@ -219,11 +277,11 @@ const VALID_BODY = {
   end_date: "2026-07-02",
 };
 
-describe("POST /api/import/chaodays/weight", () => {
+describe("POST /api/import/chaodays/diet", () => {
   it("requires auth", async () => {
     const { app } = buildApp();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -232,28 +290,39 @@ describe("POST /api/import/chaodays/weight", () => {
     expect(res.status).toBe(401);
   });
 
-  it("imports weight records and returns the summary", async () => {
-    const { app, vitalsRepository, chaodaysClient } = buildApp();
+  it("imports diet records and returns the summary", async () => {
+    const { app, mealRepository, chaodaysClient } = buildApp();
     const token = await validToken();
     chaodaysClient.records = [
-      { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
-      { date: "2026-07-02", weight: null, bodyFatPct: null },
+      {
+        date: "2026-07-01",
+        recordType: "lunch",
+        recordedAt: "2026-07-01 12:30",
+        items: [{ name: "白飯\n前血糖：93", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
     ];
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ imported: 1, skipped: 1, from: "2026-07-01", to: "2026-07-02" });
+    expect(await res.json()).toEqual({
+      mealsImported: 1,
+      mealsSkipped: 0,
+      glucoseImported: 1,
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
     // The snake_case body threads through to the client as the right fields.
     expect(chaodaysClient.signInArgs).toEqual({ uid: "chaodays-uid", password: "chaodays-pw" });
     expect(chaodaysClient.fetchArgs).toEqual({ from: "2026-07-01", to: "2026-07-02" });
-    const record = await vitalsRepository.get("user-1", "2026-07-01");
-    expect(record?.weightKg).toBe(65.5);
-    expect(record?.bodyFatPct).toBe(22.1);
+    const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
+    expect(meals).toHaveLength(1);
+    expect(meals[0].meal).toBe("午餐");
+    expect(meals[0].items[0]).toMatchObject({ name: "白飯", staple: 2 });
   });
 
   it.each([
@@ -266,7 +335,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -280,7 +349,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysAuthError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -295,7 +364,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysUpstreamError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),

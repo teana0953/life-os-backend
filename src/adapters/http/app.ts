@@ -47,7 +47,7 @@ import {
 } from "./routes/menstrual";
 import { createGetHealthCalendarHandler } from "./routes/health-calendar";
 import { createHealthHandler } from "./routes/health";
-import { createImportChaodaysWeightHandler } from "./routes/import-chaodays";
+import { createImportChaodaysDietHandler, createImportChaodaysWeightHandler } from "./routes/import-chaodays";
 import {
   createCreateMealHandler,
   createDeleteMealHandler,
@@ -221,6 +221,13 @@ export function createApp(options: CreateAppOptions) {
     chaodaysClient: options.chaodaysClient,
   };
   app.post("/api/import/chaodays/weight", authMiddleware, createImportChaodaysWeightHandler(importChaodaysOptions));
+  const importChaodaysDietOptions = {
+    userRepository: options.userRepository,
+    mealRepository: options.mealRepository,
+    vitalsRepository: options.vitalsRepository,
+    chaodaysClient: options.chaodaysClient,
+  };
+  app.post("/api/import/chaodays/diet", authMiddleware, createImportChaodaysDietHandler(importChaodaysDietOptions));
 
   return app;
 }

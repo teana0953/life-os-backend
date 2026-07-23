@@ -71,6 +71,10 @@ class FakeChaodaysClient implements ChaodaysClient {
     this.fetchArgs = { from, to };
     return { session, records: this.records };
   }
+
+  fetchDietRecords(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 let vitalsRepository: InMemoryVitalsRepository;

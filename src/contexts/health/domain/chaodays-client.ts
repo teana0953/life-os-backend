@@ -13,6 +13,25 @@ export interface ChaodaysWeightRecord {
   bodyFatPct: number | null;
 }
 
+/** A single food item within a chaodays diet record. oil/sugar are dropped (lifeos has no such axes). */
+export interface ChaodaysDietItem {
+  name: string;
+  staple: number;
+  meat: number;
+  fruit: number;
+  veg: number;
+}
+
+/** A single chaodays diet record (one meal-type entry on a day; a day can have several of the same type). */
+export interface ChaodaysDietRecord {
+  /** ISO calendar date, e.g. "2026-07-18". */
+  date: string;
+  recordType: "breakfast" | "lunch" | "dinner" | "extra";
+  /** "YYYY-MM-DD HH:mm". */
+  recordedAt: string;
+  items: ChaodaysDietItem[];
+}
+
 /** Driven port for the external chaodays API. */
 export interface ChaodaysClient {
   signIn(uid: string, password: string): Promise<ChaodaysSession>;
@@ -22,6 +41,12 @@ export interface ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }>;
+  /** Returns the rotated session (devise token rotates each response) alongside the records. */
+  fetchDietRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }>;
 }
 
 /** chaodays rejected the sign-in (wrong uid/password). Message is fixed and generic — never embeds credentials. */
