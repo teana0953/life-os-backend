@@ -218,7 +218,14 @@ export const vitals = pgTable(
       .notNull()
       .default([]),
     glucoseReadings: jsonb("glucose_readings")
-      .$type<{ label: string; value: number; time: string }[]>()
+      .$type<
+        {
+          label: string;
+          value: number;
+          mealContext?: "fasting" | "pre_meal" | "post_meal" | null;
+          time: string;
+        }[]
+      >()
       .notNull()
       .default([]),
     spo2Readings: jsonb("spo2_readings")

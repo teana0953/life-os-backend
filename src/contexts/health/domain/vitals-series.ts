@@ -14,6 +14,14 @@ export interface VitalsSeries {
   diastolic: Point[];
   pulse: Point[];
   glucose: Point[];
+  /** Glucose readings taken while fasting. */
+  glucoseFasting: Point[];
+  /** Glucose readings taken before a meal. */
+  glucosePreMeal: Point[];
+  /** Glucose readings taken after a meal. */
+  glucosePostMeal: Point[];
+  /** Glucose readings with no meal context recorded. */
+  glucoseUnspecified: Point[];
   spo2: Point[];
 }
 
@@ -42,6 +50,10 @@ export function buildVitalsSeries(records: VitalsRecord[]): VitalsSeries {
     diastolic: [],
     pulse: [],
     glucose: [],
+    glucoseFasting: [],
+    glucosePreMeal: [],
+    glucosePostMeal: [],
+    glucoseUnspecified: [],
     spo2: [],
   };
 
@@ -66,6 +78,22 @@ export function buildVitalsSeries(records: VitalsRecord[]): VitalsSeries {
 
     const glucose = mean(record.glucoseReadings.map((r) => r.value));
     if (glucose != null) series.glucose.push({ day, value: Math.round(glucose) });
+
+    // The same day's glucose, split by meal context so fasting and post-meal
+    // readings (which have different normal ranges) can be plotted separately.
+    const glucoseByContext: Record<"fasting" | "pre_meal" | "post_meal" | "unspecified", Point[]> = {
+      fasting: series.glucoseFasting,
+      pre_meal: series.glucosePreMeal,
+      post_meal: series.glucosePostMeal,
+      unspecified: series.glucoseUnspecified,
+    };
+    for (const [context, target] of Object.entries(glucoseByContext)) {
+      const values = record.glucoseReadings
+        .filter((r) => (r.mealContext ?? "unspecified") === context)
+        .map((r) => r.value);
+      const contextMean = mean(values);
+      if (contextMean != null) target.push({ day, value: Math.round(contextMean) });
+    }
 
     const spo2 = mean(record.spo2Readings.map((r) => r.spo2));
     if (spo2 != null) series.spo2.push({ day, value: Math.round(spo2) });

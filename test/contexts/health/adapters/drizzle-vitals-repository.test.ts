@@ -32,7 +32,7 @@ describe("DrizzleVitalsRepository read coerce", () => {
     const result = await repo.get("user-1", "2026-07-18");
 
     expect(result?.bpReadings).toEqual([{ systolic: 120, diastolic: 80, pulse: 70, time: "" }]);
-    expect(result?.glucoseReadings).toEqual([{ label: "餐前", value: 95, time: "" }]);
+    expect(result?.glucoseReadings).toEqual([{ label: "餐前", value: 95, mealContext: null, time: "" }]);
     expect(result?.spo2Readings).toEqual([{ spo2: 98, pulse: null, time: "" }]);
   });
 
