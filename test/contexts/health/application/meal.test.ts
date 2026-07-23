@@ -53,6 +53,10 @@ class InMemoryMealRepository implements MealRepository {
     return this.meals.filter((m) => m.userId === userId && m.day === day);
   }
 
+  async listMealsInRange(): Promise<MealEntry[]> {
+    throw new Error("not used in this test");
+  }
+
   async listLoggedDays(userId: string, month: string): Promise<string[]> {
     const days = new Set(this.meals.filter((m) => m.userId === userId && m.day.startsWith(month)).map((m) => m.day));
     return [...days].sort();

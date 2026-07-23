@@ -17,6 +17,8 @@ export interface DailyTargetRepository {
   get(userId: string, day: string): Promise<DailyTarget | null>;
   /** Most recent target with day <= the given day, or null if none. */
   getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null>;
+  /** Targets with day in `[from, to]`, ascending by day. */
+  listInRange(userId: string, from: string, to: string): Promise<DailyTarget[]>;
   /** Upsert semantics, keyed by (userId, day). */
   set(input: SetDailyTargetInput): Promise<DailyTarget>;
 }

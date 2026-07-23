@@ -145,6 +145,10 @@ class InMemoryMealRepository implements MealRepository {
     return this.meals.filter((m) => m.userId === userId && m.day === day);
   }
 
+  async listMealsInRange(): Promise<MealEntry[]> {
+    throw new Error("not used in this test");
+  }
+
   async listLoggedDays(userId: string, month: string): Promise<string[]> {
     const days = new Set(this.meals.filter((m) => m.userId === userId && m.day.startsWith(month)).map((m) => m.day));
     return [...days].sort();
@@ -198,6 +202,10 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
 
   async get(userId: string, day: string): Promise<DailyTarget | null> {
     return this.targetsByUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async listInRange(): Promise<DailyTarget[]> {
+    throw new Error("not used in this test");
   }
 
   async getLatestOnOrBefore(userId: string, day: string): Promise<DailyTarget | null> {
@@ -346,6 +354,7 @@ function buildApp() {
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
+    healthCalendarRepository: { listLoggedDays: async () => [] },
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

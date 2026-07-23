@@ -33,6 +33,7 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
 const stubMealRepository: MealRepository = {
   upsertMealWithItems: notImplemented,
   listMealsByDay: notImplemented,
+  listMealsInRange: notImplemented,
   listLoggedDays: notImplemented,
   updateMealTime: notImplemented,
   deleteMeal: notImplemented,
@@ -42,6 +43,7 @@ const stubMealRepository: MealRepository = {
 const stubDailyTargetRepository: DailyTargetRepository = {
   get: notImplemented,
   getLatestOnOrBefore: notImplemented,
+  listInRange: notImplemented,
   set: notImplemented,
 };
 const stubWaterRepository: WaterRepository = {
@@ -173,6 +175,7 @@ function buildApp() {
     exerciseRepository: stubExerciseRepository,
     menstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
+    healthCalendarRepository: { listLoggedDays: async () => [] },
     ping: async () => {},
   });
   return { app, menstrualRepository };
