@@ -244,6 +244,14 @@ class StubChaodaysClient implements ChaodaysClient {
     this.fetchArgs = { from, to };
     return { session, records: this.records };
   }
+
+  fetchWaterRecords(): never {
+    throw new Error("not used in this test");
+  }
+
+  fetchDefecationRecords(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 function buildApp() {

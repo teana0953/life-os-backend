@@ -2,15 +2,15 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
-import type { ChaodaysClient, ChaodaysSession, ChaodaysWeightRecord } from "../../../src/contexts/health/domain/chaodays-client";
+import type { ChaodaysClient, ChaodaysDefecationRecord, ChaodaysSession } from "../../../src/contexts/health/domain/chaodays-client";
 import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../src/contexts/health/domain/chaodays-client";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
-import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
-import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
-import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
+import type { BowelLog } from "../../../src/contexts/health/domain/bowel";
+import type { BowelRepository, SetBowelLogInput } from "../../../src/contexts/health/domain/bowel-repository";
+import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
@@ -51,9 +51,13 @@ const stubWaterRepository: WaterRepository = {
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,
 };
-const stubBowelRepository: BowelRepository = {
+const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
   set: notImplemented,
+  getLatestWeight: notImplemented,
+  getEarliestWeight: notImplemented,
+  getWeightDayCount: notImplemented,
+  listRange: notImplemented,
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: notImplemented,
@@ -119,45 +123,23 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
-class InMemoryVitalsRepository implements VitalsRepository {
-  private byUserDay = new Map<string, VitalsRecord>();
+class InMemoryBowelRepository implements BowelRepository {
+  private byUserDay = new Map<string, BowelLog>();
 
-  seed(record: VitalsRecord) {
-    this.byUserDay.set(`${record.userId}:${record.day}`, record);
-  }
-
-  async get(userId: string, day: string): Promise<VitalsRecord | null> {
+  async get(userId: string, day: string): Promise<BowelLog | null> {
     return this.byUserDay.get(`${userId}:${day}`) ?? null;
   }
 
-  async set(input: SetVitalsInput): Promise<VitalsRecord> {
-    const record: VitalsRecord = {
+  async set(input: SetBowelLogInput): Promise<BowelLog> {
+    const log: BowelLog = {
       userId: input.userId,
       day: input.day,
-      weightKg: input.weightKg,
-      bodyFatPct: input.bodyFatPct,
-      bpReadings: input.bpReadings,
-      glucoseReadings: input.glucoseReadings,
-      spo2Readings: input.spo2Readings,
+      count: input.count,
+      isNormal: input.isNormal,
+      note: input.note,
     };
-    this.byUserDay.set(`${input.userId}:${input.day}`, record);
-    return record;
-  }
-
-  async getLatestWeight(): Promise<number | null> {
-    throw new Error("not used in this test");
-  }
-
-  async getEarliestWeight(): Promise<number | null> {
-    throw new Error("not used in this test");
-  }
-
-  async getWeightDayCount(): Promise<number> {
-    throw new Error("not used in this test");
-  }
-
-  async listRange(): Promise<VitalsRecord[]> {
-    throw new Error("not used in this test");
+    this.byUserDay.set(`${input.userId}:${input.day}`, log);
+    return log;
   }
 }
 
@@ -165,7 +147,7 @@ const SESSION: ChaodaysSession = { accessToken: "token-1", client: "client-1", u
 
 class StubChaodaysClient implements ChaodaysClient {
   signInError: Error | null = null;
-  records: ChaodaysWeightRecord[] = [];
+  records: ChaodaysDefecationRecord[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
 
@@ -175,13 +157,8 @@ class StubChaodaysClient implements ChaodaysClient {
     return SESSION;
   }
 
-  async fetchWeightRecords(
-    session: ChaodaysSession,
-    from: string,
-    to: string,
-  ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
-    this.fetchArgs = { from, to };
-    return { session, records: this.records };
+  fetchWeightRecords(): never {
+    throw new Error("not used in this test");
   }
 
   fetchDietRecords(): never {
@@ -192,13 +169,18 @@ class StubChaodaysClient implements ChaodaysClient {
     throw new Error("not used in this test");
   }
 
-  fetchDefecationRecords(): never {
-    throw new Error("not used in this test");
+  async fetchDefecationRecords(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }> {
+    this.fetchArgs = { from, to };
+    return { session, records: this.records };
   }
 }
 
 function buildApp() {
-  const vitalsRepository = new InMemoryVitalsRepository();
+  const bowelRepository = new InMemoryBowelRepository();
   const chaodaysClient = new StubChaodaysClient();
   const app = createApp({
     projectId: PROJECT_ID,
@@ -208,8 +190,8 @@ function buildApp() {
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository: stubWaterRepository,
-    bowelRepository: stubBowelRepository,
-    vitalsRepository,
+    bowelRepository,
+    vitalsRepository: stubVitalsRepository,
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
@@ -217,7 +199,7 @@ function buildApp() {
     chaodaysClient,
     ping: async () => {},
   });
-  return { app, vitalsRepository, chaodaysClient };
+  return { app, bowelRepository, chaodaysClient };
 }
 
 const VALID_BODY = {
@@ -227,11 +209,11 @@ const VALID_BODY = {
   end_date: "2026-07-02",
 };
 
-describe("POST /api/import/chaodays/weight", () => {
+describe("POST /api/import/chaodays/bowel", () => {
   it("requires auth", async () => {
     const { app } = buildApp();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/bowel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -240,28 +222,31 @@ describe("POST /api/import/chaodays/weight", () => {
     expect(res.status).toBe(401);
   });
 
-  it("imports weight records and returns the summary", async () => {
-    const { app, vitalsRepository, chaodaysClient } = buildApp();
+  it("imports defecation records aggregated into a bowel log, and returns the summary", async () => {
+    const { app, bowelRepository, chaodaysClient } = buildApp();
     const token = await validToken();
     chaodaysClient.records = [
-      { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
-      { date: "2026-07-02", weight: null, bodyFatPct: null },
+      { date: "2026-07-01", count: 1, isAbnormality: false, note: "早上" },
+      { date: "2026-07-01", count: 1, isAbnormality: true, note: "晚上" },
     ];
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/bowel", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ imported: 1, skipped: 1, from: "2026-07-01", to: "2026-07-02" });
-    // The snake_case body threads through to the client as the right fields.
+    expect(await res.json()).toEqual({ imported: 1, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
     expect(chaodaysClient.signInArgs).toEqual({ uid: "chaodays-uid", password: "chaodays-pw" });
     expect(chaodaysClient.fetchArgs).toEqual({ from: "2026-07-01", to: "2026-07-02" });
-    const record = await vitalsRepository.get("user-1", "2026-07-01");
-    expect(record?.weightKg).toBe(65.5);
-    expect(record?.bodyFatPct).toBe(22.1);
+    expect(await bowelRepository.get("user-1", "2026-07-01")).toEqual({
+      userId: "user-1",
+      day: "2026-07-01",
+      count: 2,
+      isNormal: false,
+      note: "早上\n晚上",
+    });
   });
 
   it.each([
@@ -274,7 +259,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/bowel", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -288,7 +273,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysAuthError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/bowel", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -303,7 +288,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysUpstreamError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/bowel", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),

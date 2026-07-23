@@ -27,6 +27,8 @@ const stubChaodaysClient: ChaodaysClient = {
   signIn: notImplemented,
   fetchWeightRecords: notImplemented,
   fetchDietRecords: notImplemented,
+  fetchWaterRecords: notImplemented,
+  fetchDefecationRecords: notImplemented,
 };
 const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   search: notImplemented,
