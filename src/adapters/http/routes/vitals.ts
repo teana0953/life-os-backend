@@ -77,16 +77,17 @@ function seriesToJson(series: VitalsSeries) {
     systolic: series.systolic,
     diastolic: series.diastolic,
     pulse: series.pulse,
-    glucose: series.glucose,
-    glucose_fasting: series.glucoseFasting,
-    glucose_pre_meal: series.glucosePreMeal,
-    glucose_post_meal: series.glucosePostMeal,
-    glucose_unspecified: series.glucoseUnspecified,
+    glucose: series.glucose.map((p) => ({
+      day: p.day,
+      time: p.time,
+      value: p.value,
+      meal_context: p.mealContext,
+    })),
     spo2: series.spo2,
   };
 }
 
-/** Protected `GET /api/vitals/range?from=&to=`: per-metric daily series over `[from, to]`. */
+/** Protected `GET /api/vitals/range?from=&to=`: per-metric per-reading series over `[from, to]`. */
 /** Max span (in days) the range endpoint will serve; the trend UI needs ≤ ~90. */
 const MAX_RANGE_DAYS = 366;
 

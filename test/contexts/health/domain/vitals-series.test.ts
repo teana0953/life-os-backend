@@ -15,7 +15,7 @@ function record(overrides: Partial<VitalsRecord> & { day: string }): VitalsRecor
 }
 
 describe("buildVitalsSeries", () => {
-  it("emits one scalar point per recorded day and skips the null day", () => {
+  it("emits one scalar point per recorded day (time '') and skips the null day", () => {
     const series = buildVitalsSeries([
       record({ day: "2026-07-01", weightKg: 52 }),
       record({ day: "2026-07-02" }),
@@ -23,8 +23,8 @@ describe("buildVitalsSeries", () => {
     ]);
 
     expect(series.weight).toEqual([
-      { day: "2026-07-01", value: 52 },
-      { day: "2026-07-03", value: 51.7 },
+      { day: "2026-07-01", time: "", value: 52 },
+      { day: "2026-07-03", time: "", value: 51.7 },
     ]);
   });
 
@@ -34,34 +34,44 @@ describe("buildVitalsSeries", () => {
       record({ day: "2026-07-02" }),
     ]);
 
-    expect(series.bodyFat).toEqual([{ day: "2026-07-01", value: 22.2 }]);
+    expect(series.bodyFat).toEqual([{ day: "2026-07-01", time: "", value: 22.2 }]);
   });
 
-  it("averages the day's blood-pressure readings for systolic and diastolic (rounded)", () => {
+  it("emits one point per blood-pressure reading (no averaging), ordered by time", () => {
     const series = buildVitalsSeries([
       record({
         day: "2026-07-01",
         bpReadings: [
-          { systolic: 118, diastolic: 76, pulse: null, time: "08:00" },
           { systolic: 122, diastolic: 80, pulse: null, time: "20:00" },
+          { systolic: 118, diastolic: 76, pulse: null, time: "08:00" },
         ],
       }),
     ]);
 
-    expect(series.systolic).toEqual([{ day: "2026-07-01", value: 120 }]);
-    expect(series.diastolic).toEqual([{ day: "2026-07-01", value: 78 }]);
+    // Both readings appear as their own points, sorted by time-of-day.
+    expect(series.systolic).toEqual([
+      { day: "2026-07-01", time: "08:00", value: 118 },
+      { day: "2026-07-01", time: "20:00", value: 122 },
+    ]);
+    expect(series.diastolic).toEqual([
+      { day: "2026-07-01", time: "08:00", value: 76 },
+      { day: "2026-07-01", time: "20:00", value: 80 },
+    ]);
   });
 
-  it("combines blood-pressure and blood-oxygen pulses into one daily mean", () => {
+  it("emits one pulse point per reading across blood-pressure and blood-oxygen", () => {
     const series = buildVitalsSeries([
       record({
         day: "2026-07-01",
         bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:00" }],
-        spo2Readings: [{ spo2: 98, pulse: 74, time: "08:00" }],
+        spo2Readings: [{ spo2: 98, pulse: 74, time: "20:00" }],
       }),
     ]);
 
-    expect(series.pulse).toEqual([{ day: "2026-07-01", value: 72 }]);
+    expect(series.pulse).toEqual([
+      { day: "2026-07-01", time: "08:00", value: 70 },
+      { day: "2026-07-01", time: "20:00", value: 74 },
+    ]);
   });
 
   it("skips a metric on days with no data and produces an empty series when never recorded", () => {
@@ -75,14 +85,10 @@ describe("buildVitalsSeries", () => {
     expect(series.systolic).toEqual([]);
   });
 
-  it("averages glucose and spo2 readings, rounded to whole numbers", () => {
+  it("emits one spo2 point per reading, rounded to whole numbers", () => {
     const series = buildVitalsSeries([
       record({
         day: "2026-07-01",
-        glucoseReadings: [
-          { label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" },
-          { label: "餐後", value: 110, mealContext: "post_meal", time: "12:30" },
-        ],
         spo2Readings: [
           { spo2: 97, pulse: null, time: "08:00" },
           { spo2: 98, pulse: null, time: "20:00" },
@@ -90,28 +96,42 @@ describe("buildVitalsSeries", () => {
       }),
     ]);
 
-    expect(series.glucose).toEqual([{ day: "2026-07-01", value: 103 }]);
-    expect(series.spo2).toEqual([{ day: "2026-07-01", value: 98 }]);
+    expect(series.spo2).toEqual([
+      { day: "2026-07-01", time: "08:00", value: 97 },
+      { day: "2026-07-01", time: "20:00", value: 98 },
+    ]);
   });
 
-  it("splits glucose into per-meal-context sub-series (unspecified = no context)", () => {
+  it("emits one glucose point per reading, each carrying its meal context", () => {
     const series = buildVitalsSeries([
       record({
         day: "2026-07-01",
         glucoseReadings: [
-          { label: "", value: 95, mealContext: "fasting", time: "07:00" },
           { label: "", value: 130, mealContext: "post_meal", time: "13:00" },
+          { label: "", value: 95, mealContext: "fasting", time: "07:00" },
           { label: "", value: 110, mealContext: null, time: "18:00" },
         ],
       }),
     ]);
 
-    // The combined series is the mean of all three (95+130+110)/3 = 111.67 → 112.
-    expect(series.glucose).toEqual([{ day: "2026-07-01", value: 112 }]);
-    expect(series.glucoseFasting).toEqual([{ day: "2026-07-01", value: 95 }]);
-    expect(series.glucosePostMeal).toEqual([{ day: "2026-07-01", value: 130 }]);
-    expect(series.glucoseUnspecified).toEqual([{ day: "2026-07-01", value: 110 }]);
-    expect(series.glucosePreMeal).toEqual([]);
+    // Every reading is its own point (no daily mean), ordered by time, with context.
+    expect(series.glucose).toEqual([
+      { day: "2026-07-01", time: "07:00", value: 95, mealContext: "fasting" },
+      { day: "2026-07-01", time: "13:00", value: 130, mealContext: "post_meal" },
+      { day: "2026-07-01", time: "18:00", value: 110, mealContext: null },
+    ]);
+  });
+
+  it("orders points across days chronologically", () => {
+    const series = buildVitalsSeries([
+      record({ day: "2026-07-03", spo2Readings: [{ spo2: 96, pulse: null, time: "09:00" }] }),
+      record({ day: "2026-07-01", spo2Readings: [{ spo2: 98, pulse: null, time: "21:00" }] }),
+    ]);
+
+    expect(series.spo2).toEqual([
+      { day: "2026-07-01", time: "21:00", value: 98 },
+      { day: "2026-07-03", time: "09:00", value: 96 },
+    ]);
   });
 
   it("ignores null pulses when both reading lists lack any pulse", () => {

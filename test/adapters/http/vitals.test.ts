@@ -420,7 +420,7 @@ describe("vitals HTTP routes", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns the per-metric daily series over the range", async () => {
+  it("returns the per-metric per-reading series over the range", async () => {
     const { app, vitalsRepository } = buildApp();
     const token = await validToken();
     vitalsRepository.seed({
@@ -455,19 +455,24 @@ describe("vitals HTTP routes", () => {
       to: "2026-07-31",
       series: {
         weight: [
-          { day: "2026-07-01", value: 52 },
-          { day: "2026-07-03", value: 51.7 },
+          { day: "2026-07-01", time: "", value: 52 },
+          { day: "2026-07-03", time: "", value: 51.7 },
         ],
         body_fat: [],
-        systolic: [{ day: "2026-07-01", value: 120 }],
-        diastolic: [{ day: "2026-07-01", value: 78 }],
-        pulse: [{ day: "2026-07-01", value: 72 }],
+        systolic: [
+          { day: "2026-07-01", time: "08:00", value: 118 },
+          { day: "2026-07-01", time: "20:00", value: 122 },
+        ],
+        diastolic: [
+          { day: "2026-07-01", time: "08:00", value: 76 },
+          { day: "2026-07-01", time: "20:00", value: 80 },
+        ],
+        pulse: [
+          { day: "2026-07-01", time: "08:00", value: 70 },
+          { day: "2026-07-01", time: "08:00", value: 74 },
+        ],
         glucose: [],
-        glucose_fasting: [],
-        glucose_pre_meal: [],
-        glucose_post_meal: [],
-        glucose_unspecified: [],
-        spo2: [{ day: "2026-07-01", value: 98 }],
+        spo2: [{ day: "2026-07-01", time: "08:00", value: 98 }],
       },
     });
   });
