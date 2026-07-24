@@ -35,6 +35,7 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
 };
 const stubMealRepository: MealRepository = {
   upsertMealWithItems: notImplemented,
+  createMeals: notImplemented,
   listMealsByDay: notImplemented,
   listMealsInRange: notImplemented,
   listLoggedDays: notImplemented,
@@ -56,6 +57,7 @@ const stubBowelRepository: BowelRepository = {
 const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
   getLatestWeight: notImplemented,
   getEarliestWeight: notImplemented,
   getWeightDayCount: notImplemented,
