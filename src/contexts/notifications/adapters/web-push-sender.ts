@@ -72,7 +72,8 @@ async function deriveEcdhSharedSecret(privateKey: CryptoKey, publicKey: CryptoKe
  *
  * Never logs the subscription or its keys, and never throws: any failure
  * (missing VAPID config — keys or subject — a malformed subscription, or a
- * network/HTTP error) surfaces as `PushSendResult = "failed"`.
+ * network/HTTP error) surfaces as `PushSendResult.outcome = "failed"`, with a
+ * short non-credential `detail` (status code, "network", or "no_vapid_config").
  */
 export class WebPushSender implements PushSender {
   private readonly publicKey?: string;
@@ -91,7 +92,7 @@ export class WebPushSender implements PushSender {
     // A missing `subject` is treated like missing keys: without it the VAPID JWT
     // would carry an empty `sub`, which push services (FCM/Apple) reject — better a
     // visible `failed` than a push silently dropped on-device.
-    if (!this.publicKey || !this.privateKey || !this.subject) return "failed";
+    if (!this.publicKey || !this.privateKey || !this.subject) return { outcome: "failed", detail: "no_vapid_config" };
 
     try {
       const [authorization, body] = await Promise.all([
@@ -110,11 +111,13 @@ export class WebPushSender implements PushSender {
         body,
       });
 
-      if (response.ok) return "sent";
-      if (response.status === 404 || response.status === 410) return "expired";
-      return "failed";
+      if (response.ok) return { outcome: "sent" };
+      if (response.status === 404 || response.status === 410) {
+        return { outcome: "expired", detail: `status_${response.status}` };
+      }
+      return { outcome: "failed", detail: `status_${response.status}` };
     } catch {
-      return "failed";
+      return { outcome: "failed", detail: "network" };
     }
   }
 

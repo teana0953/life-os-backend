@@ -161,7 +161,7 @@ class ScriptedPushSender implements PushSender {
   resultByEndpoint = new Map<string, PushSendResult>();
 
   async send(subscription: PushSubscription, _message: PushMessage): Promise<PushSendResult> {
-    return this.resultByEndpoint.get(subscription.endpoint) ?? "sent";
+    return this.resultByEndpoint.get(subscription.endpoint) ?? { outcome: "sent" };
   }
 }
 
@@ -333,7 +333,7 @@ describe("push HTTP routes", () => {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ ...VALID_BODY, endpoint: goneEndpoint }),
     });
-    pushSender.resultByEndpoint.set(goneEndpoint, "expired");
+    pushSender.resultByEndpoint.set(goneEndpoint, { outcome: "expired", detail: "status_410" });
 
     const res = await app.request("/api/push/test", {
       method: "POST",
@@ -341,7 +341,7 @@ describe("push HTTP routes", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sent: 1, failed: 1 });
+    expect(await res.json()).toEqual({ sent: 1, failed: 1, errors: ["status_410"] });
     expect(pushSubscriptionRepository.size()).toBe(1);
   });
 });

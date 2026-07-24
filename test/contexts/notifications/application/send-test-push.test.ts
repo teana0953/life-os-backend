@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sendTestPush, TEST_MESSAGE } from "../../../../src/contexts/notifications/application/send-test-push";
 import { subscribeWebPush } from "../../../../src/contexts/notifications/application/subscribe-web-push";
-import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
+import type {
+  PushMessage,
+  PushSendResult,
+  PushSender,
+} from "../../../../src/contexts/notifications/domain/push-sender";
 import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
 
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
@@ -31,7 +35,7 @@ class ScriptedPushSender implements PushSender {
   async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {
     this.sentTo.push(subscription.endpoint);
     this.messages.push(message);
-    return this.resultByEndpoint.get(subscription.endpoint) ?? "sent";
+    return this.resultByEndpoint.get(subscription.endpoint) ?? { outcome: "sent" };
   }
 }
 
@@ -50,27 +54,27 @@ describe("sendTestPush", () => {
 
     const result = await sendTestPush(repo, sender, "user-1");
 
-    expect(result).toEqual({ sent: 2, failed: 0 });
+    expect(result).toEqual({ sent: 2, failed: 0, errors: [] });
     expect(sender.sentTo.sort()).toEqual(["https://push.example.com/a", "https://push.example.com/b"]);
   });
 
   it("deletes a subscription the sender reports expired, and counts it as failed", async () => {
     await subscribeWebPush(repo, { userId: "user-1", endpoint: "https://push.example.com/gone", p256dh: "k", auth: "a" });
-    sender.resultByEndpoint.set("https://push.example.com/gone", "expired");
+    sender.resultByEndpoint.set("https://push.example.com/gone", { outcome: "expired", detail: "status_410" });
 
     const result = await sendTestPush(repo, sender, "user-1");
 
-    expect(result).toEqual({ sent: 0, failed: 1 });
+    expect(result).toEqual({ sent: 0, failed: 1, errors: ["status_410"] });
     expect(await repo.listByUser("user-1")).toEqual([]);
   });
 
-  it("keeps a subscription that merely failed transiently", async () => {
+  it("keeps a subscription that merely failed transiently, and collects its error detail", async () => {
     await subscribeWebPush(repo, { userId: "user-1", endpoint: "https://push.example.com/flaky", p256dh: "k", auth: "a" });
-    sender.resultByEndpoint.set("https://push.example.com/flaky", "failed");
+    sender.resultByEndpoint.set("https://push.example.com/flaky", { outcome: "failed", detail: "status_500" });
 
     const result = await sendTestPush(repo, sender, "user-1");
 
-    expect(result).toEqual({ sent: 0, failed: 1 });
+    expect(result).toEqual({ sent: 0, failed: 1, errors: ["status_500"] });
     expect(await repo.listByUser("user-1")).toHaveLength(1);
   });
 
@@ -88,6 +92,6 @@ describe("sendTestPush", () => {
   it("returns zero counts when the user has no subscriptions", async () => {
     const result = await sendTestPush(repo, sender, "user-1");
 
-    expect(result).toEqual({ sent: 0, failed: 0 });
+    expect(result).toEqual({ sent: 0, failed: 0, errors: [] });
   });
 });

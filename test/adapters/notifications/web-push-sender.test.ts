@@ -69,7 +69,7 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("sent");
+    expect(result).toEqual({ outcome: "sent" });
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe(subscription.endpoint);
     expect(calls[0].init?.method).toBe("POST");
@@ -91,7 +91,7 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("sent");
+    expect(result).toEqual({ outcome: "sent" });
   });
 
   it("404 → expired", async () => {
@@ -104,7 +104,7 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("expired");
+    expect(result).toEqual({ outcome: "expired", detail: "status_404" });
   });
 
   it("410 → expired", async () => {
@@ -117,10 +117,10 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("expired");
+    expect(result).toEqual({ outcome: "expired", detail: "status_410" });
   });
 
-  it("another non-2xx status → failed", async () => {
+  it("another non-2xx status → failed, with the status code as detail", async () => {
     const sender = new WebPushSender({
       publicKey: vapidPublicKey,
       privateKey: vapidPrivateKey,
@@ -130,10 +130,10 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("failed");
+    expect(result).toEqual({ outcome: "failed", detail: "status_500" });
   });
 
-  it("a throwing fetch → failed (never throws)", async () => {
+  it("a throwing fetch → failed, detail network (never throws)", async () => {
     const throwingFetch = (async () => {
       throw new Error("network down");
     }) as typeof fetch;
@@ -146,18 +146,18 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("failed");
+    expect(result).toEqual({ outcome: "failed", detail: "network" });
   });
 
-  it("missing VAPID keys → failed (never throws)", async () => {
+  it("missing VAPID keys → failed, detail no_vapid_config (never throws)", async () => {
     const sender = new WebPushSender({ fetchImpl: fakeFetch(new Response(null, { status: 201 }), []) });
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("failed");
+    expect(result).toEqual({ outcome: "failed", detail: "no_vapid_config" });
   });
 
-  it("missing VAPID subject → failed (never sends a push a service would reject)", async () => {
+  it("missing VAPID subject → failed, detail no_vapid_config (never sends a push a service would reject)", async () => {
     // A deploy that sets the keys but forgets VAPID_SUBJECT would otherwise send a
     // JWT with an empty `sub`, which FCM/Apple reject — a silent on-device failure.
     // Surface it as `failed` instead so the misconfiguration is visible.
@@ -170,7 +170,7 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toBe("failed");
+    expect(result).toEqual({ outcome: "failed", detail: "no_vapid_config" });
     expect(calls).toHaveLength(0);
   });
 });
