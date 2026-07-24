@@ -7,12 +7,14 @@ export const TEST_MESSAGE = { title: "LifeOS 測試通知", body: "這是一則�
 export interface SendTestPushResult {
   sent: number;
   failed: number;
+  errors: string[];
 }
 
 /**
  * Use case: send the fixed test message to every subscription the user has registered.
  * A subscription the sender reports `expired` is deleted (and counts as failed);
- * a merely `failed` one is left in place (D2 in design.md).
+ * a merely `failed` one is left in place (D2 in design.md). `errors` collects each
+ * non-sent send's `detail` (a short, non-credential diagnostic) for troubleshooting.
  */
 export async function sendTestPush(
   repository: PushSubscriptionRepository,
@@ -23,16 +25,18 @@ export async function sendTestPush(
 
   let sent = 0;
   let failed = 0;
+  const errors: string[] = [];
   for (const subscription of subscriptions) {
-    const result = await sender.send(subscription, TEST_MESSAGE);
-    if (result === "sent") {
+    const { outcome, detail } = await sender.send(subscription, TEST_MESSAGE);
+    if (outcome === "sent") {
       sent++;
     } else {
       failed++;
-      if (result === "expired") {
+      if (detail) errors.push(detail);
+      if (outcome === "expired") {
         await repository.deleteByEndpoint(userId, subscription.endpoint);
       }
     }
   }
-  return { sent, failed };
+  return { sent, failed, errors };
 }
