@@ -5,6 +5,8 @@ import { importChaodaysWater } from "../../../contexts/health/application/import
 import { importChaodaysWeight } from "../../../contexts/health/application/import-chaodays-weight";
 import type { BowelRepository } from "../../../contexts/health/domain/bowel-repository";
 import type { ChaodaysClient } from "../../../contexts/health/domain/chaodays-client";
+// TEMP DIAGNOSTIC (remove after diagnosing the diet import 500):
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../contexts/health/domain/chaodays-client";
 import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../contexts/health/domain/water-repository";
@@ -83,14 +85,22 @@ export function createImportChaodaysDietHandler(options: ImportChaodaysDietHandl
     const to = requireDay(body.end_date, "end_date");
     if (from > to) throw new BadRequestError("start_date must not be later than end_date");
 
-    const summary = await importChaodaysDiet(options.mealRepository, options.vitalsRepository, options.chaodaysClient, {
-      userId,
-      uid,
-      password,
-      from,
-      to,
-    });
-    return c.json(summary);
+    // TEMP DIAGNOSTIC (remove after diagnosing the diet import 500): surface the
+    // real error message in the response so the failing DB write / value is visible.
+    try {
+      const summary = await importChaodaysDiet(options.mealRepository, options.vitalsRepository, options.chaodaysClient, {
+        userId,
+        uid,
+        password,
+        from,
+        to,
+      });
+      return c.json(summary);
+    } catch (e) {
+      if (e instanceof ChaodaysAuthError || e instanceof ChaodaysUpstreamError) throw e;
+      const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      return c.json({ error: "diet_import_failed_DIAG", detail: detail.slice(0, 400) }, 500);
+    }
   };
 }
 
