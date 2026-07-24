@@ -98,8 +98,10 @@ export function createImportChaodaysDietHandler(options: ImportChaodaysDietHandl
       return c.json(summary);
     } catch (e) {
       if (e instanceof ChaodaysAuthError || e instanceof ChaodaysUpstreamError) throw e;
-      const detail = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-      return c.json({ error: "diet_import_failed_DIAG", detail: detail.slice(0, 400) }, 500);
+      const err = e as Error & { cause?: unknown };
+      const cause = (err.cause as { message?: string } | undefined)?.message;
+      const detail = `${err.name}: ${err.message}${cause ? ` || CAUSE: ${cause}` : ""}`;
+      return c.json({ error: "diet_import_failed_DIAG", detail: detail.slice(0, 1500) }, 500);
     }
   };
 }
