@@ -221,8 +221,12 @@ export class HttpChaodaysClient implements ChaodaysClient {
         // A realistic UA: some WAF/bot rules reject a missing/worker default UA.
         headers: { "User-Agent": USER_AGENT, ...(init.headers as Record<string, string> | undefined) },
       });
-    } catch {
-      throw new ChaodaysUpstreamError("network");
+    } catch (e) {
+      // Include the connection-level failure message (no credentials — it's a
+      // transport error like "Network connection lost") to tell apart a dropped
+      // connection, DNS, TLS, etc.
+      const detail = e instanceof Error ? e.message : String(e);
+      throw new ChaodaysUpstreamError(`network: ${detail}`.slice(0, 120));
     }
   }
 }
