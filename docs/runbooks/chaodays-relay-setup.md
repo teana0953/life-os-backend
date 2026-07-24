@@ -83,10 +83,17 @@ sudo docker logs -f flow-caddy-1   # watch for "certificate obtained" for <ip-da
 Reload is atomic — if validate/reload errors, the other sites keep running on
 the old config; fix the block and reload again.
 
-> Cert note: Caddy tries Let's Encrypt and ZeroSSL. If LE rate-limits `nip.io`
-> ("too many certificates already issued"), Caddy falls back to ZeroSSL
-> automatically. If both fail, switch the host to the same dashed IP under
-> `sslip.io` (`<ip-dashed>.sslip.io`) in the block and reload.
+> **Gotcha (hit in practice):** `caddy reload` can report `config is unchanged`
+> and NOT load a newly-added site block, so Caddy never requests its cert — TLS
+> then fails with `internal error` / no peer certificate, and the logs show NO
+> `obtaining certificate` line for the new host. Fix: force a clean load with
+> `sudo docker restart flow-caddy-1` (a few seconds' blip on the other sites),
+> then re-check logs — the cert is obtained on startup.
+>
+> **DNS choice — prefer `sslip.io` over `nip.io`.** `nip.io` is heavily shared and
+> can hit Let's Encrypt rate limits ("too many certificates already issued");
+> `<ip-dashed>.sslip.io` is a separate wildcard-DNS domain and issued cleanly here.
+> Caddy also falls back to ZeroSSL automatically if Let's Encrypt fails.
 
 ## Step 5 — Verify the relay
 
