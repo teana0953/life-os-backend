@@ -253,46 +253,93 @@ export const vitals = pgTable(
   (t) => [unique().on(t.userId, t.day)],
 );
 
-// reminder_schedule: a recurring reminder definition (medication now; rehab
-// reuses the same table with a different `category` — see
-// add-medication-reminders/design.md). `anchorDate` + `weekInterval` express
-// an every-N-weeks recurrence anchor-relative to that date (D4 in design.md).
-export const reminderSchedule = pgTable("reminder_schedule", {
+// care_item: a generic care reminder (medication/rehab/radiotherapy_care/custom
+// — add-care-reminders/design.md D1). `category` stays plain text (not a
+// Postgres enum) so a new category needs no schema change. `dose`/`stock`/
+// `stockAlert` are nullable and only meaningful for `category = medication`.
+export const careItem = pgTable("care_item", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
   category: text("category").notNull(),
-  label: text("label").notNull(),
-  times: text("times").array().notNull(),
-  daysOfWeek: integer("days_of_week").array().notNull(),
-  weekInterval: integer("week_interval").notNull().default(1),
-  anchorDate: date("anchor_date").notNull(),
-  enabled: boolean("enabled").notNull().default(true),
+  title: text("title").notNull(),
+  note: text("note"),
+  dose: text("dose"),
+  stock: integer("stock"),
+  stockAlert: integer("stock_alert"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const reminderOccurrenceStatus = pgEnum("reminder_occurrence_status", [
-  "pending",
-  "sent",
-  "skipped",
-  "failed",
-]);
-
-// reminder_occurrence: one materialized due instance of a schedule's time, keyed
-// by `dedupeKey` (unique) so a repeated or look-back tick never double-sends
-// (D2/D6 in design.md).
-export const reminderOccurrence = pgTable("reminder_occurrence", {
+// care_schedule: one time-of-day for a care_item (a care_item has 0..N). Slot
+// key for care_log/care_occurrence is `local_date` + `time_of_day` (text), NOT
+// a UTC instant (D5 in design.md). `repeatDays` empty = every day (D3).
+export const careSchedule = pgTable("care_schedule", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
-  kind: text("kind").notNull(),
-  dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
-  title: text("title").notNull(),
-  body: text("body").notNull().default(""),
-  status: reminderOccurrenceStatus("status").notNull().default("pending"),
-  dedupeKey: text("dedupe_key").notNull().unique(),
+  careItemId: uuid("care_item_id")
+    .notNull()
+    .references(() => careItem.id, { onDelete: "cascade" }),
+  timeOfDay: text("time_of_day").notNull(),
+  repeatDays: integer("repeat_days").array().notNull().default([]),
+  weekInterval: integer("week_interval").notNull().default(1),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date"),
+  doseQuantity: integer("dose_quantity").notNull().default(1),
+  nagIntervalMinutes: integer("nag_interval_minutes").notNull().default(0),
+  enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  sentAt: timestamp("sent_at", { withTimezone: true }),
 });
+
+export const careLogStatus = pgEnum("care_log_status", ["done", "skipped", "missed"]);
+
+// care_log: adherence record for one slot (schedule, local_date, time_of_day —
+// unique, so answering/markMissed is an insert-if-absent, never clobbering an
+// existing log — D6/D7 in design.md).
+export const careLog = pgTable(
+  "care_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    careItemId: uuid("care_item_id")
+      .notNull()
+      .references(() => careItem.id, { onDelete: "cascade" }),
+    careScheduleId: uuid("care_schedule_id")
+      .notNull()
+      .references(() => careSchedule.id, { onDelete: "cascade" }),
+    localDate: date("local_date").notNull(),
+    timeOfDay: text("time_of_day").notNull(),
+    status: careLogStatus("status").notNull(),
+    doneTime: timestamp("done_time", { withTimezone: true }),
+    doseQuantity: integer("dose_quantity").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
+);
+
+// care_occurrence: nag state for one slot (last_notified_at), unique per slot
+// so a repeated/look-back tick never double-fires (D4/D5 in design.md).
+export const careOccurrence = pgTable(
+  "care_occurrence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    careItemId: uuid("care_item_id")
+      .notNull()
+      .references(() => careItem.id, { onDelete: "cascade" }),
+    careScheduleId: uuid("care_schedule_id")
+      .notNull()
+      .references(() => careSchedule.id, { onDelete: "cascade" }),
+    localDate: date("local_date").notNull(),
+    timeOfDay: text("time_of_day").notNull(),
+    lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
+);
