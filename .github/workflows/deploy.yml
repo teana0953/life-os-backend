@@ -54,15 +54,9 @@ jobs:
           secrets: |
             DATABASE_URL
             FIREBASE_PROJECT_ID
-            CHAODAYS_RELAY_BASE
-            CHAODAYS_RELAY_SECRET
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          # chaodays egress relay (bypasses CF-Worker block). Unset -> backend calls
-          # chaodays directly. Base is non-secret but kept here for a uniform upload.
-          CHAODAYS_RELAY_BASE: ${{ secrets.CHAODAYS_RELAY_BASE }}
-          CHAODAYS_RELAY_SECRET: ${{ secrets.CHAODAYS_RELAY_SECRET }}
 
       - name: Smoke test
         env:
