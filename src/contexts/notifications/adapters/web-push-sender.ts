@@ -85,7 +85,12 @@ export class WebPushSender implements PushSender {
     this.publicKey = options.publicKey;
     this.privateKey = options.privateKey;
     this.subject = options.subject;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // Bind the default global `fetch` to `globalThis`: it is called below as
+    // `this.fetchImpl(...)`, and the Cloudflare Workers runtime throws
+    // `Illegal invocation` if the global `fetch` runs with a `this` other than
+    // the global scope (an injected fake fetch is unaffected). Node and
+    // `wrangler dev` are lenient, so this only surfaces on the deployed edge.
+    this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   }
 
   async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {

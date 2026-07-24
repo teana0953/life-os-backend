@@ -150,6 +150,30 @@ describe("WebPushSender", () => {
     expect(result.detail).toMatch(/^network:/);
   });
 
+  it("falls back to the global fetch (bound for the Workers runtime) when none is injected", async () => {
+    // Exercises the default-fetch path (previously only injected fakes ran, so the
+    // real `this.fetchImpl(...)` binding — which throws `Illegal invocation` on the
+    // deployed edge if the global fetch isn't bound to globalThis — was never hit).
+    const original = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (u: RequestInfo | URL) => {
+      calls.push(String(u));
+      return new Response(null, { status: 201 });
+    }) as typeof fetch;
+    try {
+      const sender = new WebPushSender({
+        publicKey: vapidPublicKey,
+        privateKey: vapidPrivateKey,
+        subject: "mailto:test@example.com",
+      });
+      const result = await sender.send(subscription, { title: "Test", body: "Body" });
+      expect(result.outcome).toBe("sent");
+      expect(calls).toEqual([subscription.endpoint]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("missing VAPID keys → failed, detail no_vapid_config (never throws)", async () => {
     const sender = new WebPushSender({ fetchImpl: fakeFetch(new Response(null, { status: 201 }), []) });
 
