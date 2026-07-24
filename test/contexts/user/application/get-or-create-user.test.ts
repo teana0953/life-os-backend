@@ -20,10 +20,20 @@ class InMemoryUserRepository implements UserRepository {
       firebaseUid: input.firebaseUid,
       email: input.email,
       displayName: input.displayName,
+      timezone: "Asia/Taipei",
       createdAt: new Date(),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
     return user;
+  }
+
+  async updateTimezone(userId: string, timezone: string): Promise<void> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) {
+        user.timezone = timezone;
+        return;
+      }
+    }
   }
 }
 

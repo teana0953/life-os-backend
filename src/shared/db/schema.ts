@@ -5,6 +5,9 @@ export const users = pgTable("users", {
   firebaseUid: text("firebase_uid").notNull().unique(),
   email: text("email").notNull(),
   displayName: text("display_name"),
+  // IANA zone used for all reminder time-of-day evaluation (D6b in
+  // add-medication-reminders/design.md); defaults to the primary user's zone.
+  timezone: text("timezone").notNull().default("Asia/Taipei"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -249,3 +252,47 @@ export const vitals = pgTable(
   },
   (t) => [unique().on(t.userId, t.day)],
 );
+
+// reminder_schedule: a recurring reminder definition (medication now; rehab
+// reuses the same table with a different `category` — see
+// add-medication-reminders/design.md). `anchorDate` + `weekInterval` express
+// an every-N-weeks recurrence anchor-relative to that date (D4 in design.md).
+export const reminderSchedule = pgTable("reminder_schedule", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  category: text("category").notNull(),
+  label: text("label").notNull(),
+  times: text("times").array().notNull(),
+  daysOfWeek: integer("days_of_week").array().notNull(),
+  weekInterval: integer("week_interval").notNull().default(1),
+  anchorDate: date("anchor_date").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const reminderOccurrenceStatus = pgEnum("reminder_occurrence_status", [
+  "pending",
+  "sent",
+  "skipped",
+  "failed",
+]);
+
+// reminder_occurrence: one materialized due instance of a schedule's time, keyed
+// by `dedupeKey` (unique) so a repeated or look-back tick never double-sends
+// (D2/D6 in design.md).
+export const reminderOccurrence = pgTable("reminder_occurrence", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  kind: text("kind").notNull(),
+  dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull().default(""),
+  status: reminderOccurrenceStatus("status").notNull().default("pending"),
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});

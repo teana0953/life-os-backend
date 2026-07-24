@@ -35,3 +35,18 @@ describe("Worker composition root with an invalid DATABASE_URL", () => {
     expect(await res.json()).toEqual({ ok: false });
   });
 });
+
+describe("scheduled handler composition root", () => {
+  it("does not throw synchronously with an invalid DATABASE_URL (errors surface inside the waitUntil promise)", () => {
+    type ScheduledParams = Parameters<NonNullable<typeof worker.scheduled>>;
+    const event = { cron: "* * * * *", scheduledTime: Date.now() } as unknown as ScheduledParams[0];
+    const waited: Promise<unknown>[] = [];
+    const scheduledCtx = { waitUntil: (p: Promise<unknown>) => waited.push(p), passThroughOnException() {} } as unknown as ScheduledParams[2];
+
+    expect(() => worker.scheduled?.(event, badEnv, scheduledCtx)).not.toThrow();
+    // The one deferred promise rejects (bad DATABASE_URL) — assert on it directly
+    // instead of leaving an unhandled rejection.
+    expect(waited).toHaveLength(1);
+    return expect(waited[0]).rejects.toThrow();
+  });
+});

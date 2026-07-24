@@ -7,3 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 # Set them with `wrangler secret put <NAME>` for deployed environments,
 # and in a local, untracked `.dev.vars` file for `wrangler dev`.
 # See `.dev.vars.example` for the required keys.
+
+# Reminder scheduler tick (add-medication-reminders/design.md): every minute,
+# scans for due reminder occurrences and dispatches them via Web Push.
+[triggers]
+crons = ["* * * * *"]

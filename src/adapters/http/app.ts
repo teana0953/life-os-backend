@@ -15,6 +15,7 @@ import type { VitalsRepository } from "../../contexts/health/domain/vitals-repos
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
+import type { ReminderScheduleRepository } from "../../contexts/notifications/domain/reminder-schedule";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
@@ -72,6 +73,13 @@ import {
   createUnsubscribeWebPushHandler,
 } from "./routes/push";
 import {
+  createCreateMedicationReminderHandler,
+  createDeleteMedicationReminderHandler,
+  createListMedicationRemindersHandler,
+  createUpdateMedicationReminderHandler,
+} from "./routes/reminders";
+import { createSetUserTimezoneHandler } from "./routes/user-timezone";
+import {
   createAddWaterHandler,
   createGetWaterHandler,
   createSetWaterTargetHandler,
@@ -106,6 +114,7 @@ export interface CreateAppOptions {
   pushSender: PushSender;
   /** Configured VAPID public key, or "" when unset (D6 in design.md). */
   vapidPublicKey: string;
+  reminderScheduleRepository: ReminderScheduleRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -270,6 +279,17 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/push/subscribe", authMiddleware, createSubscribeWebPushHandler(pushOptions));
   app.delete("/api/push/subscribe", authMiddleware, createUnsubscribeWebPushHandler(pushOptions));
   app.post("/api/push/test", authMiddleware, createTestPushHandler(pushOptions));
+
+  app.put("/api/user/timezone", authMiddleware, createSetUserTimezoneHandler({ userRepository: options.userRepository }));
+
+  const reminderOptions = {
+    userRepository: options.userRepository,
+    reminderScheduleRepository: options.reminderScheduleRepository,
+  };
+  app.post("/api/reminders/medication", authMiddleware, createCreateMedicationReminderHandler(reminderOptions));
+  app.get("/api/reminders/medication", authMiddleware, createListMedicationRemindersHandler(reminderOptions));
+  app.patch("/api/reminders/medication/:id", authMiddleware, createUpdateMedicationReminderHandler(reminderOptions));
+  app.delete("/api/reminders/medication/:id", authMiddleware, createDeleteMedicationReminderHandler(reminderOptions));
 
   return app;
 }
