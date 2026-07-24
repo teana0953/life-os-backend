@@ -10,37 +10,24 @@ Caddy reverse-proxy relay running on an existing AWS Lightsail box, so
 chaodays sees the box's AWS IP instead of a Cloudflare Worker IP.
 
 This is a checked-in, reproducible config — **not** Pulumi/IaC. The box
-itself and its provisioning are managed manually per the steps below.
+itself and its provisioning are managed manually.
 
-## One-time manual setup (existing Lightsail box)
+`Caddyfile` in this directory is **one site block**, meant to be **added to the
+box's existing Caddy config** — the box already runs Caddy and other services, so
+we coexist (Caddy serves many sites on 80/443 by Host), not replace.
 
-1. **Attach a static IP** to the instance in the Lightsail console. The
-   `nip.io` hostname (and its Let's Encrypt certificate) are bound to this IP
-   — without a static IP, a reboot changes the IP and breaks the relay.
-2. **Open firewall ports 80 and 443** for the instance in the Lightsail
-   networking tab (80 is needed for the ACME HTTP challenge; 443 for the
-   relay itself).
-3. **Install Caddy** on the box (see https://caddyserver.com/docs/install).
-4. **Drop in `Caddyfile`** (this directory), replacing the placeholders:
-   - `REPLACE_WITH_IP_DASHED` → the box's static IP with dots replaced by
-     dashes, e.g. IP `13.52.1.2` → `13-52-1-2.nip.io`.
-   - `REPLACE_WITH_RELAY_SECRET` → a strong generated secret, e.g.
-     `openssl rand -hex 32`.
-5. **Reload Caddy** (`sudo systemctl reload caddy` or equivalent) to pick up
-   the new config and mint the certificate.
-6. **Verify:**
-   ```sh
-   # With the correct secret: chaodays' own 401 for bad creds comes through.
-   curl -i https://<host>.nip.io/api/v1/users/sign_in \
-     -H 'X-Relay-Secret: <secret>' \
-     -H 'Content-Type: application/json' \
-     -d '{"user":{"uid":"x","password":"wrong"}}'
+## Setup
 
-   # Without the header: the relay itself rejects with 403, never reaching chaodays.
-   curl -i https://<host>.nip.io/api/v1/users/sign_in \
-     -H 'Content-Type: application/json' \
-     -d '{"user":{"uid":"x","password":"wrong"}}'
-   ```
+Full step-by-step (discovery, static IP, adding the site block to the existing
+Caddy, verification, GitHub secrets, rollback):
+
+**→ `docs/runbooks/chaodays-relay-setup.md`**
+
+In short: attach a static IP, add this site block to the existing Caddy (append to
+the main Caddyfile or drop into the imported sites dir) with the placeholders
+filled in (`<ip-dashed>.nip.io` host + an `openssl rand -hex 32` secret),
+`caddy validate` + `systemctl reload caddy`, then verify with the two curls in the
+runbook (secret → chaodays `401`; no secret → relay `403`).
 
 ## Worker side
 
