@@ -122,7 +122,9 @@ export function createApp(options: CreateAppOptions) {
       return c.json({ error: "chaodays_auth_failed" }, 400);
     }
     if (err instanceof ChaodaysUpstreamError) {
-      return c.json({ error: "chaodays_unavailable" }, 502);
+      // `detail` is a short, non-credential diagnostic (e.g. "status_403",
+      // "network", "parse") to tell apart a WAF/bot block from a network error.
+      return c.json({ error: "chaodays_unavailable", detail: err.reason }, 502);
     }
     console.error(err);
     return c.json({ error: "internal" }, 500);

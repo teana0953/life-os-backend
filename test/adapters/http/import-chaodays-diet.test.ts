@@ -379,6 +379,6 @@ describe("POST /api/import/chaodays/diet", () => {
     });
 
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: "chaodays_unavailable" });
+    expect(await res.json()).toMatchObject({ error: "chaodays_unavailable" });
   });
 });
