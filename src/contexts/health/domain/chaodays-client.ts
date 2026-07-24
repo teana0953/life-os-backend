@@ -86,9 +86,14 @@ export class ChaodaysAuthError extends Error {
   }
 }
 
-/** chaodays request failed for a non-auth reason (non-200 response or network failure). */
+/**
+ * chaodays request failed for a non-auth reason (non-200 response or network
+ * failure). [reason] is a short, non-credential diagnostic (e.g. `"status_403"`,
+ * `"network"`, `"parse"`) surfaced in the 502 response to tell apart, say, a
+ * WAF/bot block from a transient network error.
+ */
 export class ChaodaysUpstreamError extends Error {
-  constructor() {
+  constructor(readonly reason: string = "unknown") {
     super("chaodays upstream request failed");
   }
 }

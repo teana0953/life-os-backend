@@ -11,6 +11,10 @@ import type {
 /** Public, non-secret base URL for the chaodays API. */
 const BASE_URL = "https://api.chaodays.app/api/v1";
 
+/** A realistic browser UA so a WAF/bot rule doesn't reject the worker's default UA. */
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+
 interface RawWeightRecord {
   date: string;
   weight: number | null;
@@ -73,7 +77,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
       body: JSON.stringify({ user: { uid, password } }),
     });
     if (response.status === 401) throw new ChaodaysAuthError();
-    if (!response.ok) throw new ChaodaysUpstreamError();
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
     return sessionFromHeaders(response.headers);
   }
 
@@ -84,7 +88,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
     const url = `${BASE_URL}/users/weight_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
-    if (!response.ok) throw new ChaodaysUpstreamError();
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
     // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
     // failure (→ 502), not a lifeos-internal 500.
@@ -92,9 +96,9 @@ export class HttpChaodaysClient implements ChaodaysClient {
     try {
       data = ((await response.json()) as { data?: unknown }).data;
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
-    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
     const records = (data as RawWeightRecord[]).map((raw) => ({
       date: raw.date,
       weight: raw.weight ?? null,
@@ -110,7 +114,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }> {
     const url = `${BASE_URL}/users/diet_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
-    if (!response.ok) throw new ChaodaysUpstreamError();
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
     // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
     // failure (→ 502), not a lifeos-internal 500.
@@ -118,9 +122,9 @@ export class HttpChaodaysClient implements ChaodaysClient {
     try {
       data = ((await response.json()) as { data?: unknown }).data;
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
-    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
     // Mapping a malformed record (e.g. a missing/non-array diet_record_items) is
     // still an upstream failure (→ 502), not a lifeos-internal 500.
     let records: ChaodaysDietRecord[];
@@ -139,7 +143,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
         })),
       }));
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
     return { session: sessionFromHeaders(response.headers, session), records };
   }
@@ -151,7 +155,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }> {
     const url = `${BASE_URL}/users/water_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
-    if (!response.ok) throw new ChaodaysUpstreamError();
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
     // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
     // failure (→ 502), not a lifeos-internal 500.
@@ -159,9 +163,9 @@ export class HttpChaodaysClient implements ChaodaysClient {
     try {
       data = ((await response.json()) as { data?: unknown }).data;
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
-    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
     // Mapping a malformed record is still an upstream failure (→ 502), not a 500.
     let records: ChaodaysWaterRecord[];
     try {
@@ -171,7 +175,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
         recordedAt: raw.recorded_at,
       }));
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
     return { session: sessionFromHeaders(response.headers, session), records };
   }
@@ -183,7 +187,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }> {
     const url = `${BASE_URL}/users/defecation_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
-    if (!response.ok) throw new ChaodaysUpstreamError();
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
     // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
     // failure (→ 502), not a lifeos-internal 500.
@@ -191,9 +195,9 @@ export class HttpChaodaysClient implements ChaodaysClient {
     try {
       data = ((await response.json()) as { data?: unknown }).data;
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
-    if (!Array.isArray(data)) throw new ChaodaysUpstreamError();
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
     // Mapping a malformed record is still an upstream failure (→ 502), not a 500.
     let records: ChaodaysDefecationRecord[];
     try {
@@ -204,7 +208,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
         note: raw.note ?? "",
       }));
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("parse");
     }
     return { session: sessionFromHeaders(response.headers, session), records };
   }
@@ -212,9 +216,13 @@ export class HttpChaodaysClient implements ChaodaysClient {
   /** Wraps `fetch`, turning a network failure into `ChaodaysUpstreamError`. */
   private async request(url: string, init: RequestInit): Promise<Response> {
     try {
-      return await this.fetchImpl(url, init);
+      return await this.fetchImpl(url, {
+        ...init,
+        // A realistic UA: some WAF/bot rules reject a missing/worker default UA.
+        headers: { "User-Agent": USER_AGENT, ...(init.headers as Record<string, string> | undefined) },
+      });
     } catch {
-      throw new ChaodaysUpstreamError();
+      throw new ChaodaysUpstreamError("network");
     }
   }
 }
