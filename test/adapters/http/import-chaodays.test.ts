@@ -48,6 +48,8 @@ const stubDailyTargetRepository: DailyTargetRepository = {
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
   addIntake: notImplemented,
+  addIntakeMany: notImplemented,
+  listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,
@@ -55,6 +57,8 @@ const stubWaterRepository: WaterRepository = {
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
+  listRange: notImplemented,
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: notImplemented,
@@ -155,8 +159,10 @@ class InMemoryVitalsRepository implements VitalsRepository {
     return record;
   }
 
-  async setMany(): Promise<void> {
-    throw new Error("not used in this test");
+  async setMany(rows: SetVitalsInput[]): Promise<void> {
+    for (const row of rows) {
+      await this.set(row);
+    }
   }
 
   async getLatestWeight(): Promise<number | null> {
@@ -171,8 +177,8 @@ class InMemoryVitalsRepository implements VitalsRepository {
     throw new Error("not used in this test");
   }
 
-  async listRange(): Promise<VitalsRecord[]> {
-    throw new Error("not used in this test");
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 }
 

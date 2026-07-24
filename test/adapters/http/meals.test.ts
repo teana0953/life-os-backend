@@ -268,6 +268,16 @@ class InMemoryWaterRepository implements WaterRepository {
     return intake;
   }
 
+  async addIntakeMany(rows: { userId: string; day: string; addMl: number }[]): Promise<void> {
+    for (const row of rows) {
+      await this.addIntake(row.userId, row.day, row.addMl);
+    }
+  }
+
+  async listIntakeRange(userId: string, from: string, to: string): Promise<WaterIntake[]> {
+    return [...this.intakeByUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
+  }
+
   async getTarget(userId: string, day: string): Promise<WaterTarget | null> {
     return this.targetByUserDay.get(`${userId}:${day}`) ?? null;
   }
@@ -294,6 +304,12 @@ const stubBowelRepository: BowelRepository = {
     throw new Error("not implemented in this test's fakes");
   },
   set: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  setMany: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  listRange: () => {
     throw new Error("not implemented in this test's fakes");
   },
 };

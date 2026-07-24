@@ -53,6 +53,8 @@ const stubDailyTargetRepository: DailyTargetRepository = {
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
+  listRange: notImplemented,
 };
 const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
@@ -81,6 +83,8 @@ const stubBodyProfileRepository: BodyProfileRepository = {
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
   addIntake: notImplemented,
+  addIntakeMany: notImplemented,
+  listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,

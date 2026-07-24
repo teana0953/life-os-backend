@@ -23,11 +23,14 @@ export interface ImportChaodaysDietSummary {
 }
 
 const MEAL_NAME_BY_RECORD_TYPE: Record<ChaodaysDietRecord["recordType"], string> = {
-  breakfast: "早餐",
-  lunch: "午餐",
-  dinner: "晚餐",
+  breakfast: "breakfast",
+  lunch: "lunch",
+  dinner: "dinner",
   extra: "點心",
 };
+
+/** chaodays is a Taiwan app; `recorded_at` is wall-clock at this fixed offset. */
+const CHAODAYS_TZ_OFFSET = "+08:00";
 
 /** `"YYYY-MM-DD HH:mm"` -> `"HH:mm"`. */
 function timeOfDay(recordedAt: string): string {
@@ -147,7 +150,7 @@ export async function importChaodaysDiet(
 
       if (mealItems.length === 0) continue;
 
-      const parsedTime = new Date(mealRecords[0].recordedAt.replace(" ", "T"));
+      const parsedTime = new Date(`${mealRecords[0].recordedAt.replace(" ", "T")}:00${CHAODAYS_TZ_OFFSET}`);
       // Fall back to the day's start if chaodays sent a malformed timestamp, so a
       // bad `recorded_at` can't produce an Invalid Date the DB would reject.
       const time = Number.isNaN(parsedTime.getTime()) ? new Date(`${day}T00:00:00`) : parsedTime;

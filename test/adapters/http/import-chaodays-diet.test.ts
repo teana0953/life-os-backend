@@ -50,6 +50,8 @@ const stubDailyTargetRepository: DailyTargetRepository = {
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
   addIntake: notImplemented,
+  addIntakeMany: notImplemented,
+  listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
   setTarget: notImplemented,
@@ -57,6 +59,8 @@ const stubWaterRepository: WaterRepository = {
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
+  listRange: notImplemented,
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: notImplemented,
@@ -379,7 +383,7 @@ describe("POST /api/import/chaodays/diet", () => {
     expect(chaodaysClient.fetchArgs).toEqual({ from: "2026-07-01", to: "2026-07-02" });
     const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
     expect(meals).toHaveLength(1);
-    expect(meals[0].meal).toBe("午餐");
+    expect(meals[0].meal).toBe("lunch");
     expect(meals[0].items[0]).toMatchObject({ name: "白飯", staple: 2 });
   });
 
