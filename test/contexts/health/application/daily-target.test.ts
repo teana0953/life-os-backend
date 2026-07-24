@@ -134,6 +134,10 @@ class InMemoryMealRepository implements MealRepository {
     throw new Error("not used in this test");
   }
 
+  async createMeals(): Promise<void> {
+    throw new Error("not used in this test");
+  }
+
   async listLoggedDays(_userId: string, _month: string): Promise<string[]> {
     return [];
   }

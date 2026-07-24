@@ -43,6 +43,9 @@ class FakeVitalsRepository implements VitalsRepository {
   async set(_input: SetVitalsInput): Promise<VitalsRecord> {
     throw new Error("not used");
   }
+  async setMany(): Promise<void> {
+    throw new Error("not used");
+  }
   async getLatestWeight(): Promise<number | null> {
     return this.latest;
   }

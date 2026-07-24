@@ -160,6 +160,10 @@ class InMemoryMealRepository implements MealRepository {
     throw new Error("not used in this test");
   }
 
+  async createMeals(): Promise<void> {
+    throw new Error("not used in this test");
+  }
+
   async listLoggedDays(userId: string, month: string): Promise<string[]> {
     const days = new Set(this.meals.filter((m) => m.userId === userId && m.day.startsWith(month)).map((m) => m.day));
     return [...days].sort();
@@ -298,6 +302,9 @@ const stubVitalsRepository: VitalsRepository = {
     throw new Error("not implemented in this test's fakes");
   },
   set: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  setMany: () => {
     throw new Error("not implemented in this test's fakes");
   },
   getLatestWeight: () => {

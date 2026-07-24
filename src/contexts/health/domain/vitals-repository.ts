@@ -14,6 +14,8 @@ export interface VitalsRepository {
   get(userId: string, day: string): Promise<VitalsRecord | null>;
   /** Upsert semantics, keyed by (userId, day). */
   set(input: SetVitalsInput): Promise<VitalsRecord>;
+  /** Upsert semantics, keyed by (userId, day), for all `rows` in one batched write. Empty input is a no-op. */
+  setMany(rows: SetVitalsInput[]): Promise<void>;
   /** The most recent recorded (non-null) weight for the user, or null when none. */
   getLatestWeight(userId: string): Promise<number | null>;
   /** The earliest recorded (non-null) weight for the user, or null when none. */

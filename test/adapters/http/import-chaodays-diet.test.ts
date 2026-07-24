@@ -12,6 +12,8 @@ import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../src/contexts/
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealEntry, MealItem, MealSummary } from "../../../src/contexts/health/domain/meal-entry";
 import type {
+  CreateMealEntryInput,
+  CreateMealItemForEntryInput,
   CreateMealItemInput,
   MealRepository,
   UpdateMealItemPatch,
@@ -161,12 +163,19 @@ class InMemoryMealRepository implements MealRepository {
     return { id: `item-${this.nextItemId++}`, mealEntryId, createdAt: new Date(), ...item };
   }
 
+  async createMeals(entries: CreateMealEntryInput[], items: CreateMealItemForEntryInput[]): Promise<void> {
+    for (const entry of entries) {
+      const entryItems = items.filter((item) => item.mealEntryId === entry.id).map((item) => this.toStoredItem(entry.id, item));
+      this.meals.push({ id: entry.id, userId: entry.userId, day: entry.day, meal: entry.meal, time: entry.time, createdAt: new Date(), items: entryItems });
+    }
+  }
+
   async listMealsByDay(userId: string, day: string): Promise<MealEntry[]> {
     return this.meals.filter((m) => m.userId === userId && m.day === day);
   }
 
-  async listMealsInRange(): Promise<MealEntry[]> {
-    throw new Error("not used in this test");
+  async listMealsInRange(userId: string, from: string, to: string): Promise<MealEntry[]> {
+    return this.meals.filter((m) => m.userId === userId && m.day >= from && m.day <= to);
   }
 
   async listLoggedDays(): Promise<string[]> {
@@ -211,6 +220,12 @@ class InMemoryVitalsRepository implements VitalsRepository {
     return record;
   }
 
+  async setMany(rows: SetVitalsInput[]): Promise<void> {
+    for (const row of rows) {
+      await this.set(row);
+    }
+  }
+
   async getLatestWeight(): Promise<number | null> {
     throw new Error("not used in this test");
   }
@@ -223,8 +238,8 @@ class InMemoryVitalsRepository implements VitalsRepository {
     throw new Error("not used in this test");
   }
 
-  async listRange(): Promise<VitalsRecord[]> {
-    throw new Error("not used in this test");
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 }
 
