@@ -156,4 +156,21 @@ describe("WebPushSender", () => {
 
     expect(result).toBe("failed");
   });
+
+  it("missing VAPID subject → failed (never sends a push a service would reject)", async () => {
+    // A deploy that sets the keys but forgets VAPID_SUBJECT would otherwise send a
+    // JWT with an empty `sub`, which FCM/Apple reject — a silent on-device failure.
+    // Surface it as `failed` instead so the misconfiguration is visible.
+    const calls: FetchCall[] = [];
+    const sender = new WebPushSender({
+      publicKey: vapidPublicKey,
+      privateKey: vapidPrivateKey,
+      fetchImpl: fakeFetch(new Response(null, { status: 201 }), calls),
+    });
+
+    const result = await sender.send(subscription, { title: "Test", body: "Body" });
+
+    expect(result).toBe("failed");
+    expect(calls).toHaveLength(0);
+  });
 });

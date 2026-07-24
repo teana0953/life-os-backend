@@ -71,8 +71,8 @@ async function deriveEcdhSharedSecret(privateKey: CryptoKey, publicKey: CryptoKe
  * it runs in the Workers runtime (`workerd`) — no Node `crypto`.
  *
  * Never logs the subscription or its keys, and never throws: any failure
- * (missing VAPID keys, a malformed subscription, or a network/HTTP error)
- * surfaces as `PushSendResult = "failed"`.
+ * (missing VAPID config — keys or subject — a malformed subscription, or a
+ * network/HTTP error) surfaces as `PushSendResult = "failed"`.
  */
 export class WebPushSender implements PushSender {
   private readonly publicKey?: string;
@@ -88,11 +88,14 @@ export class WebPushSender implements PushSender {
   }
 
   async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {
-    if (!this.publicKey || !this.privateKey) return "failed";
+    // A missing `subject` is treated like missing keys: without it the VAPID JWT
+    // would carry an empty `sub`, which push services (FCM/Apple) reject — better a
+    // visible `failed` than a push silently dropped on-device.
+    if (!this.publicKey || !this.privateKey || !this.subject) return "failed";
 
     try {
       const [authorization, body] = await Promise.all([
-        this.buildVapidAuthorization(subscription.endpoint, this.publicKey, this.privateKey, this.subject ?? ""),
+        this.buildVapidAuthorization(subscription.endpoint, this.publicKey, this.privateKey, this.subject),
         this.encryptPayload(subscription, JSON.stringify(message)),
       ]);
 

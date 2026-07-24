@@ -1,8 +1,8 @@
 import type { PushSender } from "../domain/push-sender";
 import type { PushSubscriptionRepository } from "../domain/push-subscription";
 
-/** A fixed, generic test message — no personal data (D per design "Privacy / security"). */
-const TEST_MESSAGE = { title: "LifeOS 測試通知", body: "這是一則測試推播，確認裝置能正常接收通知。" };
+/** A fixed, generic test message — no personal data (per design "Privacy / security"). */
+export const TEST_MESSAGE = { title: "LifeOS 測試通知", body: "這是一則測試推播，確認裝置能正常接收通知。" };
 
 export interface SendTestPushResult {
   sent: number;

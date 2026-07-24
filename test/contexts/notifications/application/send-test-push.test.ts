@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { sendTestPush } from "../../../../src/contexts/notifications/application/send-test-push";
+import { sendTestPush, TEST_MESSAGE } from "../../../../src/contexts/notifications/application/send-test-push";
 import { subscribeWebPush } from "../../../../src/contexts/notifications/application/subscribe-web-push";
 import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
 import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
@@ -26,9 +26,11 @@ class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
 class ScriptedPushSender implements PushSender {
   resultByEndpoint = new Map<string, PushSendResult>();
   sentTo: string[] = [];
+  messages: PushMessage[] = [];
 
-  async send(subscription: PushSubscription, _message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {
     this.sentTo.push(subscription.endpoint);
+    this.messages.push(message);
     return this.resultByEndpoint.get(subscription.endpoint) ?? "sent";
   }
 }
@@ -70,6 +72,17 @@ describe("sendTestPush", () => {
 
     expect(result).toEqual({ sent: 0, failed: 1 });
     expect(await repo.listByUser("user-1")).toHaveLength(1);
+  });
+
+  it("sends the fixed generic test message (no personal data)", async () => {
+    await subscribeWebPush(repo, { userId: "user-1", endpoint: "https://push.example.com/a", p256dh: "k", auth: "a" });
+    await subscribeWebPush(repo, { userId: "user-1", endpoint: "https://push.example.com/b", p256dh: "k", auth: "a" });
+
+    await sendTestPush(repo, sender, "user-1");
+
+    // Every push carries exactly the fixed constant — guards against a future
+    // change interpolating any user data into the payload.
+    expect(sender.messages).toEqual([TEST_MESSAGE, TEST_MESSAGE]);
   });
 
   it("returns zero counts when the user has no subscriptions", async () => {
