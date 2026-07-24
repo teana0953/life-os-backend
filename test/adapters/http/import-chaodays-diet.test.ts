@@ -318,13 +318,19 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
-    reminderScheduleRepository: {
+    careItemRepository: {
       create: notImplemented,
       listByUser: notImplemented,
       get: notImplemented,
+      getByScheduleId: notImplemented,
       update: notImplemented,
       delete: notImplemented,
-      listActiveAll: notImplemented,
+      listActiveSchedules: notImplemented,
+      decrementStock: notImplemented,
+    },
+    careLogRepository: {
+      upsertIfAbsent: notImplemented,
+      getBySlot: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},

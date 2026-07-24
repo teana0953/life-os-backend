@@ -15,7 +15,8 @@ import type { VitalsRepository } from "../../contexts/health/domain/vitals-repos
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
-import type { ReminderScheduleRepository } from "../../contexts/notifications/domain/reminder-schedule";
+import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
+import type { CareLogRepository } from "../../contexts/notifications/domain/care-log";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
@@ -73,11 +74,12 @@ import {
   createUnsubscribeWebPushHandler,
 } from "./routes/push";
 import {
-  createCreateMedicationReminderHandler,
-  createDeleteMedicationReminderHandler,
-  createListMedicationRemindersHandler,
-  createUpdateMedicationReminderHandler,
-} from "./routes/reminders";
+  createAnswerCareSlotHandler,
+  createCreateCareItemHandler,
+  createDeleteCareItemHandler,
+  createListCareItemsHandler,
+  createUpdateCareItemHandler,
+} from "./routes/care";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -114,7 +116,8 @@ export interface CreateAppOptions {
   pushSender: PushSender;
   /** Configured VAPID public key, or "" when unset (D6 in design.md). */
   vapidPublicKey: string;
-  reminderScheduleRepository: ReminderScheduleRepository;
+  careItemRepository: CareItemRepository;
+  careLogRepository: CareLogRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -282,14 +285,16 @@ export function createApp(options: CreateAppOptions) {
 
   app.put("/api/user/timezone", authMiddleware, createSetUserTimezoneHandler({ userRepository: options.userRepository }));
 
-  const reminderOptions = {
+  const careOptions = {
     userRepository: options.userRepository,
-    reminderScheduleRepository: options.reminderScheduleRepository,
+    careItemRepository: options.careItemRepository,
+    careLogRepository: options.careLogRepository,
   };
-  app.post("/api/reminders/medication", authMiddleware, createCreateMedicationReminderHandler(reminderOptions));
-  app.get("/api/reminders/medication", authMiddleware, createListMedicationRemindersHandler(reminderOptions));
-  app.patch("/api/reminders/medication/:id", authMiddleware, createUpdateMedicationReminderHandler(reminderOptions));
-  app.delete("/api/reminders/medication/:id", authMiddleware, createDeleteMedicationReminderHandler(reminderOptions));
+  app.post("/api/care/items", authMiddleware, createCreateCareItemHandler(careOptions));
+  app.get("/api/care/items", authMiddleware, createListCareItemsHandler(careOptions));
+  app.patch("/api/care/items/:id", authMiddleware, createUpdateCareItemHandler(careOptions));
+  app.delete("/api/care/items/:id", authMiddleware, createDeleteCareItemHandler(careOptions));
+  app.post("/api/care/log", authMiddleware, createAnswerCareSlotHandler(careOptions));
 
   return app;
 }

@@ -11,10 +11,11 @@ import { DrizzleMealRepository } from "./contexts/health/adapters/drizzle-meal-r
 import { DrizzleMenstrualRepository } from "./contexts/health/adapters/drizzle-menstrual-repository";
 import { DrizzleVitalsRepository } from "./contexts/health/adapters/drizzle-vitals-repository";
 import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
-import { runReminderTick } from "./contexts/notifications/application/run-reminder-tick";
+import { runCareTick } from "./contexts/notifications/application/run-care-tick";
 import { DrizzlePushSubscriptionRepository } from "./contexts/notifications/adapters/drizzle-push-subscription-repository";
-import { DrizzleReminderOccurrenceRepository } from "./contexts/notifications/adapters/drizzle-reminder-occurrence-repository";
-import { DrizzleReminderScheduleRepository } from "./contexts/notifications/adapters/drizzle-reminder-schedule-repository";
+import { DrizzleCareItemRepository } from "./contexts/notifications/adapters/drizzle-care-item-repository";
+import { DrizzleCareLogRepository } from "./contexts/notifications/adapters/drizzle-care-log-repository";
+import { DrizzleCareOccurrenceRepository } from "./contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import { WebPushSender } from "./contexts/notifications/adapters/web-push-sender";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
@@ -70,8 +71,9 @@ function buildDeps(env: Env) {
     bodyProfileRepository: new DrizzleBodyProfileRepository(getDb),
     healthCalendarRepository: new DrizzleHealthCalendarRepository(getDb),
     pushSubscriptionRepository: new DrizzlePushSubscriptionRepository(getDb),
-    reminderScheduleRepository: new DrizzleReminderScheduleRepository(getDb),
-    reminderOccurrenceRepository: new DrizzleReminderOccurrenceRepository(getDb),
+    careItemRepository: new DrizzleCareItemRepository(getDb),
+    careLogRepository: new DrizzleCareLogRepository(getDb),
+    careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -98,7 +100,8 @@ export default {
       chaodaysClient: deps.chaodaysClient,
       pushSubscriptionRepository: deps.pushSubscriptionRepository,
       pushSender: deps.pushSender,
-      reminderScheduleRepository: deps.reminderScheduleRepository,
+      careItemRepository: deps.careItemRepository,
+      careLogRepository: deps.careLogRepository,
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
@@ -112,9 +115,10 @@ export default {
   scheduled(_event, env, ctx) {
     const deps = buildDeps(env);
     ctx.waitUntil(
-      runReminderTick(new Date(), {
-        scheduleRepo: deps.reminderScheduleRepository,
-        occurrenceRepo: deps.reminderOccurrenceRepository,
+      runCareTick(new Date(), {
+        careItemRepo: deps.careItemRepository,
+        careLogRepo: deps.careLogRepository,
+        careOccurrenceRepo: deps.careOccurrenceRepository,
         subscriptionRepo: deps.pushSubscriptionRepository,
         pushSender: deps.pushSender,
       }),

@@ -201,13 +201,19 @@ function buildApp(vapidPublicKey = "test-vapid-public-key") {
     chaodaysClient: stubChaodaysClient,
     pushSubscriptionRepository,
     pushSender,
-    reminderScheduleRepository: {
+    careItemRepository: {
       create: notImplemented,
       listByUser: notImplemented,
       get: notImplemented,
+      getByScheduleId: notImplemented,
       update: notImplemented,
       delete: notImplemented,
-      listActiveAll: notImplemented,
+      listActiveSchedules: notImplemented,
+      decrementStock: notImplemented,
+    },
+    careLogRepository: {
+      upsertIfAbsent: notImplemented,
+      getBySlot: notImplemented,
     },
     vapidPublicKey,
     ping: async () => {},

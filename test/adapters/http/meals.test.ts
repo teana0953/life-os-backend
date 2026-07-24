@@ -423,7 +423,7 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
-    reminderScheduleRepository: {
+    careItemRepository: {
       create: async () => {
         throw new Error("not implemented in this test's fakes");
       },
@@ -433,13 +433,27 @@ function buildApp() {
       get: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+      getByScheduleId: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
       update: async () => {
         throw new Error("not implemented in this test's fakes");
       },
       delete: async () => {
         throw new Error("not implemented in this test's fakes");
       },
-      listActiveAll: async () => {
+      listActiveSchedules: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      decrementStock: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    careLogRepository: {
+      upsertIfAbsent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      getBySlot: async () => {
         throw new Error("not implemented in this test's fakes");
       },
     },

@@ -87,6 +87,15 @@ export function requireDay(value: unknown, field = "day"): string {
   throw new BadRequestError(`${field} must be a valid date (YYYY-MM-DD)`);
 }
 
+const HH_MM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+/** A local time `HH:mm`; throws otherwise. */
+export function requireHHMM(value: unknown, field: string): string {
+  const s = requireString(value, field);
+  if (!HH_MM.test(s)) throw new BadRequestError(`${field} must be HH:mm`);
+  return s;
+}
+
 /** A non-empty string that parses as an `https://` URL; throws otherwise. */
 export function requireHttpsUrl(value: unknown, field: string): string {
   const s = requireString(value, field);
