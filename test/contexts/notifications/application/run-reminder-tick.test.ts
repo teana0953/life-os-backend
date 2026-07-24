@@ -171,6 +171,37 @@ describe("runReminderTick", () => {
     expect(pushSender.sentTo).toEqual(["https://push.example.com/a"]);
   });
 
+  it("isolates a failing occurrence so the rest of the tick still dispatches", async () => {
+    scheduleRepo.add(
+      { id: "sched-1", userId: "user-1", times: ["09:00"], daysOfWeek: [5], anchorDate: "2026-07-01" },
+      "Asia/Taipei",
+    );
+    scheduleRepo.add(
+      { id: "sched-2", userId: "user-2", times: ["09:00"], daysOfWeek: [5], anchorDate: "2026-07-01" },
+      "Asia/Taipei",
+    );
+    await subscriptionRepo.upsert({ userId: "user-2", endpoint: "https://push.example.com/b", p256dh: "k", auth: "a" });
+
+    // A DB error while dispatching user-1's occurrence must not abort the tick.
+    const throwingSubs: PushSubscriptionRepository = {
+      upsert: subscriptionRepo.upsert.bind(subscriptionRepo),
+      deleteByEndpoint: subscriptionRepo.deleteByEndpoint.bind(subscriptionRepo),
+      listByUser: async (userId: string) => {
+        if (userId === "user-1") throw new Error("db down");
+        return subscriptionRepo.listByUser(userId);
+      },
+    };
+
+    await runReminderTick(FRIDAY_0900_TAIPEI, { scheduleRepo, occurrenceRepo, subscriptionRepo: throwingSubs, pushSender });
+
+    // The tick did not throw; user-2 still received their reminder; user-1's
+    // occurrence is marked terminal (failed), not left pending to re-send.
+    expect(pushSender.sentTo).toEqual(["https://push.example.com/b"]);
+    const byUser = Object.fromEntries(occurrenceRepo.all().map((o) => [o.userId, o.status]));
+    expect(byUser["user-2"]).toBe("sent");
+    expect(byUser["user-1"]).toBe("failed");
+  });
+
   it("does not double-send when the tick runs twice for the same schedule/day/time", async () => {
     scheduleRepo.add(
       { id: "sched-1", userId: "user-1", times: ["09:00"], daysOfWeek: [5], anchorDate: "2026-07-01" },

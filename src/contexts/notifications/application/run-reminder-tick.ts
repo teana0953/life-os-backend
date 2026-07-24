@@ -63,20 +63,34 @@ export async function runReminderTick(now: Date, deps: RunReminderTickDeps): Pro
 
   const duePending = await deps.occurrenceRepo.listDuePending(now);
   for (const occurrence of duePending) {
-    const subscriptions = await deps.subscriptionRepo.listByUser(occurrence.userId);
-    if (subscriptions.length === 0) {
-      await deps.occurrenceRepo.markSkipped(occurrence.id);
-      continue;
-    }
+    // Isolate each occurrence: one occurrence's failure (e.g. a DB error mid-
+    // dispatch) must NOT abort the tick — the rest of this minute's reminders
+    // across all users still need to fire.
+    try {
+      const subscriptions = await deps.subscriptionRepo.listByUser(occurrence.userId);
+      if (subscriptions.length === 0) {
+        await deps.occurrenceRepo.markSkipped(occurrence.id);
+        continue;
+      }
 
-    let anySent = false;
-    for (const subscription of subscriptions) {
-      const result = await deps.pushSender.send(subscription, { title: occurrence.title, body: occurrence.body });
-      if (result.outcome === "sent") anySent = true;
-      if (result.outcome === "expired") {
-        await deps.subscriptionRepo.deleteByEndpoint(occurrence.userId, subscription.endpoint);
+      let anySent = false;
+      for (const subscription of subscriptions) {
+        const result = await deps.pushSender.send(subscription, { title: occurrence.title, body: occurrence.body });
+        if (result.outcome === "sent") anySent = true;
+        if (result.outcome === "expired") {
+          await deps.subscriptionRepo.deleteByEndpoint(occurrence.userId, subscription.endpoint);
+        }
+      }
+      await (anySent ? deps.occurrenceRepo.markSent(occurrence.id) : deps.occurrenceRepo.markFailed(occurrence.id));
+    } catch {
+      // Best-effort mark it terminal so it doesn't re-send on the next tick; if
+      // even that throws, leave it pending (a bounded, rare re-send) rather than
+      // letting one bad row block everyone else's reminders.
+      try {
+        await deps.occurrenceRepo.markFailed(occurrence.id);
+      } catch {
+        // nothing more we can safely do
       }
     }
-    await (anySent ? deps.occurrenceRepo.markSent(occurrence.id) : deps.occurrenceRepo.markFailed(occurrence.id));
   }
 }
