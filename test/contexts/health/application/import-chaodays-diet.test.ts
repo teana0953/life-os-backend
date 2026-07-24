@@ -8,6 +8,8 @@ import type {
 } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { MealEntry, MealItem, MealSummary } from "../../../../src/contexts/health/domain/meal-entry";
 import type {
+  CreateMealEntryInput,
+  CreateMealItemForEntryInput,
   CreateMealItemInput,
   MealRepository,
   UpdateMealItemPatch,
@@ -22,6 +24,7 @@ class InMemoryMealRepository implements MealRepository {
   meals: StoredMeal[] = [];
   private nextMealId = 1;
   private nextItemId = 1;
+  createMealsCallCount = 0;
 
   /** Test helper: seed a pre-existing meal (with no items) for a user/day/meal. */
   seed(userId: string, day: string, meal: string) {
@@ -56,6 +59,14 @@ class InMemoryMealRepository implements MealRepository {
     return meal;
   }
 
+  async createMeals(entries: CreateMealEntryInput[], items: CreateMealItemForEntryInput[]): Promise<void> {
+    this.createMealsCallCount++;
+    for (const entry of entries) {
+      const entryItems = items.filter((item) => item.mealEntryId === entry.id).map((item) => this.toStoredItem(entry.id, item));
+      this.meals.push({ id: entry.id, userId: entry.userId, day: entry.day, meal: entry.meal, time: entry.time, createdAt: new Date(), items: entryItems });
+    }
+  }
+
   private toStoredItem(mealEntryId: string, item: CreateMealItemInput): MealItem {
     return { id: `item-${this.nextItemId++}`, mealEntryId, createdAt: new Date(), ...item };
   }
@@ -64,8 +75,8 @@ class InMemoryMealRepository implements MealRepository {
     return this.meals.filter((m) => m.userId === userId && m.day === day);
   }
 
-  async listMealsInRange(): Promise<MealEntry[]> {
-    throw new Error("not used in this test");
+  async listMealsInRange(userId: string, from: string, to: string): Promise<MealEntry[]> {
+    return this.meals.filter((m) => m.userId === userId && m.day >= from && m.day <= to);
   }
 
   async listLoggedDays(): Promise<string[]> {
@@ -91,6 +102,7 @@ class InMemoryMealRepository implements MealRepository {
 
 class InMemoryVitalsRepository implements VitalsRepository {
   private byUserDay = new Map<string, VitalsRecord>();
+  setManyCallCount = 0;
 
   seed(record: VitalsRecord) {
     this.byUserDay.set(`${record.userId}:${record.day}`, record);
@@ -114,6 +126,13 @@ class InMemoryVitalsRepository implements VitalsRepository {
     return record;
   }
 
+  async setMany(rows: SetVitalsInput[]): Promise<void> {
+    this.setManyCallCount++;
+    for (const row of rows) {
+      await this.set(row);
+    }
+  }
+
   async getLatestWeight(): Promise<number | null> {
     throw new Error("not used in this test");
   }
@@ -126,8 +145,8 @@ class InMemoryVitalsRepository implements VitalsRepository {
     throw new Error("not used in this test");
   }
 
-  async listRange(): Promise<VitalsRecord[]> {
-    throw new Error("not used in this test");
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 }
 
@@ -375,6 +394,50 @@ describe("importChaodaysDiet", () => {
     expect(vitals?.bodyFatPct).toBe(20);
     expect(vitals?.bpReadings).toEqual([{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }]);
     expect(vitals?.spo2Readings).toEqual([{ spo2: 98, pulse: 71, time: "08:30" }]);
+  });
+
+  it("persists a multi-day range via one createMeals call and one setMany call, not per-day", async () => {
+    chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "breakfast",
+        recordedAt: "2026-07-01 07:30",
+        items: [{ name: "白粥\n前血糖：93", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2026-07-02",
+        recordType: "lunch",
+        recordedAt: "2026-07-02 12:30",
+        items: [{ name: "白飯\n前血糖：98", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2026-07-03",
+        recordType: "dinner",
+        recordedAt: "2026-07-03 18:30",
+        items: [{ name: "麵\n前血糖：101", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
+    const input = { ...BASE_INPUT, from: "2026-07-01", to: "2026-07-03" };
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, input);
+
+    expect(summary).toEqual({ mealsImported: 3, mealsSkipped: 0, glucoseImported: 3, from: "2026-07-01", to: "2026-07-03" });
+    // Regardless of the number of days/meals, persistence is one batched call each.
+    expect(mealRepository.createMealsCallCount).toBe(1);
+    expect(vitalsRepository.setManyCallCount).toBe(1);
+    expect(await mealRepository.listMealsByDay("user-1", "2026-07-01")).toHaveLength(1);
+    expect(await mealRepository.listMealsByDay("user-1", "2026-07-02")).toHaveLength(1);
+    expect(await mealRepository.listMealsByDay("user-1", "2026-07-03")).toHaveLength(1);
+  });
+
+  it("performs zero writes (no createMeals/setMany calls) for an empty range", async () => {
+    chaodaysClient.records = [];
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
+
+    expect(summary).toEqual({ mealsImported: 0, mealsSkipped: 0, glucoseImported: 0, from: "2026-07-01", to: "2026-07-01" });
+    expect(mealRepository.createMealsCallCount).toBe(0);
+    expect(vitalsRepository.setManyCallCount).toBe(0);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

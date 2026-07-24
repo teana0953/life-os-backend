@@ -94,6 +94,7 @@ class FakeMealRepository implements MealRepository {
   }
   // Unused by the calendar use case.
   upsertMealWithItems(): never { throw new Error("not used"); }
+  createMeals(): never { throw new Error("not used"); }
   listLoggedDays(): never { throw new Error("not used"); }
   updateMealTime(): never { throw new Error("not used"); }
   deleteMeal(): never { throw new Error("not used"); }

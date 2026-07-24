@@ -1,9 +1,9 @@
 import { parseGlucoseReadings, stripGlucoseText } from "../domain/chaodays-diet-parse";
 import type { ChaodaysClient, ChaodaysDietRecord } from "../domain/chaodays-client";
 import { portionsToNutrients } from "../domain/conversion";
-import type { CreateMealItemInput, MealRepository } from "../domain/meal-repository";
-import type { GlucoseReading } from "../domain/vitals";
-import type { VitalsRepository } from "../domain/vitals-repository";
+import type { CreateMealEntryInput, CreateMealItemForEntryInput, CreateMealItemInput, MealRepository } from "../domain/meal-repository";
+import type { GlucoseReading, VitalsRecord } from "../domain/vitals";
+import type { SetVitalsInput, VitalsRepository } from "../domain/vitals-repository";
 
 export interface ImportChaodaysDietInput {
   userId: string;
@@ -43,12 +43,18 @@ function glucoseKey(reading: GlucoseReading): string {
  * Use case: sign in to chaodays, pull diet records for `[from, to]`, and:
  * - import each day+meal-type's food items (portion > 0 only) into meals,
  *   skipping (once) any meal type that already existed before this import
- *   (judged from a snapshot taken before writing anything that day) — so
- *   multiple same-type chaodays records on a day merge into one meal;
+ *   (judged from a snapshot taken before writing anything) — so multiple
+ *   same-type chaodays records on a day merge into one meal;
  * - extract blood-glucose free text out of every item's name (regardless of
- *   whether its meal is skipped) and read-modify-write it into that day's
- *   vitals, de-duplicated against existing readings and preserving the
- *   day's other vitals fields.
+ *   whether its meal is skipped) and merge it into that day's vitals,
+ *   de-duplicated against existing readings and preserving the day's other
+ *   vitals fields.
+ *
+ * To keep the number of DB round-trips independent of the date range (Neon
+ * HTTP issues one subrequest per statement, and Workers cap subrequests per
+ * invocation), existing meals/vitals for the whole range are read once each,
+ * everything is computed in memory, and all writes are persisted via one
+ * batched `createMeals` call and one batched `setMany` call.
  */
 export async function importChaodaysDiet(
   mealRepository: MealRepository,
@@ -66,12 +72,31 @@ export async function importChaodaysDiet(
     recordsByDay.set(record.date, list);
   }
 
+  // Reads for the whole range happen once each, before any writes.
+  const existingMeals = await mealRepository.listMealsInRange(input.userId, input.from, input.to);
+  const preexistingMealsByDay = new Map<string, Set<string>>();
+  for (const meal of existingMeals) {
+    const set = preexistingMealsByDay.get(meal.day) ?? new Set<string>();
+    set.add(meal.meal);
+    preexistingMealsByDay.set(meal.day, set);
+  }
+
+  const existingVitalsRecords = await vitalsRepository.listRange(input.userId, input.from, input.to);
+  const existingVitalsByDay = new Map<string, VitalsRecord>();
+  for (const record of existingVitalsRecords) {
+    existingVitalsByDay.set(record.day, record);
+  }
+
   let mealsImported = 0;
   let mealsSkipped = 0;
   let glucoseImported = 0;
 
+  const entries: CreateMealEntryInput[] = [];
+  const items: CreateMealItemForEntryInput[] = [];
+  const vitalsRows: SetVitalsInput[] = [];
+
   for (const [day, dayRecords] of recordsByDay) {
-    const preexistingMeals = new Set((await mealRepository.listMealsByDay(input.userId, day)).map((m) => m.meal));
+    const preexistingMeals = preexistingMealsByDay.get(day) ?? new Set<string>();
 
     const recordsByMeal = new Map<string, ChaodaysDietRecord[]>();
     for (const record of dayRecords) {
@@ -99,13 +124,13 @@ export async function importChaodaysDiet(
         continue;
       }
 
-      const items: CreateMealItemInput[] = [];
+      const mealItems: CreateMealItemInput[] = [];
       for (const record of mealRecords) {
         for (const item of record.items) {
           if (item.staple <= 0 && item.meat <= 0 && item.fruit <= 0 && item.veg <= 0) continue;
           const portions = { staple: item.staple, meat: item.meat, fruit: item.fruit, veg: item.veg };
           const name = stripGlucoseText(item.name);
-          items.push({
+          mealItems.push({
             foodItemId: null,
             name: name === "" ? null : name,
             photoRef: null,
@@ -120,17 +145,22 @@ export async function importChaodaysDiet(
         }
       }
 
-      if (items.length === 0) continue;
+      if (mealItems.length === 0) continue;
 
       const parsedTime = new Date(mealRecords[0].recordedAt.replace(" ", "T"));
       // Fall back to the day's start if chaodays sent a malformed timestamp, so a
       // bad `recorded_at` can't produce an Invalid Date the DB would reject.
       const time = Number.isNaN(parsedTime.getTime()) ? new Date(`${day}T00:00:00`) : parsedTime;
-      await mealRepository.upsertMealWithItems({ userId: input.userId, day, meal, time, items });
+
+      const mealEntryId = crypto.randomUUID();
+      entries.push({ id: mealEntryId, userId: input.userId, day, meal, time });
+      for (const item of mealItems) {
+        items.push({ ...item, mealEntryId });
+      }
       mealsImported++;
     }
 
-    const existingVitals = await vitalsRepository.get(input.userId, day);
+    const existingVitals = existingVitalsByDay.get(day) ?? null;
     const existingGlucose = existingVitals?.glucoseReadings ?? [];
     const existingKeys = new Set(existingGlucose.map(glucoseKey));
     const glucoseToAppend: GlucoseReading[] = [];
@@ -142,7 +172,7 @@ export async function importChaodaysDiet(
     }
 
     if (glucoseToAppend.length > 0) {
-      await vitalsRepository.set({
+      vitalsRows.push({
         userId: input.userId,
         day,
         weightKg: existingVitals?.weightKg ?? null,
@@ -154,6 +184,9 @@ export async function importChaodaysDiet(
       glucoseImported += glucoseToAppend.length;
     }
   }
+
+  if (entries.length > 0) await mealRepository.createMeals(entries, items);
+  if (vitalsRows.length > 0) await vitalsRepository.setMany(vitalsRows);
 
   return { mealsImported, mealsSkipped, glucoseImported, from: input.from, to: input.to };
 }

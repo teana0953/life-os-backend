@@ -31,6 +31,20 @@ export interface UpsertMealWithItemsInput {
   items: CreateMealItemInput[];
 }
 
+/** A meal_entry row for `createMeals`; `id` is caller-supplied (e.g. `crypto.randomUUID()`) so items can reference it without a round-trip. */
+export interface CreateMealEntryInput {
+  id: string;
+  userId: string;
+  day: string;
+  meal: string;
+  time: Date;
+}
+
+/** A meal_item row for `createMeals`, tagged with the `CreateMealEntryInput.id` it belongs to. */
+export interface CreateMealItemForEntryInput extends CreateMealItemInput {
+  mealEntryId: string;
+}
+
 /**
  * Partial update for a meal item (Model Y, D3): `quantity` and `measure` are
  * mutually exclusive ways to set the `quantity` column only (measure is
@@ -49,6 +63,8 @@ export interface UpdateMealItemPatch {
 export interface MealRepository {
   /** Creates the meal for (userId, day, meal) if absent (with `time` when given), or reuses it, then appends `items`. */
   upsertMealWithItems(input: UpsertMealWithItemsInput): Promise<MealEntry>;
+  /** Creates all `entries` (with caller-supplied ids) and their `items` in one batched write. Empty `entries` is a no-op. */
+  createMeals(entries: CreateMealEntryInput[], items: CreateMealItemForEntryInput[]): Promise<void>;
   /** All of the user's meals on `day`, each with its items. */
   listMealsByDay(userId: string, day: string): Promise<MealEntry[]>;
   /** All of the user's meals with `day` in `[from, to]`, each with its items. */

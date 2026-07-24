@@ -30,6 +30,7 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
 };
 const stubMealRepository: MealRepository = {
   upsertMealWithItems: notImplemented,
+  createMeals: notImplemented,
   listMealsByDay: notImplemented,
   listMealsInRange: notImplemented,
   listLoggedDays: notImplemented,
@@ -142,6 +143,10 @@ class InMemoryVitalsRepository implements VitalsRepository {
     };
     this.byUserDay.set(`${input.userId}:${input.day}`, record);
     return record;
+  }
+
+  async setMany(): Promise<void> {
+    throw new Error("not used in this test");
   }
 
   async getLatestWeight(): Promise<number | null> {

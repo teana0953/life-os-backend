@@ -3,7 +3,14 @@ import type { Db } from "../../../shared/db/client";
 import { mealEntry, mealItem } from "../../../shared/db/schema";
 import { portionsToNutrients } from "../domain/conversion";
 import type { MealEntry, MealItem, MealSummary } from "../domain/meal-entry";
-import type { CreateMealItemInput, MealRepository, UpdateMealItemPatch, UpsertMealWithItemsInput } from "../domain/meal-repository";
+import type {
+  CreateMealEntryInput,
+  CreateMealItemForEntryInput,
+  CreateMealItemInput,
+  MealRepository,
+  UpdateMealItemPatch,
+  UpsertMealWithItemsInput,
+} from "../domain/meal-repository";
 import { measureToQuantity } from "../domain/quantity";
 
 type MealEntryRow = typeof mealEntry.$inferSelect;
@@ -91,6 +98,21 @@ export class DrizzleMealRepository implements MealRepository {
 
     const items = await db.select().from(mealItem).where(eq(mealItem.mealEntryId, mealRow.id));
     return { ...toMealSummary(mealRow), items: items.map(toMealItem) };
+  }
+
+  async createMeals(entries: CreateMealEntryInput[], items: CreateMealItemForEntryInput[]): Promise<void> {
+    if (entries.length === 0) return;
+    const db = this.getDb();
+    const entryRows = entries.map((entry) => ({ id: entry.id, userId: entry.userId, day: entry.day, meal: entry.meal, time: entry.time }));
+    const entryInsert = db.insert(mealEntry).values(entryRows);
+    // Only batch the meal_item insert when there are items — neon-http rejects an
+    // empty VALUES tuple (defensive: today's caller always pairs entries with items).
+    if (items.length === 0) {
+      await db.batch([entryInsert]);
+      return;
+    }
+    const itemInsert = db.insert(mealItem).values(items.map((item) => itemToRow(item.mealEntryId, item)));
+    await db.batch([entryInsert, itemInsert]);
   }
 
   async listMealsByDay(userId: string, day: string): Promise<MealEntry[]> {

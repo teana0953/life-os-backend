@@ -58,6 +58,24 @@ export class DrizzleVitalsRepository implements VitalsRepository {
     return toDomain(row);
   }
 
+  async setMany(rows: SetVitalsInput[]): Promise<void> {
+    if (rows.length === 0) return;
+    const db = this.getDb();
+    const [first, ...rest] = rows.map((input) => {
+      const values = {
+        userId: input.userId,
+        day: input.day,
+        weightKg: input.weightKg == null ? null : String(input.weightKg),
+        bodyFatPct: input.bodyFatPct == null ? null : String(input.bodyFatPct),
+        bpReadings: input.bpReadings,
+        glucoseReadings: input.glucoseReadings,
+        spo2Readings: input.spo2Readings,
+      };
+      return db.insert(vitals).values(values).onConflictDoUpdate({ target: [vitals.userId, vitals.day], set: values });
+    });
+    await db.batch([first, ...rest]);
+  }
+
   async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
     const db = this.getDb();
     const rows = await db

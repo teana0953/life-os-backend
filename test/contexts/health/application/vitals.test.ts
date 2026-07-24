@@ -25,6 +25,12 @@ class InMemoryVitalsRepository implements VitalsRepository {
     return record;
   }
 
+  async setMany(rows: SetVitalsInput[]): Promise<void> {
+    for (const row of rows) {
+      await this.set(row);
+    }
+  }
+
   async getLatestWeight(userId: string): Promise<number | null> {
     return this.weightAtExtreme(userId, "latest");
   }
