@@ -72,7 +72,10 @@ export class HttpChaodaysClient implements ChaodaysClient {
   private readonly relaySecret?: string;
 
   constructor(
-    private readonly fetchImpl: typeof fetch = fetch,
+    // Bind to `globalThis`: the Workers global `fetch` throws "Illegal invocation"
+    // if invoked with a non-global `this` (which `this.fetchImpl(...)` below would
+    // otherwise do). An injected fake fetch overrides this default and is unaffected.
+    private readonly fetchImpl: typeof fetch = fetch.bind(globalThis),
     { baseUrl, relaySecret }: { baseUrl?: string; relaySecret?: string } = {},
   ) {
     this.baseUrl = baseUrl ?? DIRECT_BASE_URL;
