@@ -29,9 +29,6 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
-  /** Optional chaodays relay (see openspec/changes/add-chaodays-relay) — unset means direct. */
-  CHAODAYS_RELAY_BASE?: string;
-  CHAODAYS_RELAY_SECRET?: string;
 }
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
@@ -57,12 +54,7 @@ function buildDeps(env: Env) {
     privateKey: env.VAPID_PRIVATE_KEY,
     subject: env.VAPID_SUBJECT,
   });
-  const chaodaysClient = env.CHAODAYS_RELAY_BASE
-    ? new HttpChaodaysClient(undefined, {
-        baseUrl: env.CHAODAYS_RELAY_BASE,
-        relaySecret: env.CHAODAYS_RELAY_SECRET,
-      })
-    : new HttpChaodaysClient();
+  const chaodaysClient = new HttpChaodaysClient();
 
   return {
     getDb,
