@@ -8,8 +8,8 @@ import type {
   ChaodaysWeightRecord,
 } from "../domain/chaodays-client";
 
-/** Public, non-secret base URL for the chaodays API. */
-const BASE_URL = "https://api.chaodays.app/api/v1";
+/** Public, non-secret direct base URL for the chaodays API. */
+const DIRECT_BASE_URL = "https://api.chaodays.app/api/v1";
 
 /** A realistic browser UA so a WAF/bot rule doesn't reject the worker's default UA. */
 const USER_AGENT =
@@ -68,10 +68,19 @@ function sessionFromHeaders(headers: Headers, previous?: ChaodaysSession): Chaod
  * The `fetch` implementation is injected for testability.
  */
 export class HttpChaodaysClient implements ChaodaysClient {
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  private readonly baseUrl: string;
+  private readonly relaySecret?: string;
+
+  constructor(
+    private readonly fetchImpl: typeof fetch = fetch,
+    { baseUrl, relaySecret }: { baseUrl?: string; relaySecret?: string } = {},
+  ) {
+    this.baseUrl = baseUrl ?? DIRECT_BASE_URL;
+    this.relaySecret = relaySecret;
+  }
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
-    const response = await this.request(`${BASE_URL}/users/sign_in`, {
+    const response = await this.request(`${this.baseUrl}/users/sign_in`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user: { uid, password } }),
@@ -86,7 +95,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
-    const url = `${BASE_URL}/users/weight_records?start_date=${from}&end_date=${to}`;
+    const url = `${this.baseUrl}/users/weight_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
     if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
@@ -112,7 +121,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }> {
-    const url = `${BASE_URL}/users/diet_records?start_date=${from}&end_date=${to}`;
+    const url = `${this.baseUrl}/users/diet_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
     if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
@@ -153,7 +162,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }> {
-    const url = `${BASE_URL}/users/water_records?start_date=${from}&end_date=${to}`;
+    const url = `${this.baseUrl}/users/water_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
     if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
@@ -185,7 +194,7 @@ export class HttpChaodaysClient implements ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }> {
-    const url = `${BASE_URL}/users/defecation_records?start_date=${from}&end_date=${to}`;
+    const url = `${this.baseUrl}/users/defecation_records?start_date=${from}&end_date=${to}`;
     const response = await this.request(url, { headers: authHeaders(session) });
     if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
 
@@ -218,8 +227,14 @@ export class HttpChaodaysClient implements ChaodaysClient {
     try {
       return await this.fetchImpl(url, {
         ...init,
-        // A realistic UA: some WAF/bot rules reject a missing/worker default UA.
-        headers: { "User-Agent": USER_AGENT, ...(init.headers as Record<string, string> | undefined) },
+        headers: {
+          // A realistic UA: some WAF/bot rules reject a missing/worker default UA.
+          "User-Agent": USER_AGENT,
+          ...(init.headers as Record<string, string> | undefined),
+          // Only added when a relay is configured; never logged (same rule as
+          // the credential/session headers above).
+          ...(this.relaySecret ? { "X-Relay-Secret": this.relaySecret } : {}),
+        },
       });
     } catch (e) {
       // Include the connection-level failure message (no credentials — it's a

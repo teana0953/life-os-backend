@@ -1,0 +1,12 @@
+REPLACE_WITH_IP_DASHED.nip.io {
+    @authed header X-Relay-Secret "REPLACE_WITH_RELAY_SECRET"
+    handle @authed {
+        reverse_proxy https://api.chaodays.app {
+            header_up Host api.chaodays.app
+            header_up -X-Relay-Secret
+        }
+    }
+    handle {
+        respond 403
+    }
+}

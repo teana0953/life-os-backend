@@ -58,6 +58,60 @@ describe("HttpChaodaysClient", () => {
 
       await expect(client.signIn("chaodays-uid", "pw")).rejects.toThrow(ChaodaysUpstreamError);
     });
+
+    it("targets the direct chaodays URL and carries no X-Relay-Secret header by default", async () => {
+      const calls: FetchCall[] = [];
+      const response = new Response("{}", {
+        status: 200,
+        headers: { "access-token": "token-1", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      await client.signIn("chaodays-uid", "secret-pw");
+
+      expect(calls[0].url).toBe("https://api.chaodays.app/api/v1/users/sign_in");
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.has("X-Relay-Secret")).toBe(false);
+    });
+  });
+
+  describe("relay configuration", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("targets the relay base URL and carries the X-Relay-Secret header on signIn and data fetches", async () => {
+      const calls: FetchCall[] = [];
+      const signInResponse = new Response("{}", {
+        status: 200,
+        headers: { "access-token": "token-1", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(signInResponse, calls), {
+        baseUrl: "https://1-2-3-4.nip.io/api/v1",
+        relaySecret: "s3cret",
+      });
+
+      await client.signIn("chaodays-uid", "secret-pw");
+
+      expect(calls[0].url).toBe("https://1-2-3-4.nip.io/api/v1/users/sign_in");
+      const signInHeaders = new Headers(calls[0].init?.headers);
+      expect(signInHeaders.get("X-Relay-Secret")).toBe("s3cret");
+
+      const weightResponse = new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const weightClient = new HttpChaodaysClient(fakeFetch(weightResponse, calls), {
+        baseUrl: "https://1-2-3-4.nip.io/api/v1",
+        relaySecret: "s3cret",
+      });
+
+      await weightClient.fetchWeightRecords(session, "2026-07-01", "2026-07-02");
+
+      expect(calls[1].url).toBe(
+        "https://1-2-3-4.nip.io/api/v1/users/weight_records?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const weightHeaders = new Headers(calls[1].init?.headers);
+      expect(weightHeaders.get("X-Relay-Secret")).toBe("s3cret");
+    });
   });
 
   describe("fetchWeightRecords", () => {

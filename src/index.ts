@@ -26,13 +26,13 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  /** Optional chaodays relay (see openspec/changes/add-chaodays-relay) — unset means direct. */
+  CHAODAYS_RELAY_BASE?: string;
+  CHAODAYS_RELAY_SECRET?: string;
 }
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
 const jwks = createGoogleSecuretokenJwks();
-// Base URL is a public constant and chaodays credentials come from the request
-// body, so this needs no env binding — module-scope like `jwks` above.
-const chaodaysClient = new HttpChaodaysClient();
 
 export default {
   fetch(request, env, ctx) {
@@ -62,6 +62,12 @@ export default {
       privateKey: env.VAPID_PRIVATE_KEY,
       subject: env.VAPID_SUBJECT,
     });
+    const chaodaysClient = env.CHAODAYS_RELAY_BASE
+      ? new HttpChaodaysClient(undefined, {
+          baseUrl: env.CHAODAYS_RELAY_BASE,
+          relaySecret: env.CHAODAYS_RELAY_SECRET,
+        })
+      : new HttpChaodaysClient();
 
     const app = createApp({
       projectId: env.FIREBASE_PROJECT_ID,
