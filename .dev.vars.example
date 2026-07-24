@@ -1,2 +1,7 @@
 DATABASE_URL=postgres://user:password@host/db
 FIREBASE_PROJECT_ID=your-firebase-project-id
+# Web Push (VAPID). VAPID_PUBLIC_KEY is non-secret; VAPID_PRIVATE_KEY is a secret
+# (set with `wrangler secret put VAPID_PRIVATE_KEY` in deployed environments, not here).
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:you@example.com

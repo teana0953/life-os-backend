@@ -103,6 +103,23 @@ function buildApp(days: string[] = []) {
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: new FakeCalendarRepository(days),
     chaodaysClient: stubChaodaysClient,
+    pushSubscriptionRepository: {
+      upsert: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listByUser: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      deleteByEndpoint: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    pushSender: {
+      send: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    vapidPublicKey: "",
     ping: async () => {},
   });
   return { app };

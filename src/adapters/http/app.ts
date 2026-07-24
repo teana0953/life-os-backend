@@ -13,6 +13,8 @@ import type { MealRepository } from "../../contexts/health/domain/meal-repositor
 import type { MenstrualRepository } from "../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
+import type { PushSender } from "../../contexts/notifications/domain/push-sender";
+import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
@@ -64,6 +66,12 @@ import {
 } from "./routes/meals";
 import { createMeHandler } from "./routes/me";
 import {
+  createGetVapidPublicKeyHandler,
+  createSubscribeWebPushHandler,
+  createTestPushHandler,
+  createUnsubscribeWebPushHandler,
+} from "./routes/push";
+import {
   createAddWaterHandler,
   createGetWaterHandler,
   createSetWaterTargetHandler,
@@ -94,6 +102,10 @@ export interface CreateAppOptions {
   bodyProfileRepository: BodyProfileRepository;
   healthCalendarRepository: HealthCalendarRepository;
   chaodaysClient: ChaodaysClient;
+  pushSubscriptionRepository: PushSubscriptionRepository;
+  pushSender: PushSender;
+  /** Configured VAPID public key, or "" when unset (D6 in design.md). */
+  vapidPublicKey: string;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -247,6 +259,17 @@ export function createApp(options: CreateAppOptions) {
     chaodaysClient: options.chaodaysClient,
   };
   app.post("/api/import/chaodays/bowel", authMiddleware, createImportChaodaysBowelHandler(importChaodaysBowelOptions));
+
+  const pushOptions = {
+    userRepository: options.userRepository,
+    pushSubscriptionRepository: options.pushSubscriptionRepository,
+    pushSender: options.pushSender,
+    vapidPublicKey: options.vapidPublicKey,
+  };
+  app.get("/api/push/vapid-public-key", authMiddleware, createGetVapidPublicKeyHandler(pushOptions));
+  app.post("/api/push/subscribe", authMiddleware, createSubscribeWebPushHandler(pushOptions));
+  app.delete("/api/push/subscribe", authMiddleware, createUnsubscribeWebPushHandler(pushOptions));
+  app.post("/api/push/test", authMiddleware, createTestPushHandler(pushOptions));
 
   return app;
 }
