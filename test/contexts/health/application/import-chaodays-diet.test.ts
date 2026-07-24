@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { importChaodaysDiet } from "../../../../src/contexts/health/application/import-chaodays-diet";
+import { importChaodaysDiet, nextSnackName } from "../../../../src/contexts/health/application/import-chaodays-diet";
 import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type {
   ChaodaysClient,
@@ -27,13 +27,13 @@ class InMemoryMealRepository implements MealRepository {
   createMealsCallCount = 0;
 
   /** Test helper: seed a pre-existing meal (with no items) for a user/day/meal. */
-  seed(userId: string, day: string, meal: string) {
+  seed(userId: string, day: string, meal: string, time: Date = new Date("2026-01-01T00:00:00.000Z")) {
     this.meals.push({
       id: `meal-${this.nextMealId++}`,
       userId,
       day,
       meal,
-      time: new Date("2026-01-01T00:00:00.000Z"),
+      time,
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
       items: [],
     });
@@ -317,7 +317,7 @@ describe("importChaodaysDiet", () => {
     expect(await mealRepository.listMealsByDay("user-1", "2026-07-01")).toEqual([]);
   });
 
-  it("merges multiple same-type records on a day into a single meal", async () => {
+  it("merges extra records at the same time into a single snack", async () => {
     chaodaysClient.records = [
       {
         date: "2026-07-01",
@@ -328,7 +328,7 @@ describe("importChaodaysDiet", () => {
       {
         date: "2026-07-01",
         recordType: "extra",
-        recordedAt: "2026-07-01 15:00",
+        recordedAt: "2026-07-01 10:00",
         items: [{ name: "餅乾", staple: 1, meat: 0, fruit: 0, veg: 0 }],
       },
     ];
@@ -342,9 +342,14 @@ describe("importChaodaysDiet", () => {
     expect(meals[0].items.map((i) => i.name)).toEqual(["堅果", "餅乾"]);
   });
 
-  it("skips a meal type that already existed before the import (judged from a pre-import snapshot)", async () => {
-    mealRepository.seed("user-1", "2026-07-01", "點心");
+  it("splits extra records at different times into separate snack meals, named by the app's snack rule", async () => {
     chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "extra",
+        recordedAt: "2026-07-01 21:00",
+        items: [{ name: "泡麵", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
       {
         date: "2026-07-01",
         recordType: "extra",
@@ -361,11 +366,97 @@ describe("importChaodaysDiet", () => {
 
     const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
 
-    // Skipped once for the meal type, not once per record.
+    expect(summary.mealsImported).toBe(3);
+    const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
+    expect(meals).toHaveLength(3);
+
+    const bySnackName = new Map(meals.map((m) => [m.meal, m]));
+    expect([...bySnackName.keys()].sort()).toEqual(["點心", "點心2", "點心3"]);
+
+    const first = bySnackName.get("點心")!;
+    expect(first.items.map((i) => i.name)).toEqual(["堅果"]);
+    expect(first.time.toISOString()).toBe("2026-07-01T02:00:00.000Z");
+
+    const second = bySnackName.get("點心2")!;
+    expect(second.items.map((i) => i.name)).toEqual(["餅乾"]);
+    expect(second.time.toISOString()).toBe("2026-07-01T07:00:00.000Z");
+
+    const third = bySnackName.get("點心3")!;
+    expect(third.items.map((i) => i.name)).toEqual(["泡麵"]);
+    expect(third.time.toISOString()).toBe("2026-07-01T13:00:00.000Z");
+  });
+
+  it("skips a snack time that already exists that day, and continues numbering from the day's existing snacks", async () => {
+    // Existing "點心" at 10:00+08:00 (== 2026-07-01T02:00:00.000Z).
+    mealRepository.seed("user-1", "2026-07-01", "點心", new Date("2026-07-01T02:00:00.000Z"));
+    chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "extra",
+        recordedAt: "2026-07-01 10:00", // same time as the existing snack -> skipped
+        items: [{ name: "堅果", staple: 0, meat: 1, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2026-07-01",
+        recordType: "extra",
+        recordedAt: "2026-07-01 15:00", // new time -> creates 點心2
+        items: [{ name: "餅乾", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
+
+    expect(summary).toEqual({ mealsImported: 1, mealsSkipped: 1, glucoseImported: 0, from: "2026-07-01", to: "2026-07-01" });
+    const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
+    expect(meals).toHaveLength(2);
+    const newSnack = meals.find((m) => m.meal === "點心2");
+    expect(newSnack?.items.map((i) => i.name)).toEqual(["餅乾"]);
+  });
+
+  it("skips a standard-meal code that already existed before the import (judged from a pre-import snapshot)", async () => {
+    mealRepository.seed("user-1", "2026-07-01", "breakfast");
+    chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "breakfast",
+        recordedAt: "2026-07-01 07:00",
+        items: [{ name: "白粥", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2026-07-01",
+        recordType: "breakfast",
+        recordedAt: "2026-07-01 07:30",
+        items: [{ name: "豆漿", staple: 0, meat: 1, fruit: 0, veg: 0 }],
+      },
+    ];
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
+
+    // Skipped once for the meal code, not once per record.
     expect(summary).toEqual({ mealsImported: 0, mealsSkipped: 1, glucoseImported: 0, from: "2026-07-01", to: "2026-07-01" });
     const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
     expect(meals).toHaveLength(1);
     expect(meals[0].items).toHaveLength(0);
+  });
+
+  it("extracts glucose from a portionless extra item without creating a snack meal", async () => {
+    chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "extra",
+        recordedAt: "2026-07-01 15:30",
+        items: [{ name: "前血糖：93", staple: 0, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
+
+    expect(summary.mealsImported).toBe(0);
+    const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
+    expect(meals).toHaveLength(0);
+    expect(summary.glucoseImported).toBe(1);
+    const vitals = await vitalsRepository.get("user-1", "2026-07-01");
+    expect(vitals?.glucoseReadings).toEqual([{ label: "餐前", value: 93, mealContext: "pre_meal", time: "15:30" }]);
   });
 
   it("appends new glucose readings, dedups against existing, and preserves other vitals fields", async () => {
@@ -462,5 +553,25 @@ describe("importChaodaysDiet", () => {
     await expect(
       importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT),
     ).rejects.toThrow(ChaodaysAuthError);
+  });
+});
+
+describe("nextSnackName", () => {
+  it("returns the base word when no existing name matches the snack series", () => {
+    expect(nextSnackName([])).toBe("點心");
+    expect(nextSnackName(["breakfast", "下午茶"])).toBe("點心");
+  });
+
+  it("returns the base word + 2 when a bare base word already exists (counts as 1)", () => {
+    expect(nextSnackName(["點心"])).toBe("點心2");
+  });
+
+  it("returns one more than the highest existing series number", () => {
+    expect(nextSnackName(["點心", "點心2"])).toBe("點心3");
+    expect(nextSnackName(["點心3"])).toBe("點心4");
+  });
+
+  it("ignores non-matching names alongside series names", () => {
+    expect(nextSnackName(["breakfast", "點心2", "下午茶"])).toBe("點心3");
   });
 });
