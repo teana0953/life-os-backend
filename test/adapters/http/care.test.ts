@@ -12,8 +12,10 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import { isActiveOn } from "../../../src/contexts/notifications/domain/care-schedule";
 import type {
   ActiveCareSchedule,
+  ActiveScheduleForUser,
   CareCategory,
   CareItemRepository,
   CareItemWithSchedules,
@@ -157,6 +159,13 @@ class InMemoryUserRepository implements UserRepository {
       }
     }
   }
+
+  async getById(userId: string): Promise<User | null> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) return user;
+    }
+    return null;
+  }
 }
 
 class InMemoryCareItemRepository implements CareItemRepository {
@@ -239,6 +248,18 @@ class InMemoryCareItemRepository implements CareItemRepository {
     throw new Error("not used by these tests");
   }
 
+  /** Mirrors DrizzleCareItemRepository.listActiveSchedulesForUserOn: enabled + owned + active-today, ordered by time then title. */
+  async listActiveSchedulesForUserOn(userId: string, localDate: string): Promise<ActiveScheduleForUser[]> {
+    const rows: ActiveScheduleForUser[] = [];
+    for (const item of this.byId.values()) {
+      if (item.userId !== userId) continue;
+      for (const schedule of item.schedules) {
+        if (schedule.enabled && isActiveOn(schedule, localDate)) rows.push({ item, schedule });
+      }
+    }
+    return rows.sort((a, b) => a.schedule.timeOfDay.localeCompare(b.schedule.timeOfDay) || a.item.title.localeCompare(b.item.title));
+  }
+
   async decrementStock(itemId: string, amount: number): Promise<void> {
     const item = this.byId.get(itemId);
     if (item && item.stock !== null) item.stock = Math.max(0, item.stock - amount);
@@ -278,6 +299,10 @@ class InMemoryCareLogRepository implements CareLogRepository {
 
   async getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null> {
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
+  }
+
+  async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
+    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate === localDate);
   }
 }
 
@@ -370,6 +395,7 @@ describe("care item HTTP routes", () => {
     expect((await app.request("/api/care/items/x", { method: "PATCH" })).status).toBe(401);
     expect((await app.request("/api/care/items/x", { method: "DELETE" })).status).toBe(401);
     expect((await app.request("/api/care/log", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/api/care/today")).status).toBe(401);
   });
 
   it("creates and lists a care item with its schedules (round trip)", async () => {
@@ -638,5 +664,73 @@ describe("POST /api/care/log", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/care/today", () => {
+  // Empty repeat_days = every day (D3), a start_date in the past and no end_date, so this
+  // schedule is active regardless of the date the test suite happens to run on.
+  const EVERY_DAY_SCHEDULE = {
+    time_of_day: "08:00",
+    repeat_days: [],
+    week_interval: 1,
+    start_date: "2020-01-01",
+    end_date: null,
+    dose_quantity: 1,
+    nag_interval_minutes: 15,
+    enabled: true,
+  };
+
+  it("returns { date, items } with the caller's active-today slot", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+    });
+
+    const res = await app.request("/api/care/today", { headers });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { date: string; items: Record<string, unknown>[] };
+    expect(typeof body.date).toBe("string");
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      category: "medication",
+      title: "降血壓藥",
+      dose: "5mg",
+      time_of_day: "08:00",
+      local_date: body.date,
+    });
+    expect(["pending", "overdue"]).toContain(body.items[0].status);
+  });
+
+  it("is owner-scoped: another user's schedule does not appear", async () => {
+    const { app } = buildApp();
+    const ownerHeaders = await authed("uid-1");
+    const otherHeaders = await authed("uid-2");
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+    });
+
+    const res = await app.request("/api/care/today", { headers: otherHeaders });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { items: unknown[] }).items).toHaveLength(0);
+  });
+
+  it("returns { date, items: [] } when the caller has no items", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+
+    const res = await app.request("/api/care/today", { headers });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { date: string; items: unknown[] };
+    expect(typeof body.date).toBe("string");
+    expect(body.items).toEqual([]);
   });
 });

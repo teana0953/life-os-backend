@@ -138,6 +138,13 @@ class InMemoryUserRepository implements UserRepository {
       }
     }
   }
+
+  async getById(userId: string): Promise<User | null> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) return user;
+    }
+    return null;
+  }
 }
 
 class InMemoryWaterRepository implements WaterRepository {
@@ -228,11 +235,13 @@ function buildApp() {
       update: notImplemented,
       delete: notImplemented,
       listActiveSchedules: notImplemented,
+      listActiveSchedulesForUserOn: notImplemented,
       decrementStock: notImplemented,
     },
     careLogRepository: {
       upsertIfAbsent: notImplemented,
       getBySlot: notImplemented,
+      listByUserAndDate: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},

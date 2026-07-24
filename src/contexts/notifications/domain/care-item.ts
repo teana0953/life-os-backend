@@ -79,6 +79,12 @@ export interface ActiveCareSchedule {
   timezone: string;
 }
 
+/** An enabled schedule joined with its item, scoped to one user (for the care-today endpoint). */
+export interface ActiveScheduleForUser {
+  item: CareItem;
+  schedule: CareSchedule;
+}
+
 export interface CareItemRepository {
   create(input: CreateCareItemInput): Promise<CareItemWithSchedules>;
   listByUser(userId: string, category?: CareCategory): Promise<CareItemWithSchedules[]>;
@@ -91,6 +97,12 @@ export interface CareItemRepository {
   delete(id: string, userId: string): Promise<boolean>;
   /** Every enabled schedule, joined with its item and owner's timezone — no per-schedule lookup needed by the cron tick. */
   listActiveSchedules(): Promise<ActiveCareSchedule[]>;
+  /**
+   * `userId`'s enabled schedules that are active on `localDate` (per the
+   * shared `isActiveOn`), joined with their item — for the care-today
+   * endpoint. Ordered by `timeOfDay`, then `title`.
+   */
+  listActiveSchedulesForUserOn(userId: string, localDate: string): Promise<ActiveScheduleForUser[]>;
   /** Reduces `stock` by `amount`, clamped >= 0; a no-op when the item's `stock` is `null` (D6 in design.md). */
   decrementStock(itemId: string, amount: number): Promise<void>;
 }

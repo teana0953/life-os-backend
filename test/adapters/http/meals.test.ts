@@ -85,6 +85,13 @@ class InMemoryUserRepository implements UserRepository {
       }
     }
   }
+
+  async getById(userId: string): Promise<User | null> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) return user;
+    }
+    return null;
+  }
 }
 
 class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
@@ -445,6 +452,9 @@ function buildApp() {
       listActiveSchedules: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+      listActiveSchedulesForUserOn: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
       decrementStock: async () => {
         throw new Error("not implemented in this test's fakes");
       },
@@ -454,6 +464,9 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
       getBySlot: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listByUserAndDate: async () => {
         throw new Error("not implemented in this test's fakes");
       },
     },

@@ -8,6 +8,7 @@ import {
 } from "../../../../src/contexts/notifications/application/care-items";
 import type {
   ActiveCareSchedule,
+  ActiveScheduleForUser,
   CareCategory,
   CareItemRepository,
   CareItemWithSchedules,
@@ -103,6 +104,10 @@ class InMemoryCareItemRepository implements CareItemRepository {
   }
 
   async listActiveSchedules(): Promise<ActiveCareSchedule[]> {
+    throw new Error("not used by these tests");
+  }
+
+  async listActiveSchedulesForUserOn(): Promise<ActiveScheduleForUser[]> {
     throw new Error("not used by these tests");
   }
 

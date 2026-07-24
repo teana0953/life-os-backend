@@ -92,6 +92,13 @@ class InMemoryUserRepository implements UserRepository {
     this.byUid.set(input.firebaseUid, user);
     return user;
   }
+  async getById(userId: string): Promise<User | null> {
+    for (const user of this.byUid.values()) {
+      if (user.id === userId) return user;
+    }
+    return null;
+  }
+
   async updateTimezone(userId: string, timezone: string): Promise<void> {
     for (const user of this.byUid.values()) {
       if (user.id === userId) {
@@ -142,11 +149,13 @@ function buildApp(days: string[] = []) {
       update: notImplemented,
       delete: notImplemented,
       listActiveSchedules: notImplemented,
+      listActiveSchedulesForUserOn: notImplemented,
       decrementStock: notImplemented,
     },
     careLogRepository: {
       upsertIfAbsent: notImplemented,
       getBySlot: notImplemented,
+      listByUserAndDate: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},
