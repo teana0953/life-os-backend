@@ -146,7 +146,8 @@ describe("WebPushSender", () => {
 
     const result = await sender.send(subscription, { title: "Test", body: "Body" });
 
-    expect(result).toEqual({ outcome: "failed", detail: "network" });
+    expect(result.outcome).toBe("failed");
+    expect(result.detail).toMatch(/^network:/);
   });
 
   it("missing VAPID keys → failed, detail no_vapid_config (never throws)", async () => {

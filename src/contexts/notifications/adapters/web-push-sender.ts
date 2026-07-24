@@ -94,13 +94,26 @@ export class WebPushSender implements PushSender {
     // visible `failed` than a push silently dropped on-device.
     if (!this.publicKey || !this.privateKey || !this.subject) return { outcome: "failed", detail: "no_vapid_config" };
 
+    // Short, non-credential error string: strips the endpoint (which carries the
+    // push token) and truncates. Used only to tell apart a crypto failure from a
+    // network/egress failure in diagnostics.
+    const clean = (e: unknown): string =>
+      (e instanceof Error ? `${e.name}: ${e.message}` : String(e)).replaceAll(subscription.endpoint, "<endpoint>").slice(0, 120);
+
+    let authorization: string;
+    let body: Uint8Array;
     try {
-      const [authorization, body] = await Promise.all([
+      [authorization, body] = await Promise.all([
         this.buildVapidAuthorization(subscription.endpoint, this.publicKey, this.privateKey, this.subject),
         this.encryptPayload(subscription, JSON.stringify(message)),
       ]);
+    } catch (e) {
+      return { outcome: "failed", detail: `crypto:${clean(e)}` };
+    }
 
-      const response = await this.fetchImpl(subscription.endpoint, {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(subscription.endpoint, {
         method: "POST",
         headers: {
           TTL: String(TTL_SECONDS),
@@ -110,15 +123,15 @@ export class WebPushSender implements PushSender {
         },
         body,
       });
-
-      if (response.ok) return { outcome: "sent" };
-      if (response.status === 404 || response.status === 410) {
-        return { outcome: "expired", detail: `status_${response.status}` };
-      }
-      return { outcome: "failed", detail: `status_${response.status}` };
-    } catch {
-      return { outcome: "failed", detail: "network" };
+    } catch (e) {
+      return { outcome: "failed", detail: `network:${clean(e)}` };
     }
+
+    if (response.ok) return { outcome: "sent" };
+    if (response.status === 404 || response.status === 410) {
+      return { outcome: "expired", detail: `status_${response.status}` };
+    }
+    return { outcome: "failed", detail: `status_${response.status}` };
   }
 
   /** RFC8292: `Authorization: vapid t=<ES256 JWT>, k=<application-server public key>`. */
