@@ -220,7 +220,7 @@ describe("importChaodaysDiet", () => {
     expect(summary).toEqual({ mealsImported: 1, mealsSkipped: 0, glucoseImported: 0, from: "2026-07-01", to: "2026-07-01" });
     const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
     expect(meals).toHaveLength(1);
-    expect(meals[0].meal).toBe("午餐");
+    expect(meals[0].meal).toBe("lunch");
     expect(meals[0].items).toHaveLength(1);
     expect(meals[0].items[0]).toMatchObject({ name: "白飯", staple: 2, meat: 0, fruit: 0, veg: 0, unclassified: false });
     // The credentials and range thread through to the client unchanged.
@@ -229,8 +229,8 @@ describe("importChaodaysDiet", () => {
   });
 
   it.each([
-    ["breakfast", "早餐"],
-    ["dinner", "晚餐"],
+    ["breakfast", "breakfast"],
+    ["dinner", "dinner"],
     ["extra", "點心"],
   ])("maps chaodays record_type %s to %s", async (recordType, expectedMeal) => {
     chaodaysClient.records = [
@@ -246,6 +246,22 @@ describe("importChaodaysDiet", () => {
 
     const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
     expect(meals[0].meal).toBe(expectedMeal);
+  });
+
+  it("interprets recorded_at at the chaodays (+08:00) offset, not UTC", async () => {
+    chaodaysClient.records = [
+      {
+        date: "2026-07-01",
+        recordType: "breakfast",
+        recordedAt: "2026-07-01 08:30",
+        items: [{ name: "白粥", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
+
+    await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, BASE_INPUT);
+
+    const meals = await mealRepository.listMealsByDay("user-1", "2026-07-01");
+    expect(meals[0].time.toISOString()).toBe("2026-07-01T00:30:00.000Z");
   });
 
   it("does not create a meal item for a portionless / glucose-only diet item, but still extracts its glucose", async () => {

@@ -1,4 +1,4 @@
-import { and, desc, eq, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { waterIntake, waterTarget } from "../../../shared/db/schema";
 import type { WaterIntake, WaterTarget } from "../domain/water";
@@ -42,6 +42,31 @@ export class DrizzleWaterRepository implements WaterRepository {
       .returning();
     if (!row) throw new Error("failed to add water intake");
     return intakeToDomain(row);
+  }
+
+  async addIntakeMany(rows: { userId: string; day: string; addMl: number }[]): Promise<void> {
+    if (rows.length === 0) return;
+    const db = this.getDb();
+    const [first, ...rest] = rows.map(({ userId, day, addMl }) =>
+      db
+        .insert(waterIntake)
+        .values({ userId, day, totalMl: String(Math.max(0, addMl)) })
+        .onConflictDoUpdate({
+          target: [waterIntake.userId, waterIntake.day],
+          set: { totalMl: sql`GREATEST(0, ${waterIntake.totalMl} + ${addMl})` },
+        }),
+    );
+    await db.batch([first, ...rest]);
+  }
+
+  async listIntakeRange(userId: string, from: string, to: string): Promise<WaterIntake[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(waterIntake)
+      .where(and(eq(waterIntake.userId, userId), gte(waterIntake.day, from), lte(waterIntake.day, to)))
+      .orderBy(asc(waterIntake.day));
+    return rows.map(intakeToDomain);
   }
 
   async getTarget(userId: string, day: string): Promise<WaterTarget | null> {

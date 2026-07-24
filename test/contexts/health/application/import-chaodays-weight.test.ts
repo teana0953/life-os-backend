@@ -7,6 +7,7 @@ import type { SetVitalsInput, VitalsRepository } from "../../../../src/contexts/
 
 class InMemoryVitalsRepository implements VitalsRepository {
   private byUserDay = new Map<string, VitalsRecord>();
+  setManyCallCount = 0;
 
   /** Test helper: seed a whole record for a user/day. */
   seed(record: VitalsRecord) {
@@ -32,6 +33,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
   }
 
   async setMany(rows: SetVitalsInput[]): Promise<void> {
+    this.setManyCallCount++;
     for (const row of rows) {
       await this.set(row);
     }
@@ -49,8 +51,8 @@ class InMemoryVitalsRepository implements VitalsRepository {
     throw new Error("not used in this test");
   }
 
-  async listRange(): Promise<VitalsRecord[]> {
-    throw new Error("not used in this test");
+  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 }
 
@@ -199,6 +201,61 @@ describe("importChaodaysWeight", () => {
 
     expect(summary).toEqual({ imported: 1, skipped: 1, from: "2026-07-01", to: "2026-07-02" });
     expect(await vitalsRepository.get("user-1", "2026-07-02")).toBeNull();
+  });
+
+  it("carries an earlier same-day record's body fat forward to a later record on the same day that has none", async () => {
+    chaodaysClient.records = [
+      { date: "2026-07-01", weight: 65.0, bodyFatPct: 22.5 },
+      { date: "2026-07-01", weight: 65.5, bodyFatPct: null },
+    ];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-01",
+    });
+
+    expect(summary).toEqual({ imported: 2, skipped: 0, from: "2026-07-01", to: "2026-07-01" });
+    const record = await vitalsRepository.get("user-1", "2026-07-01");
+    // Final weight is the last record's; body fat is inherited from the earlier record.
+    expect(record?.weightKg).toBe(65.5);
+    expect(record?.bodyFatPct).toBe(22.5);
+  });
+
+  it("persists a multi-day range via one setMany call, not per-day", async () => {
+    chaodaysClient.records = [
+      { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
+      { date: "2026-07-02", weight: 65.2, bodyFatPct: null },
+      { date: "2026-07-03", weight: 65.0, bodyFatPct: 21.9 },
+    ];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-03",
+    });
+
+    expect(summary).toEqual({ imported: 3, skipped: 0, from: "2026-07-01", to: "2026-07-03" });
+    expect(vitalsRepository.setManyCallCount).toBe(1);
+  });
+
+  it("performs zero writes (no setMany calls) for an empty range", async () => {
+    chaodaysClient.records = [];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
+
+    expect(summary).toEqual({ imported: 0, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
+    expect(vitalsRepository.setManyCallCount).toBe(0);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

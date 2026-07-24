@@ -7,6 +7,7 @@ import type { SetWaterTargetInput, WaterRepository } from "../../../../src/conte
 
 class InMemoryWaterRepository implements WaterRepository {
   private intakeByUserDay = new Map<string, WaterIntake>();
+  addIntakeManyCallCount = 0;
 
   async getIntake(userId: string, day: string): Promise<WaterIntake | null> {
     return this.intakeByUserDay.get(`${userId}:${day}`) ?? null;
@@ -18,6 +19,17 @@ class InMemoryWaterRepository implements WaterRepository {
     const intake: WaterIntake = { userId, day, totalMl };
     this.intakeByUserDay.set(`${userId}:${day}`, intake);
     return intake;
+  }
+
+  async addIntakeMany(rows: { userId: string; day: string; addMl: number }[]): Promise<void> {
+    this.addIntakeManyCallCount++;
+    for (const row of rows) {
+      await this.addIntake(row.userId, row.day, row.addMl);
+    }
+  }
+
+  async listIntakeRange(userId: string, from: string, to: string): Promise<WaterIntake[]> {
+    return [...this.intakeByUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 
   async getTarget(): Promise<WaterTarget | null> {
@@ -153,9 +165,10 @@ describe("importChaodaysWater", () => {
     });
 
     expect(summary).toEqual({ imported: 0, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
+    expect(waterRepository.addIntakeManyCallCount).toBe(0);
   });
 
-  it("handles multiple days independently", async () => {
+  it("handles multiple days independently, persisted via one addIntakeMany call", async () => {
     chaodaysClient.records = [
       { date: "2026-07-01", waterMl: 250, recordedAt: "2026-07-01 09:00" },
       { date: "2026-07-02", waterMl: 300, recordedAt: "2026-07-02 09:00" },
@@ -172,6 +185,8 @@ describe("importChaodaysWater", () => {
     expect(summary).toEqual({ imported: 2, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
     expect((await waterRepository.getIntake("user-1", "2026-07-01"))?.totalMl).toBe(250);
     expect((await waterRepository.getIntake("user-1", "2026-07-02"))?.totalMl).toBe(300);
+    // Regardless of the number of days, persistence is one batched call.
+    expect(waterRepository.addIntakeManyCallCount).toBe(1);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

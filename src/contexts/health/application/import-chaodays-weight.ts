@@ -1,5 +1,6 @@
-import type { ChaodaysClient } from "../domain/chaodays-client";
-import type { VitalsRepository } from "../domain/vitals-repository";
+import type { ChaodaysClient, ChaodaysWeightRecord } from "../domain/chaodays-client";
+import type { VitalsRecord } from "../domain/vitals";
+import type { SetVitalsInput, VitalsRepository } from "../domain/vitals-repository";
 
 export interface ImportChaodaysWeightInput {
   userId: string;
@@ -19,9 +20,19 @@ export interface ImportChaodaysWeightSummary {
 
 /**
  * Use case: sign in to chaodays, pull weight/body-fat records for `[from, to]`,
- * and read-modify-write each day's vitals — setting only weight/body fat, keeping
- * existing bp/glucose/spo2 readings. A record with no weight is skipped (counted,
- * not written). A record with no body fat leaves the day's existing body fat intact.
+ * and merge them into each day's vitals, keeping existing bp/glucose/spo2
+ * readings. A record with no weight is skipped (counted, not written).
+ *
+ * To keep the number of DB round-trips independent of the date range, existing
+ * vitals for the whole range are read once, everything is computed in memory,
+ * and all writes are persisted via one batched `setMany` call.
+ *
+ * Within a day, records are folded in order to replicate the previous
+ * per-record read-after-write behavior: the day's final weight is the last
+ * weighted record's, and its body fat is the last non-null body fat among the
+ * day's records, else the pre-import value (so a later same-day record
+ * lacking body fat inherits an earlier one's, and a day with no imported body
+ * fat keeps its existing one).
  */
 export async function importChaodaysWeight(
   vitalsRepository: VitalsRepository,
@@ -31,25 +42,55 @@ export async function importChaodaysWeight(
   const session = await chaodaysClient.signIn(input.uid, input.password);
   const { records } = await chaodaysClient.fetchWeightRecords(session, input.from, input.to);
 
+  const recordsByDay = new Map<string, ChaodaysWeightRecord[]>();
+  for (const record of records) {
+    const list = recordsByDay.get(record.date) ?? [];
+    list.push(record);
+    recordsByDay.set(record.date, list);
+  }
+
+  // Read for the whole range happens once, before any writes.
+  const existingVitalsRecords = await vitalsRepository.listRange(input.userId, input.from, input.to);
+  const existingByDay = new Map<string, VitalsRecord>();
+  for (const record of existingVitalsRecords) {
+    existingByDay.set(record.day, record);
+  }
+
   let imported = 0;
   let skipped = 0;
-  for (const record of records) {
-    if (record.weight === null) {
-      skipped++;
-      continue;
+  const rows: SetVitalsInput[] = [];
+
+  for (const [day, dayRecords] of recordsByDay) {
+    const existing = existingByDay.get(day) ?? null;
+    let weight: number | null = null;
+    let bodyFat: number | null = existing?.bodyFatPct ?? null;
+    let touched = false;
+
+    for (const record of dayRecords) {
+      if (record.weight === null) {
+        skipped++;
+        continue;
+      }
+      weight = record.weight;
+      bodyFat = record.bodyFatPct ?? bodyFat;
+      touched = true;
+      imported++;
     }
-    const existing = await vitalsRepository.get(input.userId, record.date);
-    await vitalsRepository.set({
+
+    if (!touched) continue;
+
+    rows.push({
       userId: input.userId,
-      day: record.date,
-      weightKg: record.weight,
-      bodyFatPct: record.bodyFatPct ?? existing?.bodyFatPct ?? null,
+      day,
+      weightKg: weight,
+      bodyFatPct: bodyFat,
       bpReadings: existing?.bpReadings ?? [],
       glucoseReadings: existing?.glucoseReadings ?? [],
       spo2Readings: existing?.spo2Readings ?? [],
     });
-    imported++;
   }
+
+  if (rows.length > 0) await vitalsRepository.setMany(rows);
 
   return { imported, skipped, from: input.from, to: input.to };
 }

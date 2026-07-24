@@ -22,6 +22,16 @@ class InMemoryBowelRepository implements BowelRepository {
     this.byUserDay.set(`${input.userId}:${input.day}`, log);
     return log;
   }
+
+  async setMany(rows: SetBowelLogInput[]): Promise<void> {
+    for (const row of rows) {
+      await this.set(row);
+    }
+  }
+
+  async listRange(userId: string, from: string, to: string): Promise<BowelLog[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
+  }
 }
 
 let repo: InMemoryBowelRepository;

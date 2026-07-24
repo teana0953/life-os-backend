@@ -7,6 +7,7 @@ import type { BowelRepository, SetBowelLogInput } from "../../../../src/contexts
 
 class InMemoryBowelRepository implements BowelRepository {
   private byUserDay = new Map<string, BowelLog>();
+  setManyCallCount = 0;
 
   async get(userId: string, day: string): Promise<BowelLog | null> {
     return this.byUserDay.get(`${userId}:${day}`) ?? null;
@@ -22,6 +23,17 @@ class InMemoryBowelRepository implements BowelRepository {
     };
     this.byUserDay.set(`${input.userId}:${input.day}`, log);
     return log;
+  }
+
+  async setMany(rows: SetBowelLogInput[]): Promise<void> {
+    this.setManyCallCount++;
+    for (const row of rows) {
+      await this.set(row);
+    }
+  }
+
+  async listRange(userId: string, from: string, to: string): Promise<BowelLog[]> {
+    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 }
 
@@ -166,6 +178,26 @@ describe("importChaodaysBowel", () => {
     });
 
     expect(summary).toEqual({ imported: 0, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
+    expect(bowelRepository.setManyCallCount).toBe(0);
+  });
+
+  it("persists a multi-day range via one setMany call, not per-day", async () => {
+    chaodaysClient.records = [
+      { date: "2026-07-01", count: 1, isAbnormality: false, note: "" },
+      { date: "2026-07-02", count: 2, isAbnormality: false, note: "" },
+      { date: "2026-07-03", count: 1, isAbnormality: true, note: "" },
+    ];
+
+    const summary = await importChaodaysBowel(bowelRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-03",
+    });
+
+    expect(summary).toEqual({ imported: 3, skipped: 0, from: "2026-07-01", to: "2026-07-03" });
+    expect(bowelRepository.setManyCallCount).toBe(1);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

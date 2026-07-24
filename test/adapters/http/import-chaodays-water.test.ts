@@ -48,6 +48,8 @@ const stubDailyTargetRepository: DailyTargetRepository = {
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
+  listRange: notImplemented,
 };
 const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
@@ -145,6 +147,16 @@ class InMemoryWaterRepository implements WaterRepository {
     const intake: WaterIntake = { userId, day, totalMl };
     this.intakeByUserDay.set(`${userId}:${day}`, intake);
     return intake;
+  }
+
+  async addIntakeMany(rows: { userId: string; day: string; addMl: number }[]): Promise<void> {
+    for (const row of rows) {
+      await this.addIntake(row.userId, row.day, row.addMl);
+    }
+  }
+
+  async listIntakeRange(userId: string, from: string, to: string): Promise<WaterIntake[]> {
+    return [...this.intakeByUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
   }
 
   async getTarget(): Promise<WaterTarget | null> {

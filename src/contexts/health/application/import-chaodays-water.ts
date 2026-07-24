@@ -24,6 +24,10 @@ export interface ImportChaodaysWaterSummary {
  * intake is skipped (counted, not clobbered) — `WaterRepository` has no
  * "set total" method and `addIntake` is additive, so this is how re-import
  * stays idempotent.
+ *
+ * To keep the number of DB round-trips independent of the date range, existing
+ * intake for the whole range is read once, everything is computed in memory,
+ * and all writes are persisted via one batched `addIntakeMany` call.
  */
 export async function importChaodaysWater(
   waterRepository: WaterRepository,
@@ -38,18 +42,25 @@ export async function importChaodaysWater(
     totalByDay.set(record.date, (totalByDay.get(record.date) ?? 0) + record.waterMl);
   }
 
+  // Read for the whole range happens once, before any writes.
+  const existingIntake = await waterRepository.listIntakeRange(input.userId, input.from, input.to);
+  const existingDays = new Set(existingIntake.map((intake) => intake.day));
+
   let imported = 0;
   let skipped = 0;
+  const rows: { userId: string; day: string; addMl: number }[] = [];
+
   for (const [day, total] of totalByDay) {
     if (total <= 0) continue;
-    const existing = await waterRepository.getIntake(input.userId, day);
-    if (existing !== null) {
+    if (existingDays.has(day)) {
       skipped++;
       continue;
     }
-    await waterRepository.addIntake(input.userId, day, total);
+    rows.push({ userId: input.userId, day, addMl: total });
     imported++;
   }
+
+  if (rows.length > 0) await waterRepository.addIntakeMany(rows);
 
   return { imported, skipped, from: input.from, to: input.to };
 }
