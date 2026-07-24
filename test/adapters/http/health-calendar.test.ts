@@ -81,9 +81,24 @@ class InMemoryUserRepository implements UserRepository {
   async getOrCreate(input: GetOrCreateUserInput): Promise<User> {
     const existing = this.byUid.get(input.firebaseUid);
     if (existing) return existing;
-    const user: User = { id: `user-${this.nextId++}`, firebaseUid: input.firebaseUid, email: input.email, displayName: input.displayName, createdAt: new Date("2026-01-01T00:00:00.000Z") };
+    const user: User = {
+      id: `user-${this.nextId++}`,
+      firebaseUid: input.firebaseUid,
+      email: input.email,
+      displayName: input.displayName,
+      timezone: "Asia/Taipei",
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    };
     this.byUid.set(input.firebaseUid, user);
     return user;
+  }
+  async updateTimezone(userId: string, timezone: string): Promise<void> {
+    for (const user of this.byUid.values()) {
+      if (user.id === userId) {
+        user.timezone = timezone;
+        return;
+      }
+    }
   }
 }
 
@@ -118,6 +133,14 @@ function buildApp(days: string[] = []) {
       send: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+    },
+    reminderScheduleRepository: {
+      create: notImplemented,
+      listByUser: notImplemented,
+      get: notImplemented,
+      update: notImplemented,
+      delete: notImplemented,
+      listActiveAll: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},

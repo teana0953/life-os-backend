@@ -139,10 +139,20 @@ class InMemoryUserRepository implements UserRepository {
       firebaseUid: input.firebaseUid,
       email: input.email,
       displayName: input.displayName,
+      timezone: "Asia/Taipei",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
     return user;
+  }
+
+  async updateTimezone(userId: string, timezone: string): Promise<void> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) {
+        user.timezone = timezone;
+        return;
+      }
+    }
   }
 }
 
@@ -179,6 +189,14 @@ function buildApp(
       send: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+    },
+    reminderScheduleRepository: {
+      create: notImplemented,
+      listByUser: notImplemented,
+      get: notImplemented,
+      update: notImplemented,
+      delete: notImplemented,
+      listActiveAll: notImplemented,
     },
     vapidPublicKey: "",
     ping: overrides.ping ?? (async () => {}),
@@ -324,6 +342,9 @@ describe("GET /api/me", () => {
       userRepository: {
         async getOrCreate() {
           throw new Error("connection string: postgres://user:secret@host/db");
+        },
+        async updateTimezone() {
+          throw new Error("not implemented in this test's fakes");
         },
       },
     });

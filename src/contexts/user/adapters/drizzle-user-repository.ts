@@ -12,6 +12,7 @@ function toDomain(row: UserRow): User {
     firebaseUid: row.firebaseUid,
     email: row.email,
     displayName: row.displayName,
+    timezone: row.timezone,
     createdAt: row.createdAt,
   };
 }
@@ -57,5 +58,10 @@ export class DrizzleUserRepository implements UserRepository {
       .limit(1);
     if (!row) throw new Error("failed to get or create user");
     return toDomain(row);
+  }
+
+  async updateTimezone(userId: string, timezone: string): Promise<void> {
+    const db = this.getDb();
+    await db.update(users).set({ timezone }).where(eq(users.id, userId));
   }
 }

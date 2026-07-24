@@ -102,6 +102,36 @@ export function requireHttpsUrl(value: unknown, field: string): string {
   return s;
 }
 
+/** An array of strings; throws otherwise (empty arrays are allowed — callers enforce non-empty if needed). */
+export function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    throw new BadRequestError(`${field} must be an array of strings`);
+  }
+  return value;
+}
+
+/** An array of finite numbers; throws otherwise. */
+export function requireNumberArray(value: unknown, field: string): number[] {
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "number" || !Number.isFinite(v))) {
+    throw new BadRequestError(`${field} must be an array of numbers`);
+  }
+  return value;
+}
+
+/** An optional boolean: returns `fallback` when absent, else throws unless the value is a boolean. */
+export function optionalBoolean(value: unknown, field: string, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") throw new BadRequestError(`${field} must be a boolean`);
+  return value;
+}
+
+/** Optional boolean that stays `undefined` when absent/null (for PATCH no-change semantics); throws otherwise unless the value is a boolean. */
+export function optionalBooleanOrUndefined(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") throw new BadRequestError(`${field} must be a boolean`);
+  return value;
+}
+
 /** A calendar month `YYYY-MM` (01-12); throws otherwise. */
 export function requireMonth(value: unknown, field = "month"): string {
   const s = requireString(value, field);

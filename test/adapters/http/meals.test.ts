@@ -70,10 +70,20 @@ class InMemoryUserRepository implements UserRepository {
       firebaseUid: input.firebaseUid,
       email: input.email,
       displayName: input.displayName,
+      timezone: "Asia/Taipei",
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
     return user;
+  }
+
+  async updateTimezone(userId: string, timezone: string): Promise<void> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) {
+        user.timezone = timezone;
+        return;
+      }
+    }
   }
 }
 
@@ -387,6 +397,26 @@ function buildApp() {
     },
     pushSender: {
       send: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    reminderScheduleRepository: {
+      create: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listByUser: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      get: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      update: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      delete: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listActiveAll: async () => {
         throw new Error("not implemented in this test's fakes");
       },
     },
