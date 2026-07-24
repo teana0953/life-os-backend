@@ -5,3 +5,7 @@ FIREBASE_PROJECT_ID=your-firebase-project-id
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:you@example.com
+# chaodays relay (optional). CHAODAYS_RELAY_BASE is non-secret; CHAODAYS_RELAY_SECRET
+# is a secret (set with `wrangler secret put CHAODAYS_RELAY_SECRET` in deployed environments, not here).
+CHAODAYS_RELAY_BASE=
+CHAODAYS_RELAY_SECRET=

@@ -1,0 +1,16 @@
+# chaodays egress relay — ONE site block to add to the box's EXISTING Caddy config
+# (the box already runs Caddy + other services). Append it to the main Caddyfile,
+# or drop it in the imported sites dir — do NOT replace the existing config.
+# Step-by-step: docs/runbooks/chaodays-relay-setup.md. Replace both placeholders.
+REPLACE_WITH_IP_DASHED.nip.io {
+    @authed header X-Relay-Secret "REPLACE_WITH_RELAY_SECRET"
+    handle @authed {
+        reverse_proxy https://api.chaodays.app {
+            header_up Host api.chaodays.app
+            header_up -X-Relay-Secret
+        }
+    }
+    handle {
+        respond 403
+    }
+}
