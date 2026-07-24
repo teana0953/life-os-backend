@@ -11,6 +11,8 @@ import { DrizzleMealRepository } from "./contexts/health/adapters/drizzle-meal-r
 import { DrizzleMenstrualRepository } from "./contexts/health/adapters/drizzle-menstrual-repository";
 import { DrizzleVitalsRepository } from "./contexts/health/adapters/drizzle-vitals-repository";
 import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
+import { DrizzlePushSubscriptionRepository } from "./contexts/notifications/adapters/drizzle-push-subscription-repository";
+import { WebPushSender } from "./contexts/notifications/adapters/web-push-sender";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
 import { createDbClient, type Db } from "./shared/db/client";
@@ -20,6 +22,10 @@ export interface Env {
   FIREBASE_PROJECT_ID: string;
   /** Optional deployed web app origin (Cloudflare Pages) to allow via CORS. */
   ALLOWED_WEB_ORIGIN?: string;
+  /** Optional Web Push (VAPID) config — unset until a deploy's secrets are provisioned (D6 in design.md). */
+  VAPID_PUBLIC_KEY?: string;
+  VAPID_PRIVATE_KEY?: string;
+  VAPID_SUBJECT?: string;
 }
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
@@ -50,6 +56,12 @@ export default {
     const menstrualRepository = new DrizzleMenstrualRepository(getDb);
     const bodyProfileRepository = new DrizzleBodyProfileRepository(getDb);
     const healthCalendarRepository = new DrizzleHealthCalendarRepository(getDb);
+    const pushSubscriptionRepository = new DrizzlePushSubscriptionRepository(getDb);
+    const pushSender = new WebPushSender({
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY,
+      subject: env.VAPID_SUBJECT,
+    });
 
     const app = createApp({
       projectId: env.FIREBASE_PROJECT_ID,
@@ -66,6 +78,9 @@ export default {
       bodyProfileRepository,
       healthCalendarRepository,
       chaodaysClient,
+      pushSubscriptionRepository,
+      pushSender,
+      vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
         await getDb().execute(sql`select 1`);

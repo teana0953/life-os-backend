@@ -203,6 +203,20 @@ export const bodyProfile = pgTable("body_profile", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// push_subscription: one row per browser/device Web Push subscription. `endpoint`
+// is globally unique to a subscription (D5 in design.md), so subscribing upserts
+// on conflict(endpoint) rather than being keyed by user.
+export const pushSubscription = pgTable("push_subscription", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const vitals = pgTable(
   "vitals",
   {

@@ -87,6 +87,21 @@ export function requireDay(value: unknown, field = "day"): string {
   throw new BadRequestError(`${field} must be a valid date (YYYY-MM-DD)`);
 }
 
+/** A non-empty string that parses as an `https://` URL; throws otherwise. */
+export function requireHttpsUrl(value: unknown, field: string): string {
+  const s = requireString(value, field);
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    throw new BadRequestError(`${field} must be a valid https URL`);
+  }
+  if (url.protocol !== "https:") {
+    throw new BadRequestError(`${field} must be a valid https URL`);
+  }
+  return s;
+}
+
 /** A calendar month `YYYY-MM` (01-12); throws otherwise. */
 export function requireMonth(value: unknown, field = "month"): string {
   const s = requireString(value, field);
