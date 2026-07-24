@@ -1,164 +1,130 @@
-# Runbook — chaodays relay setup (existing Caddy box)
+# Runbook — chaodays relay setup (Dockerized Caddy on the `flow` box)
 
-Step-by-step to stand up the chaodays egress relay on the **existing** Lightsail
-box that **already runs Caddy and other services**. We **add one site block** to
-the current Caddy config — we do **not** install a second Caddy or replace the
-existing config. Caddy serves many sites on 80/443 by Host/SNI, so an extra site
-block coexists with whatever is already there.
+Stand up the chaodays egress relay on the Lightsail box that already runs Caddy in
+Docker (a compose project at `/opt/flow`, alongside other, unrelated sites). We
+**add one site block** to the existing `/opt/flow/Caddyfile` — Caddy serves many
+sites on 80/443 by Host, so the relay coexists with the current services. We do
+**not** replace anything or run a second Caddy.
 
-Background & rationale: see `relay/README.md` and the change `add-chaodays-relay`.
-The relay only proxies to `api.chaodays.app`, only for callers with the shared
-secret, and strips the secret before forwarding.
+Why a relay: chaodays sits behind Cloudflare and blocks requests originating from a
+Cloudflare Worker (confirmed — an AWS IP gets a clean 401, the Worker is blocked).
+The relay makes the Worker's chaodays calls egress from this box's AWS IP. The relay
+only proxies to `api.chaodays.app`, only for callers with the shared secret, and
+strips the secret before forwarding.
 
-Prereqs: SSH access to the box; ability to edit the Lightsail console (static IP +
-firewall); repo access to set GitHub secrets.
+This box (discovered facts):
+- Caddy container: **`flow-caddy-1`** (`caddy:2`), publishes `0.0.0.0:80` + `:443`.
+- Config: bind mount **`/opt/flow/Caddyfile`** → `/etc/caddy/Caddyfile` (single file).
+- Cert storage: `flow_caddy_data` volume (persistent).
+- Existing `/opt/flow/Caddyfile`: a global `{ email … }` block + the other sites.
+- Relay host: the box's static **public IPv4** as a dashed `nip.io` name — write it
+  `<ip-dashed>.nip.io` (e.g. `1.2.3.4` → `1-2-3-4.nip.io`). Derive it on the box with
+  `curl -s -4 ifconfig.me`.
 
----
-
-## Step 0 — Discover the current Caddy layout (run on the box)
-
-```sh
-caddy version
-# Is Caddy a systemd service, and which config file does it load?
-systemctl cat caddy 2>/dev/null | grep -E 'ExecStart|--config'
-# Default is /etc/caddy/Caddyfile. Note the real path from the line above as $CADDYFILE.
-# Does the config pull in a sites directory via `import`?
-sudo grep -nE '^\s*import' /etc/caddy/Caddyfile 2>/dev/null || echo "(no import lines)"
-# Confirm Caddy already owns 80 + 443 (so the firewall is already open for them):
-sudo ss -ltnp | grep -E ':80 |:443 ' || echo "(check which process holds 80/443)"
-```
-
-Outcome — you now know:
-- **A.** config is one file (`$CADDYFILE`, usually `/etc/caddy/Caddyfile`) → we
-  **append** a site block, **or**
-- **B.** the config has `import sites/*.caddy` (or similar) → we **drop a snippet
-  file** into that directory instead.
-
-If unsure, paste the output back and I'll tell you which.
+All commands run on the box; `docker` needs `sudo`; the box shell is ASCII-only.
+`<ip-dashed>.nip.io` below is a placeholder — substitute the box's actual dashed IP.
 
 ---
 
-## Step 1 — Static IP + the nip.io hostname
+## Step 1 — Static IP (verify)
 
-The nip.io hostname and its TLS cert are bound to the box's public IP; it **must**
-be a Lightsail **static IP** or a reboot breaks the relay.
+The nip.io host + its cert are bound to the box's static public IPv4; it must be a Lightsail
+**static IP** or a reboot breaks the relay. Lightsail console → Networking →
+confirm a static IP is attached to this instance. (Ports 80/443 are already open —
+the existing Caddy serves them.)
 
-1. Lightsail console → **Networking** → **Attach static IP** to this instance (skip
-   if one is already attached). Note the IP.
-2. On the box, confirm the public IP and derive the host (dots → dashes):
-
-```sh
-curl -s ifconfig.me; echo
-# e.g. 13.52.1.2  ->  host = 13-52-1-2.nip.io
-```
-
-Record `HOST=<ip-dashed>.nip.io`.
-
----
-
-## Step 2 — Firewall (verify, likely already open)
-
-Because the existing Caddy already serves HTTPS, **443** is almost certainly open
-in Lightsail. **80** must also be open (Let's Encrypt HTTP-01 challenge for the new
-host). Lightsail console → **Networking → IPv4 Firewall**: ensure both **80** and
-**443** (TCP) are present. No change needed if they already are.
-
----
-
-## Step 3 — Generate the shared secret
+## Step 2 — Generate the shared secret
 
 ```sh
 openssl rand -hex 32
 ```
 
-Record it as `RELAY_SECRET`. It goes in two places: the Caddy site block (Step 4)
-and the Worker's GitHub secret (Step 6). They must match exactly.
+Keep the output — it goes in the Caddy site block (Step 3) and the Worker's GitHub
+secret (Step 6). They must match exactly.
 
----
+## Step 3 — Append the relay site block to `/opt/flow/Caddyfile`
 
-## Step 4 — Add the relay site block to the existing Caddy
+Append this block to the **end** of the file (a new top-level site block, after the
+existing site blocks; the leading `{ email … }` global block stays first):
 
-Use the block from `relay/Caddyfile`, substituting `HOST` and `RELAY_SECRET`:
+```sh
+sudo tee -a /opt/flow/Caddyfile >/dev/null <<'EOF'
 
-```caddyfile
-HOST {
-    @authed header X-Relay-Secret "RELAY_SECRET"
-    handle @authed {
-        reverse_proxy https://api.chaodays.app {
-            header_up Host api.chaodays.app
-            header_up -X-Relay-Secret
+<ip-dashed>.nip.io {
+        @authed header X-Relay-Secret "PASTE_SECRET_HERE"
+        handle @authed {
+                reverse_proxy https://api.chaodays.app {
+                        header_up Host api.chaodays.app
+                        header_up -X-Relay-Secret
+                }
         }
-    }
-    handle {
-        respond 403
-    }
+        handle {
+                respond 403
+        }
 }
+EOF
 ```
 
-**Variant A — single Caddyfile:** append the block to the **end** of `$CADDYFILE`
-(a new top-level site block, outside any existing site's braces).
-
-**Variant B — `import` / sites dir:** create a new file in the imported directory,
-e.g. `/etc/caddy/sites/chaodays-relay.caddy`, containing just the block.
-
-Then validate, reload, and watch the cert get issued:
+Then replace the placeholder with the real secret (avoids putting the secret in
+shell history):
 
 ```sh
-sudo caddy validate --config "$CADDYFILE"      # syntax check before reloading
-sudo systemctl reload caddy                     # zero-downtime; existing sites unaffected
-sudo journalctl -u caddy -f | grep -i "$HOST"   # wait for "certificate obtained" for HOST, then Ctrl-C
+sudo nano /opt/flow/Caddyfile   # change PASTE_SECRET_HERE -> the Step 2 secret, save
 ```
 
-> If validate/reload errors, the existing sites keep running on the old config
-> (reload is atomic). Fix the block and reload again.
-
----
-
-## Step 5 — Verify the relay (from the box or anywhere)
+## Step 4 — Validate + reload (zero-downtime)
 
 ```sh
-# With the secret: chaodays' own 401 (bad creds) comes back through the relay.
-curl -si "https://$HOST/api/v1/users/sign_in" \
-  -H "X-Relay-Secret: $RELAY_SECRET" \
+sudo docker exec flow-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+sudo docker exec flow-caddy-1 caddy reload   --config /etc/caddy/Caddyfile
+sudo docker logs -f flow-caddy-1   # watch for "certificate obtained" for <ip-dashed>.nip.io, then Ctrl-C
+```
+
+Reload is atomic — if validate/reload errors, the other sites keep running on
+the old config; fix the block and reload again.
+
+> Cert note: Caddy tries Let's Encrypt and ZeroSSL. If LE rate-limits `nip.io`
+> ("too many certificates already issued"), Caddy falls back to ZeroSSL
+> automatically. If both fail, switch the host to the same dashed IP under
+> `sslip.io` (`<ip-dashed>.sslip.io`) in the block and reload.
+
+## Step 5 — Verify the relay
+
+```sh
+# With the secret -> chaodays' own 401 (bad creds) comes back through the relay:
+curl -si https://<ip-dashed>.nip.io/api/v1/users/sign_in \
+  -H "X-Relay-Secret: <secret>" \
   -H 'Content-Type: application/json' \
   -d '{"user":{"uid":"x","password":"wrong"}}' | head -1
 
-# Without the header: the relay rejects with 403, never reaching chaodays.
-curl -si "https://$HOST/api/v1/users/sign_in" \
+# Without the header -> the relay rejects with 403, never reaching chaodays:
+curl -si https://<ip-dashed>.nip.io/api/v1/users/sign_in \
   -H 'Content-Type: application/json' \
   -d '{"user":{"uid":"x","password":"wrong"}}' | head -1
 ```
 
-Expected: first → `HTTP/2 401`; second → `HTTP/2 403`. If the first is 403, the
-secret in the site block doesn't match the header; if TLS fails, the cert hasn't
-finished issuing (re-check Step 4's journal) or 80 is closed (Step 2).
-
----
+Expected: first `HTTP/2 401`, second `HTTP/2 403`. If the first is 403 → the secret
+in the block ≠ the header; if TLS fails → the cert hasn't finished issuing (re-watch
+Step 4 logs).
 
 ## Step 6 — Worker side (GitHub secrets, Model A)
 
-Set both on the `life-os-backend` repo (GitHub is the single source of truth; CD
-uploads them via wrangler on deploy):
+On the `life-os-backend` repo (GitHub is the source of truth; CD uploads via
+wrangler):
 
-- `CHAODAYS_RELAY_BASE` = `https://<HOST>/api/v1` (a non-secret value — a repo
-  **variable** or secret)
-- `CHAODAYS_RELAY_SECRET` = the `RELAY_SECRET` from Step 3 (a repo **secret**)
+- `CHAODAYS_RELAY_BASE` = `https://<ip-dashed>.nip.io/api/v1`
+- `CHAODAYS_RELAY_SECRET` = the Step 2 secret
 
-Ensure `deploy.yml` uploads them (`wrangler secret put CHAODAYS_RELAY_SECRET`, and
-`CHAODAYS_RELAY_BASE` as a var/secret). Then merge PR #35 (or redeploy). When
-`CHAODAYS_RELAY_BASE` is unset the backend calls chaodays directly, so nothing
-breaks until both are set.
-
-Final check: run a real chaodays import in the app — it should now succeed instead
-of failing with `chaodays_unavailable`.
+Ensure `deploy.yml` pushes both to the Worker, then merge PR #35 (or redeploy).
+While `CHAODAYS_RELAY_BASE` is unset the backend calls chaodays directly, so nothing
+breaks until both are set. Final check: run a real chaodays import in the app.
 
 ---
 
 ## Rollback
 
-- **Relay off:** unset `CHAODAYS_RELAY_BASE` (GitHub) and redeploy → backend goes
-  back to calling chaodays directly (which fails from the Worker, but nothing else
-  is affected).
-- **Remove the site block:** delete the block (Variant A) or the snippet file
-  (Variant B), `sudo caddy validate` + `sudo systemctl reload caddy`. Other sites
-  are untouched.
+- **Relay off:** unset `CHAODAYS_RELAY_BASE` in GitHub + redeploy → backend calls
+  chaodays directly again.
+- **Remove the site block:** delete the appended block from `/opt/flow/Caddyfile`,
+  then `sudo docker exec flow-caddy-1 caddy validate --config /etc/caddy/Caddyfile`
+  + `caddy reload`. The other sites are untouched.
