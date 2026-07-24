@@ -77,6 +77,7 @@ import {
   createAnswerCareSlotHandler,
   createCreateCareItemHandler,
   createDeleteCareItemHandler,
+  createGetCareTodayHandler,
   createListCareItemsHandler,
   createUpdateCareItemHandler,
 } from "./routes/care";
@@ -295,6 +296,7 @@ export function createApp(options: CreateAppOptions) {
   app.patch("/api/care/items/:id", authMiddleware, createUpdateCareItemHandler(careOptions));
   app.delete("/api/care/items/:id", authMiddleware, createDeleteCareItemHandler(careOptions));
   app.post("/api/care/log", authMiddleware, createAnswerCareSlotHandler(careOptions));
+  app.get("/api/care/today", authMiddleware, createGetCareTodayHandler(careOptions));
 
   return app;
 }

@@ -7,6 +7,7 @@ import {
   listCareItems,
   updateCareItem,
 } from "../../../contexts/notifications/application/care-items";
+import { getCareToday, type CareTodaySlot } from "../../../contexts/notifications/application/get-care-today";
 import type {
   CareCategory,
   CareItemRepository,
@@ -87,6 +88,22 @@ function itemToJson(item: CareItemWithSchedules) {
     stock: item.stock,
     stock_alert: item.stockAlert,
     schedules: item.schedules.map(scheduleToJson),
+  };
+}
+
+function careTodaySlotToJson(slot: CareTodaySlot) {
+  return {
+    care_item_id: slot.careItemId,
+    care_schedule_id: slot.careScheduleId,
+    category: slot.category,
+    title: slot.title,
+    note: slot.note,
+    dose: slot.dose,
+    time_of_day: slot.timeOfDay,
+    local_date: slot.localDate,
+    status: slot.status,
+    done_time: slot.doneTime ? slot.doneTime.toISOString() : null,
+    dose_quantity: slot.doseQuantity,
   };
 }
 
@@ -180,6 +197,19 @@ function requireCareLogStatus(value: unknown): "done" | "skipped" {
   const s = requireString(value, "status");
   if (s !== "done" && s !== "skipped") throw new BadRequestError("status must be 'done' or 'skipped'");
   return s;
+}
+
+/** Protected `GET /api/care/today`: today's active care slots (owner's local time), each tagged with a derived status. */
+export function createGetCareTodayHandler(options: CareHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const result = await getCareToday(
+      { userRepo: options.userRepository, careItemRepo: options.careItemRepository, careLogRepo: options.careLogRepository },
+      userId,
+      new Date(),
+    );
+    return c.json({ date: result.date, items: result.items.map(careTodaySlotToJson) });
+  };
 }
 
 /** Protected `POST /api/care/log`: record a slot as done/skipped; 404 when the schedule isn't owned by the caller. */

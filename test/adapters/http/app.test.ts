@@ -160,6 +160,13 @@ class InMemoryUserRepository implements UserRepository {
       }
     }
   }
+
+  async getById(userId: string): Promise<User | null> {
+    for (const user of this.usersByFirebaseUid.values()) {
+      if (user.id === userId) return user;
+    }
+    return null;
+  }
 }
 
 function buildApp(
@@ -204,11 +211,13 @@ function buildApp(
       update: notImplemented,
       delete: notImplemented,
       listActiveSchedules: notImplemented,
+      listActiveSchedulesForUserOn: notImplemented,
       decrementStock: notImplemented,
     },
     careLogRepository: {
       upsertIfAbsent: notImplemented,
       getBySlot: notImplemented,
+      listByUserAndDate: notImplemented,
     },
     vapidPublicKey: "",
     ping: overrides.ping ?? (async () => {}),
@@ -356,6 +365,9 @@ describe("GET /api/me", () => {
           throw new Error("connection string: postgres://user:secret@host/db");
         },
         async updateTimezone() {
+          throw new Error("not implemented in this test's fakes");
+        },
+        async getById() {
           throw new Error("not implemented in this test's fakes");
         },
       },

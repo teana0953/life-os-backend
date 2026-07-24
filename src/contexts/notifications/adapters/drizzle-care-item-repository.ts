@@ -2,8 +2,10 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { Db } from "../../../shared/db/client";
 import { careItem, careSchedule, users } from "../../../shared/db/schema";
+import { isActiveOn } from "../domain/care-schedule";
 import type {
   ActiveCareSchedule,
+  ActiveScheduleForUser,
   CareCategory,
   CareItem,
   CareItemRepository,
@@ -228,6 +230,20 @@ export class DrizzleCareItemRepository implements CareItemRepository {
       schedule: scheduleToDomain(row.schedule),
       timezone: row.timezone,
     }));
+  }
+
+  async listActiveSchedulesForUserOn(userId: string, localDate: string): Promise<ActiveScheduleForUser[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select({ item: careItem, schedule: careSchedule })
+      .from(careSchedule)
+      .innerJoin(careItem, eq(careSchedule.careItemId, careItem.id))
+      .where(and(eq(careItem.userId, userId), eq(careSchedule.enabled, true)));
+
+    return rows
+      .map((row) => ({ item: itemToDomain(row.item), schedule: scheduleToDomain(row.schedule) }))
+      .filter((row) => isActiveOn(row.schedule, localDate))
+      .sort((a, b) => a.schedule.timeOfDay.localeCompare(b.schedule.timeOfDay) || a.item.title.localeCompare(b.item.title));
   }
 
   async decrementStock(itemId: string, amount: number): Promise<void> {

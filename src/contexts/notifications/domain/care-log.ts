@@ -34,4 +34,6 @@ export interface CareLogRepository {
    */
   upsertIfAbsent(input: CreateCareLogInput): Promise<{ log: CareLog; created: boolean }>;
   getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null>;
+  /** All of `userId`'s logs for `localDate` — one batch read for the care-today endpoint (D2 in design.md). */
+  listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]>;
 }

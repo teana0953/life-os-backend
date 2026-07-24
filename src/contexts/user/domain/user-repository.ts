@@ -15,4 +15,6 @@ export interface UserRepository {
   getOrCreate(input: GetOrCreateUserInput): Promise<User>;
   /** Sets the user's IANA timezone (validated by the caller before this is invoked). */
   updateTimezone(userId: string, timezone: string): Promise<void>;
+  /** The user by internal id, or `null` if not found. */
+  getById(userId: string): Promise<User | null>;
 }

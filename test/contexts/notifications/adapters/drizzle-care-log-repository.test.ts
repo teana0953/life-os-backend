@@ -87,3 +87,41 @@ describe("DrizzleCareLogRepository.upsertIfAbsent", () => {
     expect(result.log.status).toBe("done"); // the existing row, unchanged by the new (ignored) status
   });
 });
+
+function fakeDbReturningRows(rows: unknown[]): Db {
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => rows,
+      }),
+    }),
+  } as unknown as Db;
+}
+
+describe("DrizzleCareLogRepository.listByUserAndDate", () => {
+  it("maps each row to a CareLog", async () => {
+    const repo = new DrizzleCareLogRepository(() => fakeDbReturningRows([CREATED_ROW]));
+
+    const result = await repo.listByUserAndDate("user-1", "2026-07-24");
+
+    expect(result).toEqual([
+      {
+        id: "log-1",
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-24",
+        timeOfDay: "09:00",
+        status: "done",
+        doneTime: CREATED_ROW.doneTime,
+        doseQuantity: 2,
+      },
+    ]);
+  });
+
+  it("returns an empty array when there are no logs for that day", async () => {
+    const repo = new DrizzleCareLogRepository(() => fakeDbReturningRows([]));
+
+    expect(await repo.listByUserAndDate("user-1", "2026-07-24")).toEqual([]);
+  });
+});

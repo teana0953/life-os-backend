@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { runCareTick } from "../../../../src/contexts/notifications/application/run-care-tick";
 import type {
   ActiveCareSchedule,
+  ActiveScheduleForUser,
   CareCategory,
   CareItem,
   CareItemRepository,
@@ -67,6 +68,10 @@ class InMemoryCareItemRepository implements CareItemRepository {
   async listActiveSchedules(): Promise<ActiveCareSchedule[]> {
     return this.entries.filter((e) => e.schedule.enabled);
   }
+
+  async listActiveSchedulesForUserOn(): Promise<ActiveScheduleForUser[]> {
+    throw new Error("not used by these tests");
+  }
 }
 
 class InMemoryCareLogRepository implements CareLogRepository {
@@ -98,6 +103,10 @@ class InMemoryCareLogRepository implements CareLogRepository {
 
   async getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null> {
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
+  }
+
+  async listByUserAndDate(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
   }
 
   /** Test helper: seed a log directly (simulating a prior HTTP answer), bypassing insert-if-absent. */

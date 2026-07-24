@@ -64,4 +64,10 @@ export class DrizzleUserRepository implements UserRepository {
     const db = this.getDb();
     await db.update(users).set({ timezone }).where(eq(users.id, userId));
   }
+
+  async getById(userId: string): Promise<User | null> {
+    const db = this.getDb();
+    const [row] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    return row ? toDomain(row) : null;
+  }
 }

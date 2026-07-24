@@ -1,4 +1,5 @@
-import { localMinute, localParts, weekdayOf, weeksSince } from "../domain/reminder-clock";
+import { localMinute, localParts } from "../domain/reminder-clock";
+import { isActiveOn } from "../domain/care-schedule";
 import type { CareItem, CareItemRepository, CareSchedule } from "../domain/care-item";
 import type { CareLogRepository } from "../domain/care-log";
 import type { CareOccurrenceRepository } from "../domain/care-occurrence";
@@ -18,19 +19,6 @@ export interface RunCareTickDeps {
   careOccurrenceRepo: CareOccurrenceRepository;
   subscriptionRepo: PushSubscriptionRepository;
   pushSender: PushSender;
-}
-
-/**
- * Whether `schedule` is active on `localDate`: weekday selected (or
- * `repeatDays` empty = every day, D3), within `[startDate, endDate]`, and the
- * every-N-weeks interval (anchored to `startDate`) is on.
- */
-function isActiveOn(schedule: CareSchedule, localDate: string): boolean {
-  if (schedule.repeatDays.length > 0 && !schedule.repeatDays.includes(weekdayOf(localDate))) return false;
-  if (localDate < schedule.startDate) return false;
-  if (schedule.endDate !== null && localDate > schedule.endDate) return false;
-  const weeks = weeksSince(schedule.startDate, localDate);
-  return weeks >= 0 && weeks % schedule.weekInterval === 0;
 }
 
 /** Push body: dose summary for medication (when set), else the free-text note. */

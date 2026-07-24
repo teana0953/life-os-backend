@@ -66,4 +66,13 @@ export class DrizzleCareLogRepository implements CareLogRepository {
       .limit(1);
     return row ? toDomain(row) : null;
   }
+
+  async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(careLog)
+      .where(and(eq(careLog.userId, userId), eq(careLog.localDate, localDate)));
+    return rows.map(toDomain);
+  }
 }
