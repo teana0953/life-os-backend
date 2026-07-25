@@ -12,10 +12,17 @@
 ## 資料模型與計算
 
 - **scheduled(當日排程數)**:每個 schedule 一天最多一個 slot(單一 `timeOfDay`),所以
-  當日排程數 = 當日 `isActiveOn(schedule, localDate)` 為真的 schedule 數。schedule 全集用
-  `CareItemRepository.listByUser(userId)`(回 `CareItemWithSchedules[]`)展平取得——不需新增
-  schedule-listing 方法。`isActiveOn`(`domain/care-schedule.ts`,已被 care-today/cron 共用)
-  處理 weekday / start-end / every-N-weeks,純函式,直接重用。
+  當日排程數 = 當日**且 `enabled===true`** 的 schedule 中 `isActiveOn(schedule, localDate)`
+  為真的數量。schedule 全集用 `CareItemRepository.listByUser(userId)`(回
+  `CareItemWithSchedules[]`)展平取得——不需新增 schedule-listing 方法。**必須自行濾 `enabled`**:
+  `isActiveOn` 與 `listByUser` 都不濾 enabled,但其他 active 路徑(listActiveSchedules*、
+  run-care-tick)都濾;停用排程不會產生 log,不濾會灌水 scheduled、低估達成率。`isActiveOn`
+  (`domain/care-schedule.ts`,已被 care-today/cron 共用)處理 weekday / start-end /
+  every-N-weeks,純函式,直接重用。
+- **回溯不對稱(已知取捨)**:`scheduled` 由**當前**排程定義回溯套到每一過去日,done/skipped/
+  missed 來自歷史 log。使用者編輯/停用/刪除排程後,過去日可能不對稱(done 可能 > scheduled、
+  或 missed 落在 scheduled=0 的日)。這是「原始計數、rate 交前端」模型的固有取捨;前端算 rate
+  時 clamp ≤100%。以測試釘住此行為。
 - **done / skipped / missed**:當日 `care_log` 依 status 計數。past-due 未答覆的 slot 由
   run-care-tick cron 標成 `missed` log,所以已過的完整日通常 done+skipped+missed ≈ scheduled;
   端點只回原始計數,rate 與週彙總交給前端(簡單、彈性)。
