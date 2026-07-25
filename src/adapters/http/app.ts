@@ -54,6 +54,7 @@ import { createHealthHandler } from "./routes/health";
 import {
   createImportChaodaysBowelHandler,
   createImportChaodaysDietHandler,
+  createImportChaodaysDietTargetHandler,
   createImportChaodaysWaterHandler,
   createImportChaodaysWeightHandler,
 } from "./routes/import-chaodays";
@@ -274,6 +275,17 @@ export function createApp(options: CreateAppOptions) {
     chaodaysClient: options.chaodaysClient,
   };
   app.post("/api/import/chaodays/bowel", authMiddleware, createImportChaodaysBowelHandler(importChaodaysBowelOptions));
+  const importChaodaysDietTargetOptions = {
+    userRepository: options.userRepository,
+    dailyTargetRepository: options.dailyTargetRepository,
+    waterRepository: options.waterRepository,
+    chaodaysClient: options.chaodaysClient,
+  };
+  app.post(
+    "/api/import/chaodays/diet-target",
+    authMiddleware,
+    createImportChaodaysDietTargetHandler(importChaodaysDietTargetOptions),
+  );
 
   const pushOptions = {
     userRepository: options.userRepository,

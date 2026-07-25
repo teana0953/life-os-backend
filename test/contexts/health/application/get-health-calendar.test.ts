@@ -46,6 +46,9 @@ class FakeDailyTargetRepository implements DailyTargetRepository {
   async set(_input: SetDailyTargetInput): Promise<DailyTarget> {
     throw new Error("not used");
   }
+  async setMany(_rows: SetDailyTargetInput[]): Promise<void> {
+    throw new Error("not used");
+  }
 }
 
 /** A meal item carrying only food-group portions (nutrients zeroed, quantity 1). */

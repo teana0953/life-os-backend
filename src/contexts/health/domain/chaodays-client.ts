@@ -50,6 +50,17 @@ export interface ChaodaysDefecationRecord {
   note: string;
 }
 
+/** A single day's diet menu (targets, not actuals) from chaodays. oil/sugar, content, and sum_* are dropped. */
+export interface ChaodaysDietMenu {
+  /** ISO calendar date, e.g. "2026-07-18". */
+  date: string;
+  staple: number;
+  meat: number;
+  fruit: number;
+  veg: number;
+  waterTargetMl: number;
+}
+
 /** Driven port for the external chaodays API. */
 export interface ChaodaysClient {
   signIn(uid: string, password: string): Promise<ChaodaysSession>;
@@ -77,6 +88,12 @@ export interface ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }>;
+  /** Returns the rotated session (devise token rotates each response) alongside the menus. */
+  fetchDietMenus(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; menus: ChaodaysDietMenu[] }>;
 }
 
 /** chaodays rejected the sign-in (wrong uid/password). Message is fixed and generic — never embeds credentials. */

@@ -36,6 +36,7 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   getLatestOnOrBefore: async (): Promise<DailyTarget | null> => null,
   listInRange: async () => [],
   set: notImplemented,
+  setMany: notImplemented,
 };
 const stubMealRepository = { upsertMealWithItems: notImplemented, listMealsByDay: async () => [], listMealsInRange: async () => [], listLoggedDays: notImplemented, updateMealTime: notImplemented, deleteMeal: notImplemented, updateItem: notImplemented, deleteItem: notImplemented } as unknown as MealRepository;
 

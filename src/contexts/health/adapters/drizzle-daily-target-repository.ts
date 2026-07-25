@@ -79,4 +79,28 @@ export class DrizzleDailyTargetRepository implements DailyTargetRepository {
     if (!row) throw new Error("failed to set daily target");
     return toDomain(row);
   }
+
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    if (rows.length === 0) return;
+    const db = this.getDb();
+    const [first, ...rest] = rows.map((input) => {
+      // Bonus columns are included only when the input provides them, so an
+      // omitted bonus takes the DB default on insert and is left untouched
+      // (not reset) on conflict — the exercise bonus is preserved.
+      const values = {
+        userId: input.userId,
+        day: input.day,
+        baseStaple: String(input.baseStaple),
+        baseMeat: String(input.baseMeat),
+        baseFruit: String(input.baseFruit),
+        baseVeg: String(input.baseVeg),
+        ...(input.bonusStaple !== undefined ? { bonusStaple: String(input.bonusStaple) } : {}),
+        ...(input.bonusMeat !== undefined ? { bonusMeat: String(input.bonusMeat) } : {}),
+        ...(input.bonusFruit !== undefined ? { bonusFruit: String(input.bonusFruit) } : {}),
+        ...(input.bonusVeg !== undefined ? { bonusVeg: String(input.bonusVeg) } : {}),
+      };
+      return db.insert(dailyTarget).values(values).onConflictDoUpdate({ target: [dailyTarget.userId, dailyTarget.day], set: values });
+    });
+    await db.batch([first, ...rest]);
+  }
 }

@@ -21,4 +21,6 @@ export interface DailyTargetRepository {
   listInRange(userId: string, from: string, to: string): Promise<DailyTarget[]>;
   /** Upsert semantics, keyed by (userId, day). */
   set(input: SetDailyTargetInput): Promise<DailyTarget>;
+  /** Same semantics as `set`, for all `rows` in one batched write. Empty input is a no-op. */
+  setMany(rows: SetDailyTargetInput[]): Promise<void>;
 }

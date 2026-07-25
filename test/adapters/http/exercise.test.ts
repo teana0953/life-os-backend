@@ -26,6 +26,7 @@ const stubChaodaysClient: ChaodaysClient = {
   fetchDietRecords: notImplemented,
   fetchWaterRecords: notImplemented,
   fetchDefecationRecords: notImplemented,
+  fetchDietMenus: notImplemented,
 };
 const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   search: notImplemented,
@@ -53,7 +54,9 @@ const stubWaterRepository: WaterRepository = {
   listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
+  listTargetRange: notImplemented,
   setTarget: notImplemented,
+  setTargetMany: notImplemented,
 };
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
@@ -212,6 +215,9 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     this.targets = this.targets.filter((t) => !(t.userId === input.userId && t.day === input.day));
     this.targets.push(target);
     return target;
+  }
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    for (const row of rows) await this.set(row);
   }
 }
 

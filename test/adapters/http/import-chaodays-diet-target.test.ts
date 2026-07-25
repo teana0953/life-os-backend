@@ -2,15 +2,16 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
-import type { ChaodaysClient, ChaodaysSession, ChaodaysWeightRecord } from "../../../src/contexts/health/domain/chaodays-client";
+import type { ChaodaysClient, ChaodaysDietMenu, ChaodaysSession } from "../../../src/contexts/health/domain/chaodays-client";
 import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../src/contexts/health/domain/chaodays-client";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
-import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
-import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { DailyTarget } from "../../../src/contexts/health/domain/daily-target";
+import type { DailyTargetRepository, SetDailyTargetInput } from "../../../src/contexts/health/domain/daily-target-repository";
+import type { WaterIntake, WaterTarget } from "../../../src/contexts/health/domain/water";
+import type { SetWaterTargetInput, WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
-import type { VitalsRecord } from "../../../src/contexts/health/domain/vitals";
-import type { SetVitalsInput, VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
+import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
@@ -39,28 +40,19 @@ const stubMealRepository: MealRepository = {
   updateItem: notImplemented,
   deleteItem: notImplemented,
 };
-const stubDailyTargetRepository: DailyTargetRepository = {
-  get: notImplemented,
-  getLatestOnOrBefore: notImplemented,
-  listInRange: notImplemented,
-  set: notImplemented,
-  setMany: notImplemented,
-};
-const stubWaterRepository: WaterRepository = {
-  getIntake: notImplemented,
-  addIntake: notImplemented,
-  addIntakeMany: notImplemented,
-  listIntakeRange: notImplemented,
-  getTarget: notImplemented,
-  getLatestTargetOnOrBefore: notImplemented,
-  listTargetRange: notImplemented,
-  setTarget: notImplemented,
-  setTargetMany: notImplemented,
-};
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
   set: notImplemented,
   setMany: notImplemented,
+  listRange: notImplemented,
+};
+const stubVitalsRepository: VitalsRepository = {
+  get: notImplemented,
+  set: notImplemented,
+  setMany: notImplemented,
+  getLatestWeight: notImplemented,
+  getEarliestWeight: notImplemented,
+  getWeightDayCount: notImplemented,
   listRange: notImplemented,
 };
 const stubExerciseRepository: ExerciseRepository = {
@@ -144,51 +136,91 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
-class InMemoryVitalsRepository implements VitalsRepository {
-  private byUserDay = new Map<string, VitalsRecord>();
+class InMemoryDailyTargetRepository implements DailyTargetRepository {
+  private targetsByUserDay = new Map<string, DailyTarget>();
+  private nextId = 1;
 
-  seed(record: VitalsRecord) {
-    this.byUserDay.set(`${record.userId}:${record.day}`, record);
+  async get(userId: string, day: string): Promise<DailyTarget | null> {
+    return this.targetsByUserDay.get(`${userId}:${day}`) ?? null;
   }
 
-  async get(userId: string, day: string): Promise<VitalsRecord | null> {
-    return this.byUserDay.get(`${userId}:${day}`) ?? null;
+  async getLatestOnOrBefore(): Promise<DailyTarget | null> {
+    throw new Error("not used in this test");
   }
 
-  async set(input: SetVitalsInput): Promise<VitalsRecord> {
-    const record: VitalsRecord = {
+  async listInRange(userId: string, from: string, to: string): Promise<DailyTarget[]> {
+    return [...this.targetsByUserDay.values()].filter((t) => t.userId === userId && t.day >= from && t.day <= to);
+  }
+
+  async set(input: SetDailyTargetInput): Promise<DailyTarget> {
+    const target: DailyTarget = {
+      id: `target-${this.nextId++}`,
       userId: input.userId,
       day: input.day,
-      weightKg: input.weightKg,
-      bodyFatPct: input.bodyFatPct,
-      bpReadings: input.bpReadings,
-      glucoseReadings: input.glucoseReadings,
-      spo2Readings: input.spo2Readings,
+      baseStaple: input.baseStaple,
+      baseMeat: input.baseMeat,
+      baseFruit: input.baseFruit,
+      baseVeg: input.baseVeg,
+      bonusStaple: input.bonusStaple ?? 0,
+      bonusMeat: input.bonusMeat ?? 0,
+      bonusFruit: input.bonusFruit ?? 0,
+      bonusVeg: input.bonusVeg ?? 0,
     };
-    this.byUserDay.set(`${input.userId}:${input.day}`, record);
-    return record;
+    this.targetsByUserDay.set(`${input.userId}:${input.day}`, target);
+    return target;
   }
 
-  async setMany(rows: SetVitalsInput[]): Promise<void> {
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    for (const row of rows) await this.set(row);
+  }
+}
+
+class InMemoryWaterRepository implements WaterRepository {
+  private intakeByUserDay = new Map<string, WaterIntake>();
+  private targetByUserDay = new Map<string, WaterTarget>();
+
+  async getIntake(userId: string, day: string): Promise<WaterIntake | null> {
+    return this.intakeByUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async addIntake(userId: string, day: string, addMl: number): Promise<WaterIntake> {
+    const current = this.intakeByUserDay.get(`${userId}:${day}`);
+    const totalMl = Math.max(0, (current?.totalMl ?? 0) + addMl);
+    const intake: WaterIntake = { userId, day, totalMl };
+    this.intakeByUserDay.set(`${userId}:${day}`, intake);
+    return intake;
+  }
+
+  async addIntakeMany(rows: { userId: string; day: string; addMl: number }[]): Promise<void> {
     for (const row of rows) {
-      await this.set(row);
+      await this.addIntake(row.userId, row.day, row.addMl);
     }
   }
 
-  async getLatestWeight(): Promise<number | null> {
+  async listIntakeRange(userId: string, from: string, to: string): Promise<WaterIntake[]> {
+    return [...this.intakeByUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
+  }
+
+  async getTarget(userId: string, day: string): Promise<WaterTarget | null> {
+    return this.targetByUserDay.get(`${userId}:${day}`) ?? null;
+  }
+
+  async getLatestTargetOnOrBefore(): Promise<WaterTarget | null> {
     throw new Error("not used in this test");
   }
 
-  async getEarliestWeight(): Promise<number | null> {
-    throw new Error("not used in this test");
+  async listTargetRange(userId: string, from: string, to: string): Promise<WaterTarget[]> {
+    return [...this.targetByUserDay.values()].filter((t) => t.userId === userId && t.day >= from && t.day <= to);
   }
 
-  async getWeightDayCount(): Promise<number> {
-    throw new Error("not used in this test");
+  async setTarget(input: SetWaterTargetInput): Promise<WaterTarget> {
+    const target: WaterTarget = { userId: input.userId, day: input.day, targetMl: input.targetMl };
+    this.targetByUserDay.set(`${input.userId}:${input.day}`, target);
+    return target;
   }
 
-  async listRange(userId: string, from: string, to: string): Promise<VitalsRecord[]> {
-    return [...this.byUserDay.values()].filter((r) => r.userId === userId && r.day >= from && r.day <= to);
+  async setTargetMany(rows: SetWaterTargetInput[]): Promise<void> {
+    for (const row of rows) await this.setTarget(row);
   }
 }
 
@@ -196,7 +228,7 @@ const SESSION: ChaodaysSession = { accessToken: "token-1", client: "client-1", u
 
 class StubChaodaysClient implements ChaodaysClient {
   signInError: Error | null = null;
-  records: ChaodaysWeightRecord[] = [];
+  menus: ChaodaysDietMenu[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
 
@@ -206,13 +238,8 @@ class StubChaodaysClient implements ChaodaysClient {
     return SESSION;
   }
 
-  async fetchWeightRecords(
-    session: ChaodaysSession,
-    from: string,
-    to: string,
-  ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
-    this.fetchArgs = { from, to };
-    return { session, records: this.records };
+  fetchWeightRecords(): never {
+    throw new Error("not used in this test");
   }
 
   fetchDietRecords(): never {
@@ -227,13 +254,19 @@ class StubChaodaysClient implements ChaodaysClient {
     throw new Error("not used in this test");
   }
 
-  fetchDietMenus(): never {
-    throw new Error("not used in this test");
+  async fetchDietMenus(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; menus: ChaodaysDietMenu[] }> {
+    this.fetchArgs = { from, to };
+    return { session, menus: this.menus };
   }
 }
 
 function buildApp() {
-  const vitalsRepository = new InMemoryVitalsRepository();
+  const dailyTargetRepository = new InMemoryDailyTargetRepository();
+  const waterRepository = new InMemoryWaterRepository();
   const chaodaysClient = new StubChaodaysClient();
   const app = createApp({
     projectId: PROJECT_ID,
@@ -241,30 +274,22 @@ function buildApp() {
     userRepository: new InMemoryUserRepository(),
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
-    dailyTargetRepository: stubDailyTargetRepository,
-    waterRepository: stubWaterRepository,
+    dailyTargetRepository,
+    waterRepository,
     bowelRepository: stubBowelRepository,
-    vitalsRepository,
+    vitalsRepository: stubVitalsRepository,
     exerciseRepository: stubExerciseRepository,
     menstrualRepository: stubMenstrualRepository,
     bodyProfileRepository: stubBodyProfileRepository,
     healthCalendarRepository: { listLoggedDays: async () => [] },
     chaodaysClient,
     pushSubscriptionRepository: {
-      upsert: async () => {
-        throw new Error("not implemented in this test's fakes");
-      },
-      listByUser: async () => {
-        throw new Error("not implemented in this test's fakes");
-      },
-      deleteByEndpoint: async () => {
-        throw new Error("not implemented in this test's fakes");
-      },
+      upsert: notImplemented,
+      listByUser: notImplemented,
+      deleteByEndpoint: notImplemented,
     },
     pushSender: {
-      send: async () => {
-        throw new Error("not implemented in this test's fakes");
-      },
+      send: notImplemented,
     },
     careItemRepository: {
       create: notImplemented,
@@ -276,19 +301,16 @@ function buildApp() {
       listActiveSchedules: notImplemented,
       listActiveSchedulesForUserOn: notImplemented,
       decrementStock: notImplemented,
-      incrementStock: notImplemented,
     },
     careLogRepository: {
       upsertIfAbsent: notImplemented,
       getBySlot: notImplemented,
       listByUserAndDate: notImplemented,
-      listByUserAndDateRange: notImplemented,
-      upsert: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},
   });
-  return { app, vitalsRepository, chaodaysClient };
+  return { app, dailyTargetRepository, waterRepository, chaodaysClient };
 }
 
 const VALID_BODY = {
@@ -298,11 +320,11 @@ const VALID_BODY = {
   end_date: "2026-07-02",
 };
 
-describe("POST /api/import/chaodays/weight", () => {
+describe("POST /api/import/chaodays/diet-target", () => {
   it("requires auth", async () => {
     const { app } = buildApp();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet-target", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -311,28 +333,34 @@ describe("POST /api/import/chaodays/weight", () => {
     expect(res.status).toBe(401);
   });
 
-  it("imports weight records and returns the summary", async () => {
-    const { app, vitalsRepository, chaodaysClient } = buildApp();
+  it("imports diet menus and returns the summary", async () => {
+    const { app, dailyTargetRepository, waterRepository, chaodaysClient } = buildApp();
     const token = await validToken();
-    chaodaysClient.records = [
-      { date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 },
-      { date: "2026-07-02", weight: null, bodyFatPct: null },
+    chaodaysClient.menus = [
+      { date: "2026-07-01", staple: 12, meat: 6, fruit: 2, veg: 3, waterTargetMl: 2000 },
+      { date: "2026-07-02", staple: 0, meat: 0, fruit: 0, veg: 0, waterTargetMl: 0 },
     ];
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet-target", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ imported: 1, skipped: 1, from: "2026-07-01", to: "2026-07-02" });
-    // The snake_case body threads through to the client as the right fields.
+    expect(await res.json()).toEqual({
+      portionTargetsImported: 1,
+      portionTargetsSkipped: 1,
+      waterTargetsImported: 1,
+      waterTargetsSkipped: 1,
+      from: "2026-07-01",
+      to: "2026-07-02",
+    });
     expect(chaodaysClient.signInArgs).toEqual({ uid: "chaodays-uid", password: "chaodays-pw" });
     expect(chaodaysClient.fetchArgs).toEqual({ from: "2026-07-01", to: "2026-07-02" });
-    const record = await vitalsRepository.get("user-1", "2026-07-01");
-    expect(record?.weightKg).toBe(65.5);
-    expect(record?.bodyFatPct).toBe(22.1);
+    expect((await dailyTargetRepository.get("user-1", "2026-07-01"))?.baseStaple).toBe(12);
+    expect(await dailyTargetRepository.get("user-1", "2026-07-02")).toBeNull();
+    expect((await waterRepository.getTarget("user-1", "2026-07-01"))?.targetMl).toBe(2000);
   });
 
   it.each([
@@ -345,7 +373,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const { app } = buildApp();
     const token = await validToken();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet-target", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -359,7 +387,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysAuthError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet-target", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),
@@ -374,7 +402,7 @@ describe("POST /api/import/chaodays/weight", () => {
     const token = await validToken();
     chaodaysClient.signInError = new ChaodaysUpstreamError();
 
-    const res = await app.request("/api/import/chaodays/weight", {
+    const res = await app.request("/api/import/chaodays/diet-target", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(VALID_BODY),

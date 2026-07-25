@@ -44,6 +44,7 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   getLatestOnOrBefore: notImplemented,
   listInRange: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
 };
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
@@ -174,7 +175,15 @@ class InMemoryWaterRepository implements WaterRepository {
     throw new Error("not used in this test");
   }
 
+  async listTargetRange(): Promise<WaterTarget[]> {
+    throw new Error("not used in this test");
+  }
+
   async setTarget(_input: SetWaterTargetInput): Promise<WaterTarget> {
+    throw new Error("not used in this test");
+  }
+
+  async setTargetMany(_rows: SetWaterTargetInput[]): Promise<void> {
     throw new Error("not used in this test");
   }
 }
@@ -211,6 +220,10 @@ class StubChaodaysClient implements ChaodaysClient {
   }
 
   fetchDefecationRecords(): never {
+    throw new Error("not used in this test");
+  }
+
+  fetchDietMenus(): never {
     throw new Error("not used in this test");
   }
 }
