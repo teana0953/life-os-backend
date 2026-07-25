@@ -8,16 +8,21 @@
 
 ## 2. getCareRange use case
 
-- [ ] 2.1 (red) `getCareRange(deps, userId, from, to, now)` in-memory 測試:逐日展開啟用排程
-      (isActiveOn)、join log、狀態推導(log 優先;past→missed、today→overdue/pending、future→pending)、
-      停用/非 active 不出 slot、跨時區 today。
+- [ ] 2.0 (green) `reminder-clock.ts` 加 `nextLocalDate`(鏡射既有 `previousLocalDate` 的
+      UTC-midnight 數學,不重造),供逐日列舉;單元測試。
+- [ ] 2.1 (red) `getCareRange(deps, userId, from, to, now)` in-memory 測試:逐日(用 nextLocalDate
+      列舉 [from,to])展開排程、join log、狀態推導(log 優先;past→missed、today→overdue/pending、
+      future→pending);**明確測「停用 schedule 不出 slot」**(因用 listByUser 未過濾 enabled,
+      builder 須同時套 `schedule.enabled && isActiveOn`)、非 active 不出、跨時區 today、多日展開。
 - [ ] 2.2 (green) `src/contexts/notifications/application/get-care-range.ts`(重用 getCareToday
-      的 slot 組法 + isActiveOn;一次 listByUser + 一次 range logs)。
+      的 slot 組法;**顯式 `enabled && isActiveOn`**;一次 listByUser + 一次 range logs)。
 
 ## 3. editCareSlot use case
 
 - [ ] 3.1 (red) `editCareSlot` 測試:覆寫 status;庫存 delta(not-done→done 扣、done→not-done 退、
-      no-op 不動、clamp≥0、非 medication/stock null 不動);非 owner → null。
+      no-op 不動、clamp≥0、非 medication/stock null 不動);非 owner → null。**pin clamp 不對稱**:
+      若先前 decrement 曾被 clamp 到 0,之後 done→not-done 會 increment 全劑(可能高於原值)——
+      斷言此既有語意(同 answer-care-slot),不當 bug。
 - [ ] 3.2 (green) `src/contexts/notifications/application/edit-care-slot.ts`(owner-scope、
       `upsert` 回 previousStatus、依 prev/new 算 stock delta 呼 decrement/increment)。
 
