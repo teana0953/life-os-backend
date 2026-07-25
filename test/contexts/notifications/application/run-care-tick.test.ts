@@ -109,6 +109,10 @@ class InMemoryCareLogRepository implements CareLogRepository {
     throw new Error("not used by these tests");
   }
 
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    return [];
+  }
+
   /** Test helper: seed a log directly (simulating a prior HTTP answer), bypassing insert-if-absent. */
   seed(input: CreateCareLogInput): void {
     const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);

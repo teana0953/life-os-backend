@@ -36,4 +36,6 @@ export interface CareLogRepository {
   getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null>;
   /** All of `userId`'s logs for `localDate` — one batch read for the care-today endpoint (D2 in design.md). */
   listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]>;
+  /** All of `userId`'s logs with `localDate` in `[from, to]` (inclusive) — one batch read for the care-adherence range endpoint. */
+  listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]>;
 }

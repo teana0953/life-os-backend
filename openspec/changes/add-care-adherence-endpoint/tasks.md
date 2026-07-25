@@ -10,8 +10,8 @@
 
 ## 2. Log range 查詢
 
-- [ ] 2.1 (red) `DrizzleCareLogRepository.listByUserAndDateRange` 測試(或 in-memory port 測試)。
-- [ ] 2.2 (green) `CareLogRepository` port 加 `listByUserAndDateRange(userId, from, to)`;
+- [x] 2.1 (red) `DrizzleCareLogRepository.listByUserAndDateRange` 測試(或 in-memory port 測試)。
+- [x] 2.2 (green) `CareLogRepository` port 加 `listByUserAndDateRange(userId, from, to)`;
       `DrizzleCareLogRepository` 實作(單批 `local_date BETWEEN from AND to`,scoped by user)。
       **連帶**:補現有 fakes 的 stub(care.test.ts、get-care-today.test.ts、
       answer-care-slot.test.ts、run-care-tick.test.ts)讓 `npm run typecheck` 維持綠。

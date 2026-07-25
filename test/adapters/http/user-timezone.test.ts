@@ -197,6 +197,7 @@ function buildApp() {
       upsertIfAbsent: notImplemented,
       getBySlot: notImplemented,
       listByUserAndDate: notImplemented,
+      listByUserAndDateRange: notImplemented,
     },
     vapidPublicKey: "",
     ping: async () => {},

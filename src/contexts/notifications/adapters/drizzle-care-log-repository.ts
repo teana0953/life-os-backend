@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, between, eq } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { careLog } from "../../../shared/db/schema";
 import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../domain/care-log";
@@ -73,6 +73,15 @@ export class DrizzleCareLogRepository implements CareLogRepository {
       .select()
       .from(careLog)
       .where(and(eq(careLog.userId, userId), eq(careLog.localDate, localDate)));
+    return rows.map(toDomain);
+  }
+
+  async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(careLog)
+      .where(and(eq(careLog.userId, userId), between(careLog.localDate, from, to)));
     return rows.map(toDomain);
   }
 }

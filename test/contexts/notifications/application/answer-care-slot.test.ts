@@ -85,6 +85,9 @@ class FakeCareLogRepository implements CareLogRepository {
   async listByUserAndDate(): Promise<CareLog[]> {
     throw new Error("not used by these tests");
   }
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    return [];
+  }
 }
 
 function makeSchedule(overrides: Partial<CareSchedule> = {}): CareSchedule {

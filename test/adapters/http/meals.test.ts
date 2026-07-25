@@ -469,6 +469,9 @@ function buildApp() {
       listByUserAndDate: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+      listByUserAndDateRange: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
     },
     vapidPublicKey: "",
     ping: async () => {},

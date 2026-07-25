@@ -99,6 +99,9 @@ class FakeCareLogRepository implements CareLogRepository {
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
     return this.logs.filter((l) => l.userId === userId && l.localDate === localDate);
   }
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    return [];
+  }
 }
 
 function makeUser(overrides: Partial<User> = {}): User {
