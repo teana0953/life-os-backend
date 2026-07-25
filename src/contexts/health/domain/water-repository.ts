@@ -17,6 +17,10 @@ export interface WaterRepository {
   getTarget(userId: string, day: string): Promise<WaterTarget | null>;
   /** Most recent target with day <= the given day, or null if none. */
   getLatestTargetOnOrBefore(userId: string, day: string): Promise<WaterTarget | null>;
+  /** The user's targets with day in `[from, to]` (inclusive), ascending by day. */
+  listTargetRange(userId: string, from: string, to: string): Promise<WaterTarget[]>;
   /** Upsert semantics, keyed by (userId, day). */
   setTarget(input: SetWaterTargetInput): Promise<WaterTarget>;
+  /** Same semantics as `setTarget`, for all `rows` in one batched write. Empty input is a no-op. */
+  setTargetMany(rows: SetWaterTargetInput[]): Promise<void>;
 }

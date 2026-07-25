@@ -50,6 +50,10 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     this.targetsByUserDay.set(`${input.userId}:${input.day}`, target);
     return target;
   }
+
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    for (const row of rows) await this.set(row);
+  }
 }
 
 type StoredMeal = MealSummary & { items: MealItem[] };

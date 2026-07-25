@@ -90,6 +90,16 @@ export class DrizzleWaterRepository implements WaterRepository {
     return row ? targetToDomain(row) : null;
   }
 
+  async listTargetRange(userId: string, from: string, to: string): Promise<WaterTarget[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(waterTarget)
+      .where(and(eq(waterTarget.userId, userId), gte(waterTarget.day, from), lte(waterTarget.day, to)))
+      .orderBy(asc(waterTarget.day));
+    return rows.map(targetToDomain);
+  }
+
   async setTarget(input: SetWaterTargetInput): Promise<WaterTarget> {
     const db = this.getDb();
     const values = { userId: input.userId, day: input.day, targetMl: String(input.targetMl) };
@@ -100,5 +110,15 @@ export class DrizzleWaterRepository implements WaterRepository {
       .returning();
     if (!row) throw new Error("failed to set water target");
     return targetToDomain(row);
+  }
+
+  async setTargetMany(rows: SetWaterTargetInput[]): Promise<void> {
+    if (rows.length === 0) return;
+    const db = this.getDb();
+    const [first, ...rest] = rows.map((input) => {
+      const values = { userId: input.userId, day: input.day, targetMl: String(input.targetMl) };
+      return db.insert(waterTarget).values(values).onConflictDoUpdate({ target: [waterTarget.userId, waterTarget.day], set: values });
+    });
+    await db.batch([first, ...rest]);
   }
 }

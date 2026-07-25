@@ -76,6 +76,9 @@ class FakeDailyTargetRepository implements DailyTargetRepository {
     this.targets.set(input.day, target);
     return target;
   }
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    for (const row of rows) await this.set(row);
+  }
 }
 
 describe("applyExerciseBonus", () => {

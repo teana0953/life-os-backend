@@ -257,6 +257,10 @@ class InMemoryDailyTargetRepository implements DailyTargetRepository {
     this.targetsByUserDay.set(`${input.userId}:${input.day}`, target);
     return target;
   }
+
+  async setMany(rows: SetDailyTargetInput[]): Promise<void> {
+    for (const row of rows) await this.set(row);
+  }
 }
 
 class InMemoryWaterRepository implements WaterRepository {
@@ -299,10 +303,18 @@ class InMemoryWaterRepository implements WaterRepository {
     return latest;
   }
 
+  async listTargetRange(userId: string, from: string, to: string): Promise<WaterTarget[]> {
+    return [...this.targetByUserDay.values()].filter((t) => t.userId === userId && t.day >= from && t.day <= to);
+  }
+
   async setTarget(input: SetWaterTargetInput): Promise<WaterTarget> {
     const target: WaterTarget = { userId: input.userId, day: input.day, targetMl: input.targetMl };
     this.targetByUserDay.set(`${input.userId}:${input.day}`, target);
     return target;
+  }
+
+  async setTargetMany(rows: SetWaterTargetInput[]): Promise<void> {
+    for (const row of rows) await this.setTarget(row);
   }
 }
 
@@ -365,6 +377,9 @@ const stubChaodaysClient: ChaodaysClient = {
     throw new Error("not implemented in this test's fakes");
   },
   fetchDefecationRecords: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
+  fetchDietMenus: () => {
     throw new Error("not implemented in this test's fakes");
   },
 };
