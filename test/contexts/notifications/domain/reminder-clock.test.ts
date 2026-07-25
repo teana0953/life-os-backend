@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   localMinute,
   localParts,
+  nextLocalDate,
   previousLocalDate,
   weekdayOf,
   weeksSince,
@@ -66,6 +67,14 @@ describe("previousLocalDate", () => {
     expect(previousLocalDate("2026-07-24")).toBe("2026-07-23");
     expect(previousLocalDate("2026-08-01")).toBe("2026-07-31");
     expect(previousLocalDate("2026-01-01")).toBe("2025-12-31");
+  });
+});
+
+describe("nextLocalDate", () => {
+  it("returns the calendar day after, including across a month boundary", () => {
+    expect(nextLocalDate("2026-07-23")).toBe("2026-07-24");
+    expect(nextLocalDate("2026-07-31")).toBe("2026-08-01");
+    expect(nextLocalDate("2025-12-31")).toBe("2026-01-01");
   });
 });
 

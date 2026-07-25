@@ -8,7 +8,7 @@
 
 ## 2. getCareRange use case
 
-- [ ] 2.0 (green) `reminder-clock.ts` 加 `nextLocalDate`(鏡射既有 `previousLocalDate` 的
+- [x] 2.0 (green) `reminder-clock.ts` 加 `nextLocalDate`(鏡射既有 `previousLocalDate` 的
       UTC-midnight 數學,不重造),供逐日列舉;單元測試。
 - [ ] 2.1 (red) `getCareRange(deps, userId, from, to, now)` in-memory 測試:逐日(用 nextLocalDate
       列舉 [from,to])展開排程、join log、狀態推導(log 優先;past→missed、today→overdue/pending、
