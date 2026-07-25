@@ -32,4 +32,4 @@
 
 ## 5. Gate
 
-- [ ] 5.1 `npm test` + `npm run typecheck` 全綠。
+- [x] 5.1 `npm test` + `npm run typecheck` 全綠。
