@@ -66,6 +66,13 @@ export function previousLocalDate(date: string): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
+/** The calendar day after `date` (`YYYY-MM-DD`), correct across month/year boundaries. */
+export function nextLocalDate(date: string): string {
+  const d = new Date(parseLocalDateUTC(date) + MS_PER_DAY);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
 /**
  * A monotonic integer "absolute local minute" for `date`+`hhmm`, treating the
  * local wall-clock value as if it were UTC. Used to compare a schedule

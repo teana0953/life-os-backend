@@ -105,4 +105,6 @@ export interface CareItemRepository {
   listActiveSchedulesForUserOn(userId: string, localDate: string): Promise<ActiveScheduleForUser[]>;
   /** Reduces `stock` by `amount`, clamped >= 0; a no-op when the item's `stock` is `null` (D6 in design.md). */
   decrementStock(itemId: string, amount: number): Promise<void>;
+  /** Increases `stock` by `amount`; a no-op when the item's `stock` is `null`. */
+  incrementStock(itemId: string, amount: number): Promise<void>;
 }

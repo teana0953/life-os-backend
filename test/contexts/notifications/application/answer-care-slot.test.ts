@@ -49,6 +49,9 @@ class FakeCareItemRepository implements CareItemRepository {
     const item = this.items.get(itemId);
     if (item && item.stock !== null) item.stock = Math.max(0, item.stock - amount);
   }
+  async incrementStock(): Promise<void> {
+    throw new Error("not used by these tests");
+  }
 }
 
 class FakeCareLogRepository implements CareLogRepository {
@@ -83,6 +86,12 @@ class FakeCareLogRepository implements CareLogRepository {
   }
 
   async listByUserAndDate(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
+  }
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
+  }
+  async upsert(): Promise<{ log: CareLog; previousStatus: CareLog["status"] | null }> {
     throw new Error("not used by these tests");
   }
 }

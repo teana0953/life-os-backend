@@ -473,6 +473,9 @@ function buildApp() {
       decrementStock: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+      incrementStock: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
     },
     careLogRepository: {
       upsertIfAbsent: async () => {
@@ -482,6 +485,12 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
       listByUserAndDate: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listByUserAndDateRange: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      upsert: async () => {
         throw new Error("not implemented in this test's fakes");
       },
     },

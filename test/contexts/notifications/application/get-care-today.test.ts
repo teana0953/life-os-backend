@@ -63,6 +63,9 @@ class FakeCareItemRepository implements CareItemRepository {
   async decrementStock(): Promise<void> {
     throw new Error("not used by these tests");
   }
+  async incrementStock(): Promise<void> {
+    throw new Error("not used by these tests");
+  }
 
   async listActiveSchedulesForUserOn(userId: string, localDate: string): Promise<ActiveScheduleForUser[]> {
     return this.entries
@@ -98,6 +101,12 @@ class FakeCareLogRepository implements CareLogRepository {
   }
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
     return this.logs.filter((l) => l.userId === userId && l.localDate === localDate);
+  }
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
+  }
+  async upsert(): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
+    throw new Error("not used by these tests");
   }
 }
 

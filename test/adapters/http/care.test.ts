@@ -24,7 +24,7 @@ import type {
   CreateCareItemInput,
   UpdateCareItemPatch,
 } from "../../../src/contexts/notifications/domain/care-item";
-import type { CareLog, CareLogRepository, CreateCareLogInput } from "../../../src/contexts/notifications/domain/care-log";
+import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../src/contexts/notifications/domain/care-log";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -269,6 +269,11 @@ class InMemoryCareItemRepository implements CareItemRepository {
     if (item && item.stock !== null) item.stock = Math.max(0, item.stock - amount);
   }
 
+  async incrementStock(itemId: string, amount: number): Promise<void> {
+    const item = this.byId.get(itemId);
+    if (item && item.stock !== null) item.stock = item.stock + amount;
+  }
+
   size(): number {
     return this.byId.size;
   }
@@ -307,6 +312,28 @@ class InMemoryCareLogRepository implements CareLogRepository {
 
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
     return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate === localDate);
+  }
+
+  async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate >= from && log.localDate <= to);
+  }
+
+  async upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
+    const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
+    const existing = this.bySlot.get(key);
+    const log: CareLog = {
+      id: existing?.id ?? `log-${this.nextId++}`,
+      userId: input.userId,
+      careItemId: input.careItemId,
+      careScheduleId: input.careScheduleId,
+      localDate: input.localDate,
+      timeOfDay: input.timeOfDay,
+      status: input.status,
+      doneTime: input.doneTime,
+      doseQuantity: input.doseQuantity,
+    };
+    this.bySlot.set(key, log);
+    return { log, previousStatus: existing?.status ?? null };
   }
 }
 
@@ -400,6 +427,8 @@ describe("care item HTTP routes", () => {
     expect((await app.request("/api/care/items/x", { method: "DELETE" })).status).toBe(401);
     expect((await app.request("/api/care/log", { method: "POST" })).status).toBe(401);
     expect((await app.request("/api/care/today")).status).toBe(401);
+    expect((await app.request("/api/care/range?from=2026-07-01&to=2026-07-02")).status).toBe(401);
+    expect((await app.request("/api/care/log", { method: "PUT" })).status).toBe(401);
   });
 
   it("creates and lists a care item with its schedules (round trip)", async () => {
@@ -736,5 +765,199 @@ describe("GET /api/care/today", () => {
     const body = (await res.json()) as { date: string; items: unknown[] };
     expect(typeof body.date).toBe("string");
     expect(body.items).toEqual([]);
+  });
+});
+
+interface RangeSlotJson {
+  care_item_id: string;
+  care_schedule_id: string;
+  category: string;
+  title: string;
+  note: string | null;
+  dose: string | null;
+  time_of_day: string;
+  local_date: string;
+  status: string;
+  done_time: string | null;
+  dose_quantity: number;
+}
+
+interface RangeJson {
+  from: string;
+  to: string;
+  days: { date: string; items: RangeSlotJson[] }[];
+}
+
+describe("GET /api/care/range", () => {
+  // start_date well in the past, no end_date, empty repeat_days (every day) so
+  // every date in the (also strictly-past) test range is reliably "missed"
+  // (no log) regardless of when the test suite actually runs.
+  const EVERY_DAY_SCHEDULE = {
+    time_of_day: "08:00",
+    repeat_days: [],
+    week_interval: 1,
+    start_date: "2020-01-01",
+    end_date: null,
+    dose_quantity: 1,
+    nag_interval_minutes: 15,
+    enabled: true,
+  };
+
+  it("returns { from, to, days } with one missed slot per day for a strictly-past range", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+    });
+
+    const res = await app.request("/api/care/range?from=2020-01-01&to=2020-01-03", { headers });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as RangeJson;
+    expect(body.from).toBe("2020-01-01");
+    expect(body.to).toBe("2020-01-03");
+    expect(body.days.map((d) => d.date)).toEqual(["2020-01-01", "2020-01-02", "2020-01-03"]);
+    for (const day of body.days) {
+      expect(day.items).toHaveLength(1);
+      expect(day.items[0]).toMatchObject({
+        category: "medication",
+        title: "降血壓藥",
+        dose: "5mg",
+        time_of_day: "08:00",
+        local_date: day.date,
+        status: "missed",
+        done_time: null,
+      });
+    }
+  });
+
+  it("a disabled schedule is excluded from every day in the range", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [{ ...EVERY_DAY_SCHEDULE, enabled: false }] }),
+    });
+
+    const res = await app.request("/api/care/range?from=2020-01-01&to=2020-01-02", { headers });
+
+    const body = (await res.json()) as RangeJson;
+    expect(body.days.every((d) => d.items.length === 0)).toBe(true);
+  });
+
+  it("is owner-scoped: another user's schedule does not appear", async () => {
+    const { app } = buildApp();
+    const ownerHeaders = await authed("uid-1");
+    const otherHeaders = await authed("uid-2");
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+    });
+
+    const res = await app.request("/api/care/range?from=2020-01-01&to=2020-01-01", { headers: otherHeaders });
+
+    const body = (await res.json()) as RangeJson;
+    expect(body.days[0].items).toEqual([]);
+  });
+
+  it.each([
+    ["missing from", "?to=2026-07-02"],
+    ["missing to", "?from=2026-07-01"],
+    ["from not YYYY-MM-DD", "?from=2026/07/01&to=2026-07-02"],
+    ["to not YYYY-MM-DD", "?from=2026-07-01&to=2026/07/02"],
+    ["from later than to", "?from=2026-07-02&to=2026-07-01"],
+    ["span exceeding 366 days", "?from=2020-01-01&to=2021-01-05"],
+  ])("rejects %s, as 400", async (_name, qs) => {
+    const { app } = buildApp();
+    const headers = await authed();
+
+    const res = await app.request(`/api/care/range${qs}`, { headers });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("PUT /api/care/log", () => {
+  it("overwrites a slot's status: done -> skipped restores decremented stock", async () => {
+    const { app, careItemRepository } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request(
+        "/api/care/items",
+        { method: "POST", headers, body: JSON.stringify({ ...VALID_BODY, stock: 10, schedules: [{ ...VALID_SCHEDULE, dose_quantity: 3 }] }) },
+      )
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+    const slotBody = { care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00" };
+
+    await app.request("/api/care/log", { method: "POST", headers, body: JSON.stringify({ ...slotBody, status: "done" }) });
+    expect((await careItemRepository.get(created.id))?.stock).toBe(7);
+
+    const res = await app.request("/api/care/log", { method: "PUT", headers, body: JSON.stringify({ ...slotBody, status: "skipped" }) });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe("skipped");
+    expect((await careItemRepository.get(created.id))?.stock).toBe(10);
+  });
+
+  it("PUT with no prior log still decrements stock (not-done -> done)", async () => {
+    const { app, careItemRepository } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request(
+        "/api/care/items",
+        { method: "POST", headers, body: JSON.stringify({ ...VALID_BODY, stock: 10, schedules: [{ ...VALID_SCHEDULE, dose_quantity: 3 }] }) },
+      )
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00", status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect((await careItemRepository.get(created.id))?.stock).toBe(7);
+  });
+
+  it("returns 404 for a schedule not owned by the caller", async () => {
+    const { app } = buildApp();
+    const ownerHeaders = await authed("uid-1");
+    const otherHeaders = await authed("uid-2");
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers: ownerHeaders, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers: otherHeaders,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00", status: "done" }),
+    });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects status=missed, as 400 (missed is derived, never editable)", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00", status: "missed" }),
+    });
+
+    expect(res.status).toBe(400);
   });
 });
