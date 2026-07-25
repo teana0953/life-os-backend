@@ -18,9 +18,9 @@
 
 ## 3. Use case
 
-- [ ] 3.1 (red) `getCareAdherence` 用 in-memory repo 整合測試(schedules 來自 listByUser,
+- [x] 3.1 (red) `getCareAdherence` 用 in-memory repo 整合測試(schedules 來自 listByUser,
       logs 來自 range 查詢)。
-- [ ] 3.2 (green) 實作 `src/contexts/notifications/application/get-care-adherence.ts`。
+- [x] 3.2 (green) 實作 `src/contexts/notifications/application/get-care-adherence.ts`。
 
 ## 4. HTTP route
 
