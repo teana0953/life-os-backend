@@ -1,10 +1,10 @@
 ## 1. Domain series builder
 
-- [ ] 1.1 (red) 單元測試 `buildCareAdherenceSeries(schedules, logs, from, to)`:多日展開;
+- [x] 1.1 (red) 單元測試 `buildCareAdherenceSeries(schedules, logs, from, to)`:多日展開;
       scheduled 隨 weekday/start-end/every-N-weeks 生效(重用 isActiveOn);**停用 schedule 不計入
       scheduled**;done/skipped/missed 依 log status 計數;空排程日 scheduled=0;done+skipped+
       missed 可小於 scheduled(pending);邊界日(from/to 當天)含入。
-- [ ] 1.2 (green) 實作 `src/contexts/notifications/domain/care-adherence.ts`——逐日 [from,to],
+- [x] 1.2 (green) 實作 `src/contexts/notifications/domain/care-adherence.ts`——逐日 [from,to],
       **builder 內先濾 `enabled===true`** 再套 `isActiveOn`;回
       `{from,to,days:[{date,scheduled,done,skipped,missed}]}`。
 
