@@ -1,9 +1,9 @@
 ## 1. Ports + repo methods
 
-- [ ] 1.1 (green) `CareLogRepository` 加 `listByUserAndDateRange(userId, from, to)` +
+- [x] 1.1 (green) `CareLogRepository` 加 `listByUserAndDateRange(userId, from, to)` +
       `upsert(input): Promise<{log, previousStatus: CareLogStatus|null}>`(覆寫);`CareItemRepository`
       加 `incrementStock(itemId, amount)`。補所有現有 fakes 的 stub 讓 `npm run typecheck` 綠。
-- [ ] 1.2 (red/green) `DrizzleCareLogRepository.listByUserAndDateRange`(between)+ `upsert`
+- [x] 1.2 (red/green) `DrizzleCareLogRepository.listByUserAndDateRange`(between)+ `upsert`
       (讀舊 status → 覆寫 → 回 previousStatus)測試;`DrizzleCareItemRepository.incrementStock` 測試。
 
 ## 2. getCareRange use case
