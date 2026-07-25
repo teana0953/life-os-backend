@@ -44,6 +44,7 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   getLatestOnOrBefore: notImplemented,
   listInRange: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
 };
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
@@ -52,7 +53,9 @@ const stubWaterRepository: WaterRepository = {
   listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
+  listTargetRange: notImplemented,
   setTarget: notImplemented,
+  setTargetMany: notImplemented,
 };
 const stubVitalsRepository: VitalsRepository = {
   get: notImplemented,
@@ -207,6 +210,10 @@ class StubChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDefecationRecord[] }> {
     this.fetchArgs = { from, to };
     return { session, records: this.records };
+  }
+
+  fetchDietMenus(): never {
+    throw new Error("not used in this test");
   }
 }
 

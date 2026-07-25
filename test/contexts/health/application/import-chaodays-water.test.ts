@@ -40,7 +40,15 @@ class InMemoryWaterRepository implements WaterRepository {
     throw new Error("not used in this test");
   }
 
+  async listTargetRange(): Promise<WaterTarget[]> {
+    throw new Error("not used in this test");
+  }
+
   async setTarget(_input: SetWaterTargetInput): Promise<WaterTarget> {
+    throw new Error("not used in this test");
+  }
+
+  async setTargetMany(_rows: SetWaterTargetInput[]): Promise<void> {
     throw new Error("not used in this test");
   }
 }
@@ -77,6 +85,10 @@ class FakeChaodaysClient implements ChaodaysClient {
   }
 
   fetchDefecationRecords(): never {
+    throw new Error("not used in this test");
+  }
+
+  fetchDietMenus(): never {
     throw new Error("not used in this test");
   }
 }

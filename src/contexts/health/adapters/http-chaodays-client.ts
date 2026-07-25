@@ -2,6 +2,7 @@ import { ChaodaysAuthError, ChaodaysUpstreamError } from "../domain/chaodays-cli
 import type {
   ChaodaysClient,
   ChaodaysDefecationRecord,
+  ChaodaysDietMenu,
   ChaodaysDietRecord,
   ChaodaysSession,
   ChaodaysWaterRecord,
@@ -47,6 +48,15 @@ interface RawDefecationRecord {
   defecation: number;
   is_abnormality: boolean;
   note: string;
+}
+
+interface RawDietMenu {
+  date: string;
+  staple: number | null;
+  meat: number | null;
+  fruit: number | null;
+  veg: number | null;
+  water: number | null;
 }
 
 function authHeaders(session: ChaodaysSession): Record<string, string> {
@@ -223,6 +233,42 @@ export class HttpChaodaysClient implements ChaodaysClient {
       throw new ChaodaysUpstreamError("parse");
     }
     return { session: sessionFromHeaders(response.headers, session), records };
+  }
+
+  async fetchDietMenus(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; menus: ChaodaysDietMenu[] }> {
+    const url = `${this.baseUrl}/users/diet_menus?start_date=${from}&end_date=${to}`;
+    const response = await this.request(url, { headers: authHeaders(session) });
+    if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
+
+    // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
+    // failure (→ 502), not a lifeos-internal 500.
+    let data: unknown;
+    try {
+      data = ((await response.json()) as { data?: unknown }).data;
+    } catch {
+      throw new ChaodaysUpstreamError("parse");
+    }
+    if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
+    // Mapping a malformed menu is still an upstream failure (→ 502), not a 500.
+    let menus: ChaodaysDietMenu[];
+    try {
+      menus = (data as RawDietMenu[]).map((raw) => ({
+        date: raw.date,
+        // oil/sugar/content/sum_* are dropped — lifeos targets have no such axes.
+        staple: raw.staple ?? 0,
+        meat: raw.meat ?? 0,
+        fruit: raw.fruit ?? 0,
+        veg: raw.veg ?? 0,
+        waterTargetMl: raw.water ?? 0,
+      }));
+    } catch {
+      throw new ChaodaysUpstreamError("parse");
+    }
+    return { session: sessionFromHeaders(response.headers, session), menus };
   }
 
   /** Wraps `fetch`, turning a network failure into `ChaodaysUpstreamError`. */

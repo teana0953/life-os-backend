@@ -91,6 +91,10 @@ class FakeChaodaysClient implements ChaodaysClient {
   fetchDefecationRecords(): never {
     throw new Error("not used in this test");
   }
+
+  fetchDietMenus(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 let vitalsRepository: InMemoryVitalsRepository;

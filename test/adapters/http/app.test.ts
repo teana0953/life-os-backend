@@ -43,6 +43,7 @@ const stubDailyTargetRepository: DailyTargetRepository = {
   getLatestOnOrBefore: notImplemented,
   listInRange: notImplemented,
   set: notImplemented,
+  setMany: notImplemented,
 };
 const stubWaterRepository: WaterRepository = {
   getIntake: notImplemented,
@@ -51,7 +52,9 @@ const stubWaterRepository: WaterRepository = {
   listIntakeRange: notImplemented,
   getTarget: notImplemented,
   getLatestTargetOnOrBefore: notImplemented,
+  listTargetRange: notImplemented,
   setTarget: notImplemented,
+  setTargetMany: notImplemented,
 };
 const stubBowelRepository: BowelRepository = {
   get: notImplemented,
@@ -89,6 +92,7 @@ const stubChaodaysClient: ChaodaysClient = {
   fetchDietRecords: notImplemented,
   fetchWaterRecords: notImplemented,
   fetchDefecationRecords: notImplemented,
+  fetchDietMenus: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";

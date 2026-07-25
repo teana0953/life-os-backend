@@ -340,6 +340,99 @@ describe("HttpChaodaysClient", () => {
     });
   });
 
+  describe("fetchDietMenus", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    it("sends the three headers, parses the data envelope dropping oil/sugar/content/sum_*, and returns the rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const body = JSON.stringify({
+        data: [
+          {
+            date: "2026-07-01",
+            staple: 12,
+            meat: 6,
+            fruit: 2,
+            veg: 3,
+            oil: 4,
+            sugar: 1,
+            water: 2000,
+            content: "notes",
+            sum_staple: 10,
+          },
+        ],
+      });
+      const response = new Response(body, {
+        status: 200,
+        headers: { "access-token": "token-2", client: "client-1", uid: "uid-1" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, calls));
+
+      const result = await client.fetchDietMenus(session, "2026-07-01", "2026-07-02");
+
+      expect(result.session).toEqual({ accessToken: "token-2", client: "client-1", uid: "uid-1" });
+      expect(result.menus).toEqual([
+        { date: "2026-07-01", staple: 12, meat: 6, fruit: 2, veg: 3, waterTargetMl: 2000 },
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/diet_menus?start_date=2026-07-01&end_date=2026-07-02",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("defaults null portions and a null water target to 0", async () => {
+      const body = JSON.stringify({
+        data: [{ date: "2026-07-01", staple: null, meat: null, fruit: null, veg: null, water: null }],
+      });
+      const response = new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      const result = await client.fetchDietMenus(session, "2026-07-01", "2026-07-02");
+
+      expect(result.menus).toEqual([{ date: "2026-07-01", staple: 0, meat: 0, fruit: 0, veg: 0, waterTargetMl: 0 }]);
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietMenus(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietMenus(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietMenus(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 whose data array has a null record (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: [null] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchDietMenus(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
+
   describe("fetchDefecationRecords", () => {
     const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
 
