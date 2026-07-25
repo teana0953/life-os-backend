@@ -36,4 +36,13 @@ export interface CareLogRepository {
   getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null>;
   /** All of `userId`'s logs for `localDate` — one batch read for the care-today endpoint (D2 in design.md). */
   listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]>;
+  /** All of `userId`'s logs within `[from, to]` inclusive — one batch read for the care-range endpoint. */
+  listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]>;
+  /**
+   * Overwrites (not insert-if-absent) the log for the slot key
+   * `(careScheduleId, localDate, timeOfDay)` — used to edit a past slot's
+   * status. Returns the new log and the status that was in place before the
+   * write, or `null` when no log existed for that slot yet.
+   */
+  upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }>;
 }

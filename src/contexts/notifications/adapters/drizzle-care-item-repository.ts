@@ -253,4 +253,12 @@ export class DrizzleCareItemRepository implements CareItemRepository {
       .set({ stock: sql`GREATEST(${careItem.stock} - ${amount}, 0)` })
       .where(and(eq(careItem.id, itemId), isNotNull(careItem.stock)));
   }
+
+  async incrementStock(itemId: string, amount: number): Promise<void> {
+    const db = this.getDb();
+    await db
+      .update(careItem)
+      .set({ stock: sql`${careItem.stock} + ${amount}` })
+      .where(and(eq(careItem.id, itemId), isNotNull(careItem.stock)));
+  }
 }

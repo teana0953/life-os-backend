@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { careLog } from "../../../shared/db/schema";
 import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../domain/care-log";
@@ -74,5 +74,57 @@ export class DrizzleCareLogRepository implements CareLogRepository {
       .from(careLog)
       .where(and(eq(careLog.userId, userId), eq(careLog.localDate, localDate)));
     return rows.map(toDomain);
+  }
+
+  async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(careLog)
+      .where(and(eq(careLog.userId, userId), gte(careLog.localDate, from), lte(careLog.localDate, to)));
+    return rows.map(toDomain);
+  }
+
+  async upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
+    const db = this.getDb();
+
+    // Read the prior status BEFORE overwriting, so an edit can report what
+    // changed (e.g. for stock-delta accounting in editCareSlot).
+    const [existing] = await db
+      .select()
+      .from(careLog)
+      .where(
+        and(
+          eq(careLog.careScheduleId, input.careScheduleId),
+          eq(careLog.localDate, input.localDate),
+          eq(careLog.timeOfDay, input.timeOfDay),
+        ),
+      )
+      .limit(1);
+
+    const [row] = await db
+      .insert(careLog)
+      .values({
+        userId: input.userId,
+        careItemId: input.careItemId,
+        careScheduleId: input.careScheduleId,
+        localDate: input.localDate,
+        timeOfDay: input.timeOfDay,
+        status: input.status,
+        doneTime: input.doneTime,
+        doseQuantity: input.doseQuantity,
+      })
+      .onConflictDoUpdate({
+        target: [careLog.careScheduleId, careLog.localDate, careLog.timeOfDay],
+        set: {
+          status: input.status,
+          doneTime: input.doneTime,
+          doseQuantity: input.doseQuantity,
+        },
+      })
+      .returning();
+    if (!row) throw new Error("failed to upsert care log");
+
+    return { log: toDomain(row), previousStatus: existing ? (existing.status as CareLogStatus) : null };
   }
 }

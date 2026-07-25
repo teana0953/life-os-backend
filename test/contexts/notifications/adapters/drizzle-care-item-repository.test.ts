@@ -151,3 +151,29 @@ describe("DrizzleCareItemRepository.listActiveSchedulesForUserOn", () => {
     expect(await repo.listActiveSchedulesForUserOn("user-1", "2026-07-22")).toEqual([]);
   });
 });
+
+describe("DrizzleCareItemRepository.incrementStock", () => {
+  it("issues an update that sets stock, scoped by a where clause", async () => {
+    let sawSet = false;
+    let sawWhere = false;
+    const db = {
+      update: () => ({
+        set: (values: { stock: unknown }) => {
+          sawSet = values.stock !== undefined;
+          return {
+            where: (where: unknown) => {
+              sawWhere = where !== undefined;
+              return Promise.resolve();
+            },
+          };
+        },
+      }),
+    } as unknown as Db;
+    const repo = new DrizzleCareItemRepository(() => db);
+
+    await repo.incrementStock("item-1", 3);
+
+    expect(sawSet).toBe(true);
+    expect(sawWhere).toBe(true);
+  });
+});

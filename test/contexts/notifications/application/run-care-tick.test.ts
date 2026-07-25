@@ -63,6 +63,9 @@ class InMemoryCareItemRepository implements CareItemRepository {
   async decrementStock(): Promise<void> {
     throw new Error("not used by these tests");
   }
+  async incrementStock(): Promise<void> {
+    throw new Error("not used by these tests");
+  }
 
   /** Mirrors the real repository's `WHERE enabled = true`. */
   async listActiveSchedules(): Promise<ActiveCareSchedule[]> {
@@ -106,6 +109,12 @@ class InMemoryCareLogRepository implements CareLogRepository {
   }
 
   async listByUserAndDate(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
+  }
+  async listByUserAndDateRange(): Promise<CareLog[]> {
+    throw new Error("not used by these tests");
+  }
+  async upsert(): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
     throw new Error("not used by these tests");
   }
 

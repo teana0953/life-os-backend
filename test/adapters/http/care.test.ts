@@ -24,7 +24,7 @@ import type {
   CreateCareItemInput,
   UpdateCareItemPatch,
 } from "../../../src/contexts/notifications/domain/care-item";
-import type { CareLog, CareLogRepository, CreateCareLogInput } from "../../../src/contexts/notifications/domain/care-log";
+import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../src/contexts/notifications/domain/care-log";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 
@@ -265,6 +265,11 @@ class InMemoryCareItemRepository implements CareItemRepository {
     if (item && item.stock !== null) item.stock = Math.max(0, item.stock - amount);
   }
 
+  async incrementStock(itemId: string, amount: number): Promise<void> {
+    const item = this.byId.get(itemId);
+    if (item && item.stock !== null) item.stock = item.stock + amount;
+  }
+
   size(): number {
     return this.byId.size;
   }
@@ -303,6 +308,28 @@ class InMemoryCareLogRepository implements CareLogRepository {
 
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
     return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate === localDate);
+  }
+
+  async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate >= from && log.localDate <= to);
+  }
+
+  async upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
+    const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
+    const existing = this.bySlot.get(key);
+    const log: CareLog = {
+      id: existing?.id ?? `log-${this.nextId++}`,
+      userId: input.userId,
+      careItemId: input.careItemId,
+      careScheduleId: input.careScheduleId,
+      localDate: input.localDate,
+      timeOfDay: input.timeOfDay,
+      status: input.status,
+      doneTime: input.doneTime,
+      doseQuantity: input.doseQuantity,
+    };
+    this.bySlot.set(key, log);
+    return { log, previousStatus: existing?.status ?? null };
   }
 }
 

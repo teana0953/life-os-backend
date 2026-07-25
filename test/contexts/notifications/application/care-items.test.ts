@@ -114,6 +114,10 @@ class InMemoryCareItemRepository implements CareItemRepository {
   async decrementStock(): Promise<void> {
     throw new Error("not used by these tests");
   }
+
+  async incrementStock(): Promise<void> {
+    throw new Error("not used by these tests");
+  }
 }
 
 const VALID_SCHEDULE: CareScheduleInput = {
