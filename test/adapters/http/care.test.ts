@@ -304,6 +304,10 @@ class InMemoryCareLogRepository implements CareLogRepository {
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
     return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate === localDate);
   }
+
+  async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate >= from && log.localDate <= to);
+  }
 }
 
 function buildApp() {
@@ -732,5 +736,116 @@ describe("GET /api/care/today", () => {
     const body = (await res.json()) as { date: string; items: unknown[] };
     expect(typeof body.date).toBe("string");
     expect(body.items).toEqual([]);
+  });
+});
+
+describe("GET /api/care/adherence", () => {
+  // A fixed start_date in the past with no end and every-day recurrence, so this
+  // schedule is active on every day used by these tests regardless of "today".
+  const EVERY_DAY_SCHEDULE = {
+    time_of_day: "08:00",
+    repeat_days: [],
+    week_interval: 1,
+    start_date: "2026-07-01",
+    end_date: null,
+    dose_quantity: 1,
+    nag_interval_minutes: 15,
+    enabled: true,
+  };
+
+  it("requires auth", async () => {
+    const { app } = buildApp();
+
+    const res = await app.request("/api/care/adherence?from=2026-07-01&to=2026-07-03");
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns a per-day snake-case series covering [from, to], with scheduled/done/skipped/missed", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+      })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    await app.request("/api/care/log", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: "2026-07-02", time_of_day: "08:00", status: "done" }),
+    });
+
+    const res = await app.request("/api/care/adherence?from=2026-07-01&to=2026-07-03", { headers });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      from: "2026-07-01",
+      to: "2026-07-03",
+      days: [
+        { date: "2026-07-01", scheduled: 1, done: 0, skipped: 0, missed: 0 },
+        { date: "2026-07-02", scheduled: 1, done: 1, skipped: 0, missed: 0 },
+        { date: "2026-07-03", scheduled: 1, done: 0, skipped: 0, missed: 0 },
+      ],
+    });
+  });
+
+  it("a disabled schedule is not counted in scheduled", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [{ ...EVERY_DAY_SCHEDULE, enabled: false }] }),
+    });
+
+    const res = await app.request("/api/care/adherence?from=2026-07-01&to=2026-07-01", { headers });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: { scheduled: number }[] };
+    expect(body.days[0].scheduled).toBe(0);
+  });
+
+  it("is owner-scoped: only the caller's schedules and logs are counted", async () => {
+    const { app } = buildApp();
+    const ownerHeaders = await authed("uid-1");
+    const otherHeaders = await authed("uid-2");
+    await app.request("/api/care/items", {
+      method: "POST",
+      headers: otherHeaders,
+      body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+    });
+
+    const res = await app.request("/api/care/adherence?from=2026-07-01&to=2026-07-01", { headers: ownerHeaders });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { days: { scheduled: number; done: number; skipped: number; missed: number }[] };
+    expect(body.days[0]).toMatchObject({ scheduled: 0, done: 0, skipped: 0, missed: 0 });
+  });
+
+  it.each([
+    ["missing from", "to=2026-07-03"],
+    ["missing to", "from=2026-07-01"],
+    ["malformed from", "from=2026-07-32&to=2026-07-03"],
+    ["from later than to", "from=2026-07-03&to=2026-07-01"],
+  ])("rejects a request with %s, as 400", async (_name, query) => {
+    const { app } = buildApp();
+    const headers = await authed();
+
+    const res = await app.request(`/api/care/adherence?${query}`, { headers });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a span exceeding 366 days, as 400", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+
+    const res = await app.request("/api/care/adherence?from=2025-01-01&to=2026-12-31", { headers });
+
+    expect(res.status).toBe(400);
   });
 });

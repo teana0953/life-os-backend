@@ -7,7 +7,9 @@ import {
   listCareItems,
   updateCareItem,
 } from "../../../contexts/notifications/application/care-items";
+import { getCareAdherence } from "../../../contexts/notifications/application/get-care-adherence";
 import { getCareToday, type CareTodaySlot } from "../../../contexts/notifications/application/get-care-today";
+import type { CareAdherenceDay } from "../../../contexts/notifications/domain/care-adherence";
 import type {
   CareCategory,
   CareItemRepository,
@@ -104,6 +106,16 @@ function careTodaySlotToJson(slot: CareTodaySlot) {
     status: slot.status,
     done_time: slot.doneTime ? slot.doneTime.toISOString() : null,
     dose_quantity: slot.doseQuantity,
+  };
+}
+
+function careAdherenceDayToJson(day: CareAdherenceDay) {
+  return {
+    date: day.date,
+    scheduled: day.scheduled,
+    done: day.done,
+    skipped: day.skipped,
+    missed: day.missed,
   };
 }
 
@@ -232,5 +244,35 @@ export function createAnswerCareSlotHandler(options: CareHandlerOptions) {
     );
     if (!log) return c.json({ error: "not_found" }, 404);
     return c.json(careLogToJson(log));
+  };
+}
+
+/** Max span (in days) the range endpoint will serve, mirroring `GET /api/vitals/range`. */
+const MAX_RANGE_DAYS = 366;
+
+/** Whole-day span between two ISO `YYYY-MM-DD` dates, via UTC (no DST drift). Own copy: vitals.ts's `daySpan` is private (YAGNI to share). */
+function daySpan(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return (Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000;
+}
+
+/** Protected `GET /api/care/adherence?from=&to=`: the caller's daily {scheduled, done, skipped, missed} over `[from, to]`, for the adherence trend chart — mirrors `GET /api/vitals/range`. */
+export function createGetCareAdherenceHandler(options: CareHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const from = requireDay(c.req.query("from"), "from");
+    const to = requireDay(c.req.query("to"), "to");
+    if (from > to) throw new BadRequestError("from must not be later than to");
+    if (daySpan(from, to) > MAX_RANGE_DAYS) {
+      throw new BadRequestError(`range must not exceed ${MAX_RANGE_DAYS} days`);
+    }
+    const result = await getCareAdherence(
+      { careItemRepo: options.careItemRepository, careLogRepo: options.careLogRepository },
+      userId,
+      from,
+      to,
+    );
+    return c.json({ from: result.from, to: result.to, days: result.days.map(careAdherenceDayToJson) });
   };
 }

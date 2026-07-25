@@ -24,9 +24,9 @@
 
 ## 4. HTTP route
 
-- [ ] 4.1 (red) route 測試(workers pool):每日輸出、參數驗證(400)、`from > to`(400)、
+- [x] 4.1 (red) route 測試(workers pool):每日輸出、參數驗證(400)、`from > to`(400)、
       span>366(400)、401、snake 輸出、注入 fake repo 只回自己的資料。
-- [ ] 4.2 (green) `routes/care.ts` 加 `GET /api/care/adherence?from=&to=`(requireDay、
+- [x] 4.2 (green) `routes/care.ts` 加 `GET /api/care/adherence?from=&to=`(requireDay、
       `from > to` → 400、MAX_RANGE_DAYS=366、自帶 daySpan helper、snake 輸出),註冊於 `app.ts`,
       inject 既有 care deps + 新 range 查詢。
 
