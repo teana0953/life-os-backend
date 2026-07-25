@@ -7,6 +7,8 @@ import {
   listCareItems,
   updateCareItem,
 } from "../../../contexts/notifications/application/care-items";
+import { editCareSlot, type EditCareSlotInput } from "../../../contexts/notifications/application/edit-care-slot";
+import { getCareRange } from "../../../contexts/notifications/application/get-care-range";
 import { getCareToday, type CareTodaySlot } from "../../../contexts/notifications/application/get-care-today";
 import type {
   CareCategory,
@@ -232,5 +234,64 @@ export function createAnswerCareSlotHandler(options: CareHandlerOptions) {
     );
     if (!log) return c.json({ error: "not_found" }, 404);
     return c.json(careLogToJson(log));
+  };
+}
+
+/** Protected `PUT /api/care/log`: overwrite a slot's status (edit a past record); 404 when the schedule isn't owned by the caller. */
+export function createEditCareSlotHandler(options: CareHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    const input: EditCareSlotInput = {
+      careScheduleId: requireString(body.care_schedule_id, "care_schedule_id"),
+      localDate: requireDay(body.local_date, "local_date"),
+      timeOfDay: requireHHMM(body.time_of_day, "time_of_day"),
+      status: requireCareLogStatus(body.status),
+    };
+
+    const log = await editCareSlot(
+      { careItemRepo: options.careItemRepository, careLogRepo: options.careLogRepository },
+      userId,
+      input,
+    );
+    if (!log) return c.json({ error: "not_found" }, 404);
+    return c.json(careLogToJson(log));
+  };
+}
+
+/** Max span (in days) the range endpoint will serve, mirroring vitals' range endpoint. */
+const MAX_RANGE_DAYS = 366;
+
+/** Whole-day span between two ISO `YYYY-MM-DD` dates, via UTC (no DST drift). */
+function daySpan(from: string, to: string): number {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return (Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000;
+}
+
+/** Protected `GET /api/care/range?from=&to=`: per-slot care records over `[from, to]`, generalizing `/api/care/today`. */
+export function createGetCareRangeHandler(options: CareHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const from = requireDay(c.req.query("from"), "from");
+    const to = requireDay(c.req.query("to"), "to");
+    if (from > to) throw new BadRequestError("from must not be later than to");
+    if (daySpan(from, to) > MAX_RANGE_DAYS) {
+      throw new BadRequestError(`range must not exceed ${MAX_RANGE_DAYS} days`);
+    }
+
+    const result = await getCareRange(
+      { userRepo: options.userRepository, careItemRepo: options.careItemRepository, careLogRepo: options.careLogRepository },
+      userId,
+      from,
+      to,
+      new Date(),
+    );
+    return c.json({
+      from: result.from,
+      to: result.to,
+      days: result.days.map((day) => ({ date: day.date, items: day.items.map(careTodaySlotToJson) })),
+    });
   };
 }

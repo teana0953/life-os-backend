@@ -77,6 +77,8 @@ import {
   createAnswerCareSlotHandler,
   createCreateCareItemHandler,
   createDeleteCareItemHandler,
+  createEditCareSlotHandler,
+  createGetCareRangeHandler,
   createGetCareTodayHandler,
   createListCareItemsHandler,
   createUpdateCareItemHandler,
@@ -296,7 +298,9 @@ export function createApp(options: CreateAppOptions) {
   app.patch("/api/care/items/:id", authMiddleware, createUpdateCareItemHandler(careOptions));
   app.delete("/api/care/items/:id", authMiddleware, createDeleteCareItemHandler(careOptions));
   app.post("/api/care/log", authMiddleware, createAnswerCareSlotHandler(careOptions));
+  app.put("/api/care/log", authMiddleware, createEditCareSlotHandler(careOptions));
   app.get("/api/care/today", authMiddleware, createGetCareTodayHandler(careOptions));
+  app.get("/api/care/range", authMiddleware, createGetCareRangeHandler(careOptions));
 
   return app;
 }

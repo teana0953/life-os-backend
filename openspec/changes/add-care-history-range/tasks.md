@@ -28,12 +28,12 @@
 
 ## 4. HTTP routes
 
-- [ ] 4.1 (red) route 測試(workers pool):`GET /api/care/range`(per-day slots、400 缺/壞/from>to/
+- [x] 4.1 (red) route 測試(workers pool):`GET /api/care/range`(per-day slots、400 缺/壞/from>to/
       span>366、401、per-user、snake、停用不出);`PUT /api/care/log`(覆寫、庫存連動、非 owner 404、
       401、status 驗證)。
-- [ ] 4.2 (green) `routes/care.ts` 加兩路由(range 用 requireDay+from>to+MAX_RANGE_DAYS=366+自帶
+- [x] 4.2 (green) `routes/care.ts` 加兩路由(range 用 requireDay+from>to+MAX_RANGE_DAYS=366+自帶
       daySpan;put 驗 status∈done|skipped),註冊於 `app.ts`,inject deps。
 
 ## 5. Gate
 
-- [ ] 5.1 `npm test` + `npm run typecheck` 全綠。
+- [x] 5.1 `npm test` + `npm run typecheck` 全綠。
