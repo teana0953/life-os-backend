@@ -74,7 +74,16 @@ describe("splitDateRange", () => {
     const originalTz = process.env.TZ;
 
     afterEach(() => {
-      process.env.TZ = originalTz;
+      // Assigning back an undefined original would set the string "undefined",
+      // which is not a valid zone — Node then falls back to UTC. Vitest isolates
+      // per file so nothing downstream is affected today, but that only holds
+      // while this stays the last block in the file. Most machines and CI
+      // runners do not export TZ, so this branch is the normal path.
+      if (originalTz === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTz;
+      }
     });
 
     it("produces the same batches in a non-UTC timezone that crosses DST", () => {

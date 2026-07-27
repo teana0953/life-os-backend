@@ -33,7 +33,7 @@
 - [x] 確認五個 importer 的既有測試全部維持通過 —— 它們斷言的是「給定這些 records，寫出什麼」，而分批不改變餵進去的 records，所以不該有任何一條需要改。**若有測試變紅，代表行為真的變了，回頭查而不是改斷言。**
 
 ## 4. Gate
-- [ ] `npm test` + `npm run typecheck` 全綠。基準是 **664 passed**，五個 importer 的既有行為測試（idempotency、meal type、時區、all-zero guard、glucose 去重等）零退化。
+- [x] `npm test` + `npm run typecheck` 全綠。基準是 **664 passed**，五個 importer 的既有行為測試（idempotency、meal type、時區、all-zero guard、glucose 去重等）零退化。
 
 ## 5. On-device verification (manual — 需使用者，部署後)
 - [ ] 用一段**超過 183 天**的區間跑一次真實匯入，確認完成而不是被擋。
