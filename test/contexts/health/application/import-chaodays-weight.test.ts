@@ -64,20 +64,26 @@ class FakeChaodaysClient implements ChaodaysClient {
   // Captured args, so tests can assert the use case threads them through.
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
+  signInCallCount = 0;
+  fetchCalls: { from: string; to: string }[] = [];
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
+    this.signInCallCount++;
     if (this.signInError) throw this.signInError;
     return SESSION;
   }
 
+  // Returns only the records inside `[from, to]`, like the real client — a fake
+  // that ignored the range would hand every batch the same records.
   async fetchWeightRecords(
     session: ChaodaysSession,
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
     this.fetchArgs = { from, to };
-    return { session, records: this.records };
+    this.fetchCalls.push({ from, to });
+    return { session, records: this.records.filter((r) => r.date >= from && r.date <= to) };
   }
 
   fetchDietRecords(): never {
@@ -94,6 +100,22 @@ class FakeChaodaysClient implements ChaodaysClient {
 
   fetchDietMenus(): never {
     throw new Error("not used in this test");
+  }
+}
+
+/** The day after `day`, computed in UTC. */
+function dayAfter(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** Asserts `calls` are several contiguous, non-overlapping sub-ranges covering exactly `[from, to]`. */
+function expectContiguousCover(calls: { from: string; to: string }[], from: string, to: string) {
+  expect(calls.length).toBeGreaterThan(1);
+  expect(calls[0].from).toBe(from);
+  expect(calls[calls.length - 1].to).toBe(to);
+  for (let i = 1; i < calls.length; i++) {
+    expect(calls[i].from).toBe(dayAfter(calls[i - 1].to));
   }
 }
 
@@ -260,6 +282,30 @@ describe("importChaodaysWeight", () => {
 
     expect(summary).toEqual({ imported: 0, skipped: 0, from: "2026-07-01", to: "2026-07-02" });
     expect(vitalsRepository.setManyCallCount).toBe(0);
+  });
+
+  it("fetches a range longer than the batch size as several contiguous requests, signing in once", async () => {
+    chaodaysClient.records = [
+      { date: "2026-01-01", weight: 70, bodyFatPct: 20 },
+      // Either side of the first 183-day boundary.
+      { date: "2026-07-02", weight: 71, bodyFatPct: null },
+      { date: "2026-07-03", weight: 72, bodyFatPct: null },
+      { date: "2027-12-31", weight: 73, bodyFatPct: null },
+    ];
+
+    const summary = await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-01-01",
+      to: "2027-12-31",
+    });
+
+    expectContiguousCover(chaodaysClient.fetchCalls, "2026-01-01", "2027-12-31");
+    expect(chaodaysClient.signInCallCount).toBe(1);
+    expect(summary).toEqual({ imported: 4, skipped: 0, from: "2026-01-01", to: "2027-12-31" });
+    expect((await vitalsRepository.get("user-1", "2026-07-02"))?.weightKg).toBe(71);
+    expect((await vitalsRepository.get("user-1", "2026-07-03"))?.weightKg).toBe(72);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

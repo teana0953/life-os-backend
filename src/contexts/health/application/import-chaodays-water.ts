@@ -1,5 +1,6 @@
 import type { ChaodaysClient } from "../domain/chaodays-client";
 import type { WaterRepository } from "../domain/water-repository";
+import { fetchInBatches } from "./fetch-in-batches";
 
 export interface ImportChaodaysWaterInput {
   userId: string;
@@ -35,7 +36,9 @@ export async function importChaodaysWater(
   input: ImportChaodaysWaterInput,
 ): Promise<ImportChaodaysWaterSummary> {
   const session = await chaodaysClient.signIn(input.uid, input.password);
-  const { records } = await chaodaysClient.fetchWaterRecords(session, input.from, input.to);
+  const records = await fetchInBatches(session, input.from, input.to, (batchSession, from, to) =>
+    chaodaysClient.fetchWaterRecords(batchSession, from, to),
+  );
 
   const totalByDay = new Map<string, number>();
   for (const record of records) {

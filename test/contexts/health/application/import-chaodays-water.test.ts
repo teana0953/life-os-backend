@@ -60,9 +60,21 @@ class FakeChaodaysClient implements ChaodaysClient {
   records: ChaodaysWaterRecord[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
+  signInCallCount = 0;
+  fetchCalls: { from: string; to: string }[] = [];
+  /**
+   * How the fake spreads its records over the fetches:
+   * - "range": each call returns only the records inside `[from, to]`, like the
+   *   real client. Returning every record on every call instead would multiply
+   *   each day's sum by the number of batches.
+   * - "all-at-once": the first call returns every record and later calls return
+   *   none — what a single request for the whole range looks like.
+   */
+  delivery: "range" | "all-at-once" = "range";
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
+    this.signInCallCount++;
     if (this.signInError) throw this.signInError;
     return SESSION;
   }
@@ -81,7 +93,11 @@ class FakeChaodaysClient implements ChaodaysClient {
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }> {
     this.fetchArgs = { from, to };
-    return { session, records: this.records };
+    this.fetchCalls.push({ from, to });
+    if (this.delivery === "all-at-once") {
+      return { session, records: this.fetchCalls.length === 1 ? this.records : [] };
+    }
+    return { session, records: this.records.filter((r) => r.date >= from && r.date <= to) };
   }
 
   fetchDefecationRecords(): never {
@@ -90,6 +106,22 @@ class FakeChaodaysClient implements ChaodaysClient {
 
   fetchDietMenus(): never {
     throw new Error("not used in this test");
+  }
+}
+
+/** The day after `day`, computed in UTC. */
+function dayAfter(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** Asserts `calls` are several contiguous, non-overlapping sub-ranges covering exactly `[from, to]`. */
+function expectContiguousCover(calls: { from: string; to: string }[], from: string, to: string) {
+  expect(calls.length).toBeGreaterThan(1);
+  expect(calls[0].from).toBe(from);
+  expect(calls[calls.length - 1].to).toBe(to);
+  for (let i = 1; i < calls.length; i++) {
+    expect(calls[i].from).toBe(dayAfter(calls[i - 1].to));
   }
 }
 
@@ -199,6 +231,69 @@ describe("importChaodaysWater", () => {
     expect((await waterRepository.getIntake("user-1", "2026-07-02"))?.totalMl).toBe(300);
     // Regardless of the number of days, persistence is one batched call.
     expect(waterRepository.addIntakeManyCallCount).toBe(1);
+  });
+
+  it("fetches a range longer than the batch size as several contiguous requests, signing in once", async () => {
+    chaodaysClient.records = [
+      { date: "2026-01-01", waterMl: 250, recordedAt: "2026-01-01 09:00" },
+      { date: "2027-12-31", waterMl: 300, recordedAt: "2027-12-31 09:00" },
+    ];
+
+    const summary = await importChaodaysWater(waterRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-01-01",
+      to: "2027-12-31",
+    });
+
+    expectContiguousCover(chaodaysClient.fetchCalls, "2026-01-01", "2027-12-31");
+    expect(chaodaysClient.signInCallCount).toBe(1);
+    expect(summary).toEqual({ imported: 2, skipped: 0, from: "2026-01-01", to: "2027-12-31" });
+  });
+
+  it("writes the same intake and summary whether the range arrived in one response or several batches", async () => {
+    // Days on both sides of the first 183-day boundary (2026-07-02 / 2026-07-03),
+    // each with several entries, so a batch counted twice or a day dropped at the
+    // seam shows up as a wrong daily sum.
+    const records: ChaodaysWaterRecord[] = [
+      { date: "2026-01-01", waterMl: 250, recordedAt: "2026-01-01 09:00" },
+      { date: "2026-01-01", waterMl: 500, recordedAt: "2026-01-01 14:00" },
+      { date: "2026-07-02", waterMl: 100, recordedAt: "2026-07-02 09:00" },
+      { date: "2026-07-03", waterMl: 200, recordedAt: "2026-07-03 09:00" },
+      { date: "2026-07-03", waterMl: 300, recordedAt: "2026-07-03 20:00" },
+      { date: "2027-12-31", waterMl: 400, recordedAt: "2027-12-31 09:00" },
+    ];
+    const input = {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-01-01",
+      to: "2027-12-31",
+    };
+
+    const singleRequestRepository = new InMemoryWaterRepository();
+    const singleRequestClient = new FakeChaodaysClient();
+    singleRequestClient.records = records;
+    singleRequestClient.delivery = "all-at-once";
+    const singleRequestSummary = await importChaodaysWater(singleRequestRepository, singleRequestClient, input);
+
+    chaodaysClient.records = records;
+    const batchedSummary = await importChaodaysWater(waterRepository, chaodaysClient, input);
+
+    expect(chaodaysClient.fetchCalls.length).toBeGreaterThan(1);
+    expect(batchedSummary).toEqual(singleRequestSummary);
+    expect(await waterRepository.listIntakeRange("user-1", input.from, input.to)).toEqual(
+      await singleRequestRepository.listIntakeRange("user-1", input.from, input.to),
+    );
+    // Pinned, so both runs being wrong the same way would still fail.
+    expect(await waterRepository.listIntakeRange("user-1", input.from, input.to)).toEqual([
+      { userId: "user-1", day: "2026-01-01", totalMl: 750 },
+      { userId: "user-1", day: "2026-07-02", totalMl: 100 },
+      { userId: "user-1", day: "2026-07-03", totalMl: 500 },
+      { userId: "user-1", day: "2027-12-31", totalMl: 400 },
+    ]);
+    expect(batchedSummary).toEqual({ imported: 4, skipped: 0, from: input.from, to: input.to });
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {
