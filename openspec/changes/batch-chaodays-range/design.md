@@ -68,6 +68,8 @@ Cloudflare Workers 對每次 invocation 的 subrequest 有上限（這個 repo �
 
 分批只增加**向 chaodays 的 fetch 次數**（每批 1 個），DB 讀寫完全不變。以每類型一次呼叫計：`1 signIn + N fetch + 2~3 db.batch`。匯三年 N=6 → 約 10 個 subrequest，離上限很遠。粗估要到 40 批（約 20 年）才需要重新考慮。
 
+**但 subrequest 不再是真正的瓶頸 —— 時間才是。** 分批把 1 次上游請求變成最多 N 次**序列**請求（序列是必要的，見 D2 的 session 串接），總耗時因此隨區間線性成長。新的天花板是前端的請求 timeout 與 Cloudflare 的 edge 時間限制，而不是 subrequest 數量。這一項列入實機驗證觀察，若成為問題，方向是縮小批次數（加大批次）或把單次呼叫拆成前端多次 —— 但後者會回到 D1 否決的登入次數問題，需要重新設計而不是調參數。
+
 ## 元件
 
 | 檔案 | 改動 |

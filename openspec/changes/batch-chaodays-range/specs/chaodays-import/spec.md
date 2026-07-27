@@ -49,6 +49,7 @@ contract and SHALL NOT write part of the range, so a retry is a clean retry.
 - **THEN** the import fails with the same error mapping as a single-request failure, and
   no records from the earlier batches have been written
 
-#### Scenario: Auth failures are unchanged
-- **WHEN** the sign-in or any batch is rejected for bad chaodays credentials
-- **THEN** the import reports the auth failure exactly as it does today
+#### Scenario: Error mapping is unchanged
+- **WHEN** the sign-in is rejected for bad chaodays credentials, or any batch request fails
+- **THEN** each maps to the same response it maps to today — batching changes which request
+  failed, never how a failure is reported
