@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { importChaodaysWeight } from "../../../../src/contexts/health/application/import-chaodays-weight";
-import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { ChaodaysClient, ChaodaysSession, ChaodaysWeightRecord } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { VitalsRecord } from "../../../../src/contexts/health/domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../../../../src/contexts/health/domain/vitals-repository";
@@ -66,6 +66,8 @@ class FakeChaodaysClient implements ChaodaysClient {
   fetchArgs: { from: string; to: string } | null = null;
   signInCallCount = 0;
   fetchCalls: { from: string; to: string }[] = [];
+  /** When set, the fetch with this 1-based call number throws instead of returning. */
+  failOnFetchCall: number | null = null;
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
@@ -83,6 +85,7 @@ class FakeChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWeightRecord[] }> {
     this.fetchArgs = { from, to };
     this.fetchCalls.push({ from, to });
+    if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
     return { session, records: this.records.filter((r) => r.date >= from && r.date <= to) };
   }
 
@@ -306,6 +309,31 @@ describe("importChaodaysWeight", () => {
     expect(summary).toEqual({ imported: 4, skipped: 0, from: "2026-01-01", to: "2027-12-31" });
     expect((await vitalsRepository.get("user-1", "2026-07-02"))?.weightKg).toBe(71);
     expect((await vitalsRepository.get("user-1", "2026-07-03"))?.weightKg).toBe(72);
+  });
+
+  it("writes nothing when a batch after the first fails", async () => {
+    chaodaysClient.records = [
+      // In the first batch, so a per-batch write would already have landed it.
+      { date: "2026-01-01", weight: 70, bodyFatPct: 20 },
+      { date: "2027-12-31", weight: 73, bodyFatPct: null },
+    ];
+    chaodaysClient.failOnFetchCall = 2;
+
+    await expect(
+      importChaodaysWeight(vitalsRepository, chaodaysClient, {
+        userId: "user-1",
+        uid: "chaodays-uid",
+        password: "chaodays-pw",
+        from: "2026-01-01",
+        to: "2027-12-31",
+      }),
+    ).rejects.toThrow(ChaodaysUpstreamError);
+
+    // The first batch did succeed, and no further batch was issued.
+    expect(chaodaysClient.fetchCalls.length).toBe(2);
+    // A failed import leaves the range untouched, so a retry is a clean retry.
+    expect(vitalsRepository.setManyCallCount).toBe(0);
+    expect(await vitalsRepository.listRange("user-1", "2026-01-01", "2027-12-31")).toEqual([]);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

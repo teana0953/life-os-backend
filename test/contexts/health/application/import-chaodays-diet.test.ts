@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { importChaodaysDiet, nextSnackName } from "../../../../src/contexts/health/application/import-chaodays-diet";
-import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type {
   ChaodaysClient,
   ChaodaysDietRecord,
@@ -168,6 +168,8 @@ class FakeChaodaysClient implements ChaodaysClient {
    *   none — what a single request for the whole range looks like.
    */
   delivery: "range" | "all-at-once" = "range";
+  /** When set, the fetch with this 1-based call number throws instead of returning. */
+  failOnFetchCall: number | null = null;
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
@@ -187,6 +189,7 @@ class FakeChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }> {
     this.fetchArgs = { from, to };
     this.fetchCalls.push({ from, to });
+    if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
     if (this.delivery === "all-at-once") {
       return { session, records: this.fetchCalls.length === 1 ? this.records : [] };
     }
@@ -718,6 +721,25 @@ describe("importChaodaysDiet", () => {
     const snacks = await mealRepository.listMealsByDay("user-1", "2026-07-03");
     expect(snacks.map((m) => m.meal)).toEqual(["點心", "點心2"]);
     expect(snacks[0].items.map((item) => item.name)).toEqual(["香蕉", "牛奶"]);
+  });
+
+  it("writes nothing when a batch after the first fails", async () => {
+    // The first batch carries 2026-01-01's lunch, so a per-batch write would
+    // already have landed it (and its glucose) before the failure.
+    chaodaysClient.records = LONG_RANGE_RECORDS;
+    chaodaysClient.failOnFetchCall = 2;
+
+    await expect(
+      importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, LONG_RANGE_INPUT),
+    ).rejects.toThrow(ChaodaysUpstreamError);
+
+    // The first batch did succeed, and no further batch was issued.
+    expect(chaodaysClient.fetchCalls.length).toBe(2);
+    // A failed import leaves the range untouched, so a retry is a clean retry.
+    expect(mealRepository.createMealsCallCount).toBe(0);
+    expect(vitalsRepository.setManyCallCount).toBe(0);
+    expect(mealRepository.meals).toEqual([]);
+    expect(await vitalsRepository.listRange("user-1", LONG_RANGE_INPUT.from, LONG_RANGE_INPUT.to)).toEqual([]);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

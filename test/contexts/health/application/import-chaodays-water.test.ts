@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { importChaodaysWater } from "../../../../src/contexts/health/application/import-chaodays-water";
-import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { ChaodaysClient, ChaodaysSession, ChaodaysWaterRecord } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { WaterIntake, WaterTarget } from "../../../../src/contexts/health/domain/water";
 import type { SetWaterTargetInput, WaterRepository } from "../../../../src/contexts/health/domain/water-repository";
@@ -71,6 +71,8 @@ class FakeChaodaysClient implements ChaodaysClient {
    *   none — what a single request for the whole range looks like.
    */
   delivery: "range" | "all-at-once" = "range";
+  /** When set, the fetch with this 1-based call number throws instead of returning. */
+  failOnFetchCall: number | null = null;
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
@@ -94,6 +96,7 @@ class FakeChaodaysClient implements ChaodaysClient {
   ): Promise<{ session: ChaodaysSession; records: ChaodaysWaterRecord[] }> {
     this.fetchArgs = { from, to };
     this.fetchCalls.push({ from, to });
+    if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
     if (this.delivery === "all-at-once") {
       return { session, records: this.fetchCalls.length === 1 ? this.records : [] };
     }
@@ -294,6 +297,31 @@ describe("importChaodaysWater", () => {
       { userId: "user-1", day: "2027-12-31", totalMl: 400 },
     ]);
     expect(batchedSummary).toEqual({ imported: 4, skipped: 0, from: input.from, to: input.to });
+  });
+
+  it("writes nothing when a batch after the first fails", async () => {
+    chaodaysClient.records = [
+      // In the first batch, so a per-batch write would already have landed it.
+      { date: "2026-01-01", waterMl: 250, recordedAt: "2026-01-01 09:00" },
+      { date: "2027-12-31", waterMl: 300, recordedAt: "2027-12-31 09:00" },
+    ];
+    chaodaysClient.failOnFetchCall = 2;
+
+    await expect(
+      importChaodaysWater(waterRepository, chaodaysClient, {
+        userId: "user-1",
+        uid: "chaodays-uid",
+        password: "chaodays-pw",
+        from: "2026-01-01",
+        to: "2027-12-31",
+      }),
+    ).rejects.toThrow(ChaodaysUpstreamError);
+
+    // The first batch did succeed, and no further batch was issued.
+    expect(chaodaysClient.fetchCalls.length).toBe(2);
+    // A failed import leaves the range untouched, so a retry is a clean retry.
+    expect(waterRepository.addIntakeManyCallCount).toBe(0);
+    expect(await waterRepository.listIntakeRange("user-1", "2026-01-01", "2027-12-31")).toEqual([]);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

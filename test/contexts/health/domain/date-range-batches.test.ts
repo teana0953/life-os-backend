@@ -81,12 +81,16 @@ describe("splitDateRange", () => {
       process.env.TZ = "UTC";
       const inUtc = splitDateRange("2026-01-01", "2028-12-31");
 
-      process.env.TZ = "America/New_York";
-      const inNewYork = splitDateRange("2026-01-01", "2028-12-31");
+      // East of UTC on purpose: local-Date arithmetic there rolls a local
+      // midnight back to the previous UTC day, which is the regression this
+      // guards. West of UTC (e.g. America/New_York) it would stay on the same
+      // day and the comparison would agree even with the bug.
+      process.env.TZ = "Europe/Berlin";
+      const inBerlin = splitDateRange("2026-01-01", "2028-12-31");
 
-      expect(inNewYork).toEqual(inUtc);
+      expect(inBerlin).toEqual(inUtc);
       // Pinned so the assertion still bites if both timezones drift together.
-      expect(inNewYork[0]).toEqual({ from: "2026-01-01", to: "2026-07-02" });
+      expect(inBerlin[0]).toEqual({ from: "2026-01-01", to: "2026-07-02" });
     });
   });
 });
