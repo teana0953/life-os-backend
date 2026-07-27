@@ -1,6 +1,7 @@
 import type { ChaodaysClient } from "../domain/chaodays-client";
 import type { DailyTargetRepository, SetDailyTargetInput } from "../domain/daily-target-repository";
 import type { SetWaterTargetInput, WaterRepository } from "../domain/water-repository";
+import { fetchInBatches } from "./fetch-in-batches";
 
 export interface ImportChaodaysDietTargetInput {
   userId: string;
@@ -43,7 +44,10 @@ export async function importChaodaysDietTarget(
   input: ImportChaodaysDietTargetInput,
 ): Promise<ImportChaodaysDietTargetSummary> {
   const session = await chaodaysClient.signIn(input.uid, input.password);
-  const { menus } = await chaodaysClient.fetchDietMenus(session, input.from, input.to);
+  const menus = await fetchInBatches(session, input.from, input.to, async (batchSession, from, to) => {
+    const batch = await chaodaysClient.fetchDietMenus(batchSession, from, to);
+    return { session: batch.session, records: batch.menus };
+  });
 
   // Reads for the whole range happen once, before any writes.
   const existingTargets = await dailyTargetRepository.listInRange(input.userId, input.from, input.to);

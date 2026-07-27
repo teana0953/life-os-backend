@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { importChaodaysDiet, nextSnackName } from "../../../../src/contexts/health/application/import-chaodays-diet";
-import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type {
   ChaodaysClient,
   ChaodaysDietRecord,
@@ -157,9 +157,23 @@ class FakeChaodaysClient implements ChaodaysClient {
   records: ChaodaysDietRecord[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
+  signInCallCount = 0;
+  fetchCalls: { from: string; to: string }[] = [];
+  /**
+   * How the fake spreads its records over the fetches:
+   * - "range": each call returns only the records inside `[from, to]`, like the
+   *   real client. Returning every record on every call instead would merge each
+   *   day's meals once per batch and re-number its snacks.
+   * - "all-at-once": the first call returns every record and later calls return
+   *   none — what a single request for the whole range looks like.
+   */
+  delivery: "range" | "all-at-once" = "range";
+  /** When set, the fetch with this 1-based call number throws instead of returning. */
+  failOnFetchCall: number | null = null;
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
+    this.signInCallCount++;
     if (this.signInError) throw this.signInError;
     return SESSION;
   }
@@ -174,7 +188,12 @@ class FakeChaodaysClient implements ChaodaysClient {
     to: string,
   ): Promise<{ session: ChaodaysSession; records: ChaodaysDietRecord[] }> {
     this.fetchArgs = { from, to };
-    return { session, records: this.records };
+    this.fetchCalls.push({ from, to });
+    if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
+    if (this.delivery === "all-at-once") {
+      return { session, records: this.fetchCalls.length === 1 ? this.records : [] };
+    }
+    return { session, records: this.records.filter((r) => r.date >= from && r.date <= to) };
   }
 
   fetchWaterRecords(): never {
@@ -188,6 +207,33 @@ class FakeChaodaysClient implements ChaodaysClient {
   fetchDietMenus(): never {
     throw new Error("not used in this test");
   }
+}
+
+/** The day after `day`, computed in UTC. */
+function dayAfter(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** Asserts `calls` are several contiguous, non-overlapping sub-ranges covering exactly `[from, to]`. */
+function expectContiguousCover(calls: { from: string; to: string }[], from: string, to: string) {
+  expect(calls.length).toBeGreaterThan(1);
+  expect(calls[0].from).toBe(from);
+  expect(calls[calls.length - 1].to).toBe(to);
+  for (let i = 1; i < calls.length; i++) {
+    expect(calls[i].from).toBe(dayAfter(calls[i - 1].to));
+  }
+}
+
+/** Everything written to `repository`, minus the generated ids/timestamps, in a stable order. */
+function writtenMeals(repository: InMemoryMealRepository) {
+  return repository.meals
+    .map(({ id: _id, createdAt: _createdAt, items, ...meal }) => ({
+      ...meal,
+      time: meal.time.toISOString(),
+      items: items.map(({ id: _itemId, mealEntryId: _mealEntryId, createdAt: _itemCreatedAt, ...item }) => item),
+    }))
+    .sort((a, b) => `${a.day}|${a.meal}`.localeCompare(`${b.day}|${b.meal}`));
 }
 
 let mealRepository: InMemoryMealRepository;
@@ -549,6 +595,169 @@ describe("importChaodaysDiet", () => {
     expect(summary).toEqual({ mealsImported: 0, mealsSkipped: 0, glucoseImported: 0, from: "2026-07-01", to: "2026-07-01" });
     expect(mealRepository.createMealsCallCount).toBe(0);
     expect(vitalsRepository.setManyCallCount).toBe(0);
+  });
+
+  // Days on both sides of the first 183-day boundary (2026-07-02 / 2026-07-03),
+  // each with several same-type records to merge and several snacks to number.
+  const LONG_RANGE_RECORDS: ChaodaysDietRecord[] = [
+    {
+      date: "2026-01-01",
+      recordType: "lunch",
+      recordedAt: "2026-01-01 12:00",
+      items: [{ name: "白飯", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+    },
+    {
+      date: "2026-01-01",
+      recordType: "lunch",
+      recordedAt: "2026-01-01 12:45",
+      items: [{ name: "青菜", staple: 0, meat: 0, fruit: 0, veg: 1 }],
+    },
+    {
+      date: "2026-07-02",
+      recordType: "breakfast",
+      recordedAt: "2026-07-02 07:30",
+      items: [{ name: "白粥", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+    },
+    {
+      date: "2026-07-02",
+      recordType: "extra",
+      recordedAt: "2026-07-02 09:00",
+      items: [{ name: "蘋果", staple: 0, meat: 0, fruit: 1, veg: 0 }],
+    },
+    {
+      date: "2026-07-02",
+      recordType: "extra",
+      recordedAt: "2026-07-02 15:00",
+      items: [{ name: "餅乾", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+    },
+    {
+      date: "2026-07-03",
+      recordType: "extra",
+      recordedAt: "2026-07-03 10:00",
+      items: [{ name: "香蕉", staple: 0, meat: 0, fruit: 1, veg: 0 }],
+    },
+    {
+      date: "2026-07-03",
+      recordType: "extra",
+      recordedAt: "2026-07-03 10:00",
+      items: [{ name: "牛奶", staple: 0, meat: 1, fruit: 0, veg: 0 }],
+    },
+    {
+      date: "2026-07-03",
+      recordType: "extra",
+      recordedAt: "2026-07-03 16:00",
+      items: [{ name: "麵包", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+    },
+    {
+      date: "2027-12-31",
+      recordType: "dinner",
+      recordedAt: "2027-12-31 18:00",
+      items: [
+        { name: "魚", staple: 0, meat: 2, fruit: 0, veg: 0 },
+        { name: "前血糖：110", staple: 0, meat: 0, fruit: 0, veg: 0 },
+      ],
+    },
+  ];
+
+  const LONG_RANGE_INPUT = {
+    userId: "user-1",
+    uid: "chaodays-uid",
+    password: "chaodays-pw",
+    from: "2026-01-01",
+    to: "2027-12-31",
+  };
+
+  it("fetches a range longer than the batch size as several contiguous requests, signing in once", async () => {
+    chaodaysClient.records = LONG_RANGE_RECORDS;
+
+    const summary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, LONG_RANGE_INPUT);
+
+    expectContiguousCover(chaodaysClient.fetchCalls, "2026-01-01", "2027-12-31");
+    expect(chaodaysClient.signInCallCount).toBe(1);
+    expect(summary).toEqual({
+      mealsImported: 7,
+      mealsSkipped: 0,
+      glucoseImported: 1,
+      from: "2026-01-01",
+      to: "2027-12-31",
+    });
+    // Each of the two days straddling a batch boundary numbers its own snacks
+    // from scratch, exactly as it would in a single request.
+    expect((await mealRepository.listMealsByDay("user-1", "2026-07-02")).map((m) => m.meal)).toEqual([
+      "breakfast",
+      "點心",
+      "點心2",
+    ]);
+    expect((await mealRepository.listMealsByDay("user-1", "2026-07-03")).map((m) => m.meal)).toEqual(["點心", "點心2"]);
+  });
+
+  it("writes the same meals, glucose and summary whether the range arrived in one response or several batches", async () => {
+    const singleRequestMealRepository = new InMemoryMealRepository();
+    const singleRequestVitalsRepository = new InMemoryVitalsRepository();
+    const singleRequestClient = new FakeChaodaysClient();
+    singleRequestClient.records = LONG_RANGE_RECORDS;
+    singleRequestClient.delivery = "all-at-once";
+    const singleRequestSummary = await importChaodaysDiet(
+      singleRequestMealRepository,
+      singleRequestVitalsRepository,
+      singleRequestClient,
+      LONG_RANGE_INPUT,
+    );
+
+    chaodaysClient.records = LONG_RANGE_RECORDS;
+    const batchedSummary = await importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, LONG_RANGE_INPUT);
+
+    expect(chaodaysClient.fetchCalls.length).toBeGreaterThan(1);
+    expect(batchedSummary).toEqual(singleRequestSummary);
+    expect(writtenMeals(mealRepository)).toEqual(writtenMeals(singleRequestMealRepository));
+    expect(await vitalsRepository.listRange("user-1", LONG_RANGE_INPUT.from, LONG_RANGE_INPUT.to)).toEqual(
+      await singleRequestVitalsRepository.listRange("user-1", LONG_RANGE_INPUT.from, LONG_RANGE_INPUT.to),
+    );
+    // Pinned, so both runs being wrong the same way would still fail: same-type
+    // records merge into one meal, and same-time snacks into one snack.
+    const lunch = (await mealRepository.listMealsByDay("user-1", "2026-01-01"))[0];
+    expect(lunch.meal).toBe("lunch");
+    expect(lunch.items.map((item) => item.name)).toEqual(["白飯", "青菜"]);
+    const snacks = await mealRepository.listMealsByDay("user-1", "2026-07-03");
+    expect(snacks.map((m) => m.meal)).toEqual(["點心", "點心2"]);
+    expect(snacks[0].items.map((item) => item.name)).toEqual(["香蕉", "牛奶"]);
+  });
+
+  it("writes nothing when a batch after the first fails", async () => {
+    // Local fixture rather than LONG_RANGE_RECORDS: this test needs a glucose
+    // reading inside the FIRST batch, so that a per-batch write would have
+    // landed BOTH repositories before the failure. LONG_RANGE_RECORDS keeps its
+    // only glucose on 2027-12-31 (the last batch), which would leave the vitals
+    // assertion below trivially true — passing whether or not the import writes
+    // per batch. The two long-range tests above pin `glucoseImported: 1`, so
+    // the shared fixture can't just gain a reading.
+    chaodaysClient.records = [
+      {
+        date: "2026-01-01",
+        recordType: "lunch",
+        recordedAt: "2026-01-01 12:00",
+        items: [{ name: "白飯\n前血糖：95", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2027-12-31",
+        recordType: "dinner",
+        recordedAt: "2027-12-31 18:00",
+        items: [{ name: "麵", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
+    chaodaysClient.failOnFetchCall = 2;
+
+    await expect(
+      importChaodaysDiet(mealRepository, vitalsRepository, chaodaysClient, LONG_RANGE_INPUT),
+    ).rejects.toThrow(ChaodaysUpstreamError);
+
+    // The first batch did succeed, and no further batch was issued.
+    expect(chaodaysClient.fetchCalls.length).toBe(2);
+    // A failed import leaves the range untouched, so a retry is a clean retry.
+    expect(mealRepository.createMealsCallCount).toBe(0);
+    expect(vitalsRepository.setManyCallCount).toBe(0);
+    expect(mealRepository.meals).toEqual([]);
+    expect(await vitalsRepository.listRange("user-1", LONG_RANGE_INPUT.from, LONG_RANGE_INPUT.to)).toEqual([]);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

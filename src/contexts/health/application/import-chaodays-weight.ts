@@ -1,6 +1,7 @@
 import type { ChaodaysClient, ChaodaysWeightRecord } from "../domain/chaodays-client";
 import type { VitalsRecord } from "../domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../domain/vitals-repository";
+import { fetchInBatches } from "./fetch-in-batches";
 
 export interface ImportChaodaysWeightInput {
   userId: string;
@@ -40,7 +41,9 @@ export async function importChaodaysWeight(
   input: ImportChaodaysWeightInput,
 ): Promise<ImportChaodaysWeightSummary> {
   const session = await chaodaysClient.signIn(input.uid, input.password);
-  const { records } = await chaodaysClient.fetchWeightRecords(session, input.from, input.to);
+  const records = await fetchInBatches(session, input.from, input.to, (batchSession, from, to) =>
+    chaodaysClient.fetchWeightRecords(batchSession, from, to),
+  );
 
   const recordsByDay = new Map<string, ChaodaysWeightRecord[]>();
   for (const record of records) {

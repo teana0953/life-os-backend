@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { importChaodaysDietTarget } from "../../../../src/contexts/health/application/import-chaodays-diet-target";
-import { ChaodaysAuthError } from "../../../../src/contexts/health/domain/chaodays-client";
+import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { ChaodaysClient, ChaodaysDietMenu, ChaodaysSession } from "../../../../src/contexts/health/domain/chaodays-client";
 import type { DailyTarget } from "../../../../src/contexts/health/domain/daily-target";
 import type { DailyTargetRepository, SetDailyTargetInput } from "../../../../src/contexts/health/domain/daily-target-repository";
@@ -119,9 +119,14 @@ class FakeChaodaysClient implements ChaodaysClient {
   menus: ChaodaysDietMenu[] = [];
   signInArgs: { uid: string; password: string } | null = null;
   fetchArgs: { from: string; to: string } | null = null;
+  signInCallCount = 0;
+  fetchCalls: { from: string; to: string }[] = [];
+  /** When set, the fetch with this 1-based call number throws instead of returning. */
+  failOnFetchCall: number | null = null;
 
   async signIn(uid: string, password: string): Promise<ChaodaysSession> {
     this.signInArgs = { uid, password };
+    this.signInCallCount++;
     if (this.signInError) throw this.signInError;
     return SESSION;
   }
@@ -142,13 +147,33 @@ class FakeChaodaysClient implements ChaodaysClient {
     throw new Error("not used in this test");
   }
 
+  // Returns only the menus inside `[from, to]`, like the real client — a fake
+  // that ignored the range would hand every batch the same menus.
   async fetchDietMenus(
     session: ChaodaysSession,
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; menus: ChaodaysDietMenu[] }> {
     this.fetchArgs = { from, to };
-    return { session, menus: this.menus };
+    this.fetchCalls.push({ from, to });
+    if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
+    return { session, menus: this.menus.filter((m) => m.date >= from && m.date <= to) };
+  }
+}
+
+/** The day after `day`, computed in UTC. */
+function dayAfter(day: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
+
+/** Asserts `calls` are several contiguous, non-overlapping sub-ranges covering exactly `[from, to]`. */
+function expectContiguousCover(calls: { from: string; to: string }[], from: string, to: string) {
+  expect(calls.length).toBeGreaterThan(1);
+  expect(calls[0].from).toBe(from);
+  expect(calls[calls.length - 1].to).toBe(to);
+  for (let i = 1; i < calls.length; i++) {
+    expect(calls[i].from).toBe(dayAfter(calls[i - 1].to));
   }
 }
 
@@ -336,6 +361,58 @@ describe("importChaodaysDietTarget", () => {
     expect(summary.waterTargetsImported).toBe(2);
     expect(dailyTargetRepository.setManyCallCount).toBe(1);
     expect(waterRepository.setTargetManyCallCount).toBe(1);
+  });
+
+  it("fetches a range longer than the batch size as several contiguous requests, signing in once", async () => {
+    chaodaysClient.menus = [
+      { date: "2026-01-01", staple: 10, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2000 },
+      // Either side of the first 183-day boundary.
+      { date: "2026-07-02", staple: 11, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2100 },
+      { date: "2026-07-03", staple: 12, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2200 },
+      { date: "2027-12-31", staple: 13, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2300 },
+    ];
+
+    const summary = await importChaodaysDietTarget(dailyTargetRepository, waterRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-01-01",
+      to: "2027-12-31",
+    });
+
+    expectContiguousCover(chaodaysClient.fetchCalls, "2026-01-01", "2027-12-31");
+    expect(chaodaysClient.signInCallCount).toBe(1);
+    expect(summary.portionTargetsImported).toBe(4);
+    expect(summary.waterTargetsImported).toBe(4);
+    expect((await dailyTargetRepository.get("user-1", "2026-07-02"))?.baseStaple).toBe(11);
+    expect((await dailyTargetRepository.get("user-1", "2026-07-03"))?.baseStaple).toBe(12);
+  });
+
+  it("writes nothing when a batch after the first fails", async () => {
+    chaodaysClient.menus = [
+      // In the first batch, so a per-batch write would already have landed it.
+      { date: "2026-01-01", staple: 10, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2000 },
+      { date: "2027-12-31", staple: 13, meat: 5, fruit: 2, veg: 4, waterTargetMl: 2300 },
+    ];
+    chaodaysClient.failOnFetchCall = 2;
+
+    await expect(
+      importChaodaysDietTarget(dailyTargetRepository, waterRepository, chaodaysClient, {
+        userId: "user-1",
+        uid: "chaodays-uid",
+        password: "chaodays-pw",
+        from: "2026-01-01",
+        to: "2027-12-31",
+      }),
+    ).rejects.toThrow(ChaodaysUpstreamError);
+
+    // The first batch did succeed, and no further batch was issued.
+    expect(chaodaysClient.fetchCalls.length).toBe(2);
+    // A failed import leaves the range untouched, so a retry is a clean retry.
+    expect(dailyTargetRepository.setManyCallCount).toBe(0);
+    expect(waterRepository.setTargetManyCallCount).toBe(0);
+    expect(await dailyTargetRepository.listInRange("user-1", "2026-01-01", "2027-12-31")).toEqual([]);
+    expect(await waterRepository.listTargetRange("user-1", "2026-01-01", "2027-12-31")).toEqual([]);
   });
 
   it("propagates a chaodays sign-in auth failure", async () => {

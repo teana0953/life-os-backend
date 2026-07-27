@@ -1,5 +1,6 @@
 import type { BowelRepository, SetBowelLogInput } from "../domain/bowel-repository";
 import type { ChaodaysClient, ChaodaysDefecationRecord } from "../domain/chaodays-client";
+import { fetchInBatches } from "./fetch-in-batches";
 
 export interface ImportChaodaysBowelInput {
   userId: string;
@@ -34,7 +35,9 @@ export async function importChaodaysBowel(
   input: ImportChaodaysBowelInput,
 ): Promise<ImportChaodaysBowelSummary> {
   const session = await chaodaysClient.signIn(input.uid, input.password);
-  const { records } = await chaodaysClient.fetchDefecationRecords(session, input.from, input.to);
+  const records = await fetchInBatches(session, input.from, input.to, (batchSession, from, to) =>
+    chaodaysClient.fetchDefecationRecords(batchSession, from, to),
+  );
 
   const recordsByDay = new Map<string, ChaodaysDefecationRecord[]>();
   for (const record of records) {

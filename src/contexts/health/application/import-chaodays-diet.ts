@@ -5,6 +5,7 @@ import type { MealEntry } from "../domain/meal-entry";
 import type { CreateMealEntryInput, CreateMealItemForEntryInput, CreateMealItemInput, MealRepository } from "../domain/meal-repository";
 import type { GlucoseReading, VitalsRecord } from "../domain/vitals";
 import type { SetVitalsInput, VitalsRepository } from "../domain/vitals-repository";
+import { fetchInBatches } from "./fetch-in-batches";
 
 export interface ImportChaodaysDietInput {
   userId: string;
@@ -137,7 +138,9 @@ export async function importChaodaysDiet(
   input: ImportChaodaysDietInput,
 ): Promise<ImportChaodaysDietSummary> {
   const session = await chaodaysClient.signIn(input.uid, input.password);
-  const { records } = await chaodaysClient.fetchDietRecords(session, input.from, input.to);
+  const records = await fetchInBatches(session, input.from, input.to, (batchSession, from, to) =>
+    chaodaysClient.fetchDietRecords(batchSession, from, to),
+  );
 
   const recordsByDay = new Map<string, ChaodaysDietRecord[]>();
   for (const record of records) {
