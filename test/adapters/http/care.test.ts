@@ -960,4 +960,139 @@ describe("PUT /api/care/log", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("a supplied done_time with a timezone offset is recorded as the same absolute instant, normalized to UTC in the response", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        care_schedule_id: scheduleId,
+        local_date: "2020-01-01",
+        time_of_day: "08:00",
+        status: "done",
+        done_time: "2026-07-20T21:30:00+08:00",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { done_time: string | null };
+    expect(body.done_time).not.toBeNull();
+    expect(new Date(body.done_time as string).getTime()).toBe(new Date("2026-07-20T13:30:00.000Z").getTime());
+  });
+
+  it("an omitted done_time on a first completion still records the current time", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const before = Date.now();
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00", status: "done" }),
+    });
+    const after = Date.now();
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { done_time: string | null };
+    expect(body.done_time).not.toBeNull();
+    // Bracketed, not just non-null: "not null" would also pass for an
+    // implementation that wrote epoch 0 or any fixed constant.
+    const recorded = new Date(body.done_time as string).getTime();
+    expect(recorded).toBeGreaterThanOrEqual(before);
+    expect(recorded).toBeLessThanOrEqual(after);
+  });
+
+  // The end-to-end half of the reason this change exists. The unit layer
+  // guards the decision itself; without this, moving that decision into the
+  // repository (or defaulting done_time in the handler) would break the
+  // preserve semantics with every test still green.
+  it("an omitted done_time on an ALREADY-done slot preserves the recorded completion time end to end", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+    const slot = { care_schedule_id: scheduleId, local_date: "2020-01-01", time_of_day: "08:00" };
+
+    // Backfill "it was actually 21:30 local".
+    const first = (await (
+      await app.request("/api/care/log", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ ...slot, status: "done", done_time: "2026-07-20T21:30:00+08:00" }),
+      })
+    ).json()) as { done_time: string | null };
+
+    // Re-save the same outcome without a time — must not refresh it to now.
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ ...slot, status: "done" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { done_time: string | null };
+    expect(body.done_time).toBe(first.done_time);
+    expect(body.done_time).toBe("2026-07-20T13:30:00.000Z");
+  });
+
+  it("a done_time supplied with status=skipped is ignored: the response has done_time null, and the request is not a 400", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        care_schedule_id: scheduleId,
+        local_date: "2020-01-01",
+        time_of_day: "08:00",
+        status: "skipped",
+        done_time: "2026-07-20T21:30:00+08:00",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { done_time: string | null };
+    expect(body.done_time).toBeNull();
+  });
+
+  it("rejects a malformed done_time, as 400", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", { method: "POST", headers, body: JSON.stringify(VALID_BODY) })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+
+    const res = await app.request("/api/care/log", {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        care_schedule_id: scheduleId,
+        local_date: "2020-01-01",
+        time_of_day: "08:00",
+        status: "done",
+        done_time: "not-a-timestamp",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+  });
 });
