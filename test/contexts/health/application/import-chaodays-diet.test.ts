@@ -724,9 +724,27 @@ describe("importChaodaysDiet", () => {
   });
 
   it("writes nothing when a batch after the first fails", async () => {
-    // The first batch carries 2026-01-01's lunch, so a per-batch write would
-    // already have landed it (and its glucose) before the failure.
-    chaodaysClient.records = LONG_RANGE_RECORDS;
+    // Local fixture rather than LONG_RANGE_RECORDS: this test needs a glucose
+    // reading inside the FIRST batch, so that a per-batch write would have
+    // landed BOTH repositories before the failure. LONG_RANGE_RECORDS keeps its
+    // only glucose on 2027-12-31 (the last batch), which would leave the vitals
+    // assertion below trivially true — passing whether or not the import writes
+    // per batch. The two long-range tests above pin `glucoseImported: 1`, so
+    // the shared fixture can't just gain a reading.
+    chaodaysClient.records = [
+      {
+        date: "2026-01-01",
+        recordType: "lunch",
+        recordedAt: "2026-01-01 12:00",
+        items: [{ name: "白飯\n前血糖：95", staple: 2, meat: 0, fruit: 0, veg: 0 }],
+      },
+      {
+        date: "2027-12-31",
+        recordType: "dinner",
+        recordedAt: "2027-12-31 18:00",
+        items: [{ name: "麵", staple: 1, meat: 0, fruit: 0, veg: 0 }],
+      },
+    ];
     chaodaysClient.failOnFetchCall = 2;
 
     await expect(
