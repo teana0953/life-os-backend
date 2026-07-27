@@ -23,7 +23,16 @@ import type { CareLog, CareLogRepository } from "../../../contexts/notifications
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { BadRequestError, optionalBoolean, requireDay, requireFiniteNumber, requireHHMM, requireNumberArray, requireString } from "../validation";
+import {
+  BadRequestError,
+  optionalBoolean,
+  optionalTimestamp,
+  requireDay,
+  requireFiniteNumber,
+  requireHHMM,
+  requireNumberArray,
+  requireString,
+} from "../validation";
 
 export interface CareHandlerOptions {
   userRepository: UserRepository;
@@ -248,6 +257,7 @@ export function createEditCareSlotHandler(options: CareHandlerOptions) {
       localDate: requireDay(body.local_date, "local_date"),
       timeOfDay: requireHHMM(body.time_of_day, "time_of_day"),
       status: requireCareLogStatus(body.status),
+      doneTime: optionalTimestamp(body.done_time, "done_time"),
     };
 
     const log = await editCareSlot(

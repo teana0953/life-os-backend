@@ -60,6 +60,7 @@ class FakeCareItemRepository implements CareItemRepository {
 class FakeCareLogRepository implements CareLogRepository {
   private bySlot = new Map<string, CareLog>();
   private nextId = 1;
+  getBySlotCalls = 0;
 
   private key(scheduleId: string, localDate: string, timeOfDay: string): string {
     return `${scheduleId}|${localDate}|${timeOfDay}`;
@@ -84,6 +85,7 @@ class FakeCareLogRepository implements CareLogRepository {
     throw new Error("not used by these tests");
   }
   async getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null> {
+    this.getBySlotCalls++;
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
   }
   async listByUserAndDate(): Promise<CareLog[]> {
@@ -306,5 +308,130 @@ describe("editCareSlot", () => {
 
     // Undo increments the full dose (5), landing at 5 -- higher than the original 2.
     expect(careItemRepo.items.get("item-1")?.stock).toBe(5);
+  });
+
+  it("status: done + doneTime supplied -> the supplied value is recorded (not now), with no extra getBySlot read", async () => {
+    careItemRepo.add(makeItem());
+    const suppliedTime = new Date("2026-07-20T13:30:00Z");
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", {
+      ...SLOT,
+      status: "done",
+      doneTime: suppliedTime,
+    });
+
+    expect(result?.doneTime).toEqual(suppliedTime);
+    expect(careLogRepo.getBySlotCalls).toBe(0);
+  });
+
+  it("status: done + no doneTime + existing log already done -> the existing doneTime is preserved (not overwritten with now)", async () => {
+    careItemRepo.add(makeItem());
+    const existingDoneTime = new Date("2026-07-20T01:00:00Z");
+    careLogRepo.seed({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: SLOT.localDate,
+      timeOfDay: SLOT.timeOfDay,
+      status: "done",
+      doneTime: existingDoneTime,
+      doseQuantity: 2,
+    });
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    expect(result?.doneTime).toEqual(existingDoneTime);
+    expect(careLogRepo.getBySlotCalls).toBe(1);
+  });
+
+  // "Preserve" is keyed on there being something to preserve, not just on the
+  // status: a done row with a NULL completion time must get one stamped on.
+  // Keeping that NULL would write back `status: done` with no completion time
+  // — the shape this branch exists to keep out of the data. No current writer
+  // can produce such a row, so this guards legacy/imported data.
+  it("status: done + no doneTime + existing log is done but has a NULL doneTime -> stamps now (does not preserve the null)", async () => {
+    careItemRepo.add(makeItem());
+    careLogRepo.seed({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: SLOT.localDate,
+      timeOfDay: SLOT.timeOfDay,
+      status: "done",
+      doneTime: null,
+      doseQuantity: 2,
+    });
+    const before = Date.now();
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    const after = Date.now();
+    expect(result?.doneTime).not.toBeNull();
+    expect(result!.doneTime!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(result!.doneTime!.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  // The other half of the same row: a log EXISTS but wasn't done. "Preserve
+  // the existing value" must not apply here — inheriting a skipped/missed
+  // row's null would write `status: done` with no completion time, which is
+  // the very shape this change exists to keep out of the data. Without this
+  // case the `=== "done"` half of the guard is unprotected.
+  it("status: done + no doneTime + existing log is NOT done -> falls back to now (never inherits that row's null)", async () => {
+    careItemRepo.add(makeItem());
+    careLogRepo.seed({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: SLOT.localDate,
+      timeOfDay: SLOT.timeOfDay,
+      status: "skipped",
+      doneTime: null,
+      doseQuantity: 2,
+    });
+    const before = Date.now();
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    const after = Date.now();
+    expect(result?.doneTime).not.toBeNull();
+    expect(result!.doneTime!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(result!.doneTime!.getTime()).toBeLessThanOrEqual(after);
+    expect(careLogRepo.getBySlotCalls).toBe(1);
+  });
+
+  it("status: done + no doneTime + no prior log -> falls back to now (unchanged behaviour)", async () => {
+    careItemRepo.add(makeItem());
+    const before = Date.now();
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    const after = Date.now();
+    expect(result?.doneTime).not.toBeNull();
+    expect(result!.doneTime!.getTime()).toBeGreaterThanOrEqual(before);
+    expect(result!.doneTime!.getTime()).toBeLessThanOrEqual(after);
+    expect(careLogRepo.getBySlotCalls).toBe(1);
+  });
+
+  it("status: skipped + doneTime supplied -> doneTime is recorded as null (ignored, not an error), with no extra getBySlot read", async () => {
+    careItemRepo.add(makeItem());
+    careLogRepo.seed({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: SLOT.localDate,
+      timeOfDay: SLOT.timeOfDay,
+      status: "done",
+      doneTime: new Date("2026-07-20T01:00:00Z"),
+      doseQuantity: 2,
+    });
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", {
+      ...SLOT,
+      status: "skipped",
+      doneTime: new Date("2026-07-20T21:30:00Z"),
+    });
+
+    expect(result?.doneTime).toBeNull();
+    expect(careLogRepo.getBySlotCalls).toBe(0);
   });
 });
