@@ -1,34 +1,54 @@
 # Tasks
 
 ## 1. Client: `fetchMenstruals` 含分頁 (TDD)
-- [ ] Test first (red)：`test/contexts/health/adapters/http-chaodays-client.test.ts`（或新檔，比照既有位置）
-  - 一頁就取完 → 只發一個請求，URL 帶 `start_date`/`end_date`/`page=1`/`per_page`
-  - 兩頁 → 發兩次、第二次 `page=2`，結果**依序串接**
-  - **第二頁用第一頁回傳的輪替 session**（假 fetch 每次要回**不同**的 session header，否則這條恆綠 —— 與 PR #54 的 `fetch-in-batches` 同款陷阱）
-  - 上游說還有下一頁但 `data` 是空陣列 → **停**（防無窮迴圈）
-  - 非 200 → `ChaodaysUpstreamError(status_*)`；JSON 壞掉／`data` 不是陣列 → `ChaodaysUpstreamError("parse")`（比照既有五個）
-- [ ] `domain/chaodays-client.ts`：加 `ChaodaysMenstrualRecord { date 相關欄位 }` 與 `fetchMenstruals(session, from, to): Promise<{ session, records }>`。**port 形狀與其他五個一致** —— 分頁是實作細節，不外洩到 use case。
-- [ ] `adapters/http-chaodays-client.ts`：實作分頁迴圈。**明確帶 `per_page`**，不要靠上游預設（上游改了我們才發現就太晚）。`started_date`/`ended_date` → 對應欄位；`days`/`content` 丟掉。
 
-## 2. Use case: `importChaodaysMenstrual` (TDD)
+- [ ] Test first (red)：比照既有五個 fetch 的測試位置
+  - 第一頁回 < 20 筆 → **只發一個請求**，URL 帶 `start_date`/`end_date`/`page=1`/`per_page=20`
+  - 第一頁回滿 20 筆 → 發第二次且 `page=2`；第二頁回 5 筆 → 停。結果**依序串接**
+  - 回 0 筆 → 停（防無窮迴圈）
+  - 一直回滿 20 筆 → 打到 100 頁上限後丟 `ChaodaysUpstreamError("pagination")`
+  - **第二頁用第一頁回傳的輪替 session**（假 fetch 每次要回**不同**的 session header，否則這條恆綠 —— 與 PR #54 的 `fetch-in-batches` 同款陷阱）
+  - **假 fetch 回的信封不要放 `pagination`** —— 停止條件不該讀它；回了就掩蓋掉「實作偷讀信封鍵名」這個 bug
+  - `ended_date` 是空字串 → 映射成 `null`；`ended_date < started_date` → `ChaodaysUpstreamError("parse")`
+  - 非 200 → `ChaodaysUpstreamError(status_*)`；JSON 壞掉／`data` 不是陣列 → `"parse"`（比照既有五個）
+- [ ] `domain/chaodays-client.ts`：加 `ChaodaysMenstrualRecord { id, startDate, endDate: string | null }`（`id` 只用於跨批次去重，不落地）與 `fetchMenstruals(session, from, to): Promise<{ session, records }>`。**port 形狀與其他五個一致** —— 分頁是實作細節，不外洩到 use case。
+- [ ] `adapters/http-chaodays-client.ts`：實作分頁迴圈。**走 `this.request`**（不是 `fetchImpl`），否則漏掉 relay base URL 與 `X-Relay-Secret`。明確帶 `per_page=20`（見 design D1，不要改大）。`started_date`/`ended_date` → 對應欄位；`days`/`content` 丟掉。
+
+## 2. 重疊判斷（純函式，先做）
+
+- [ ] Test first (red)：閉區間重疊判斷，含開放結尾
+  - 完全相同 → 重疊；部分重疊 → 重疊；包含 → 重疊
+  - **相鄰不重疊**（5/1–5/5 vs 5/6–5/10）→ 不重疊
+  - 其中一段 `endDate == null` → 視為延伸到無限遠，任何起始日不早於它的都算重疊
+- [ ] 實作成可單獨測試的純函式 —— 它是這個 change 唯一有邏輯的部分。
+
+## 3. Use case: `importChaodaysMenstrual` (TDD)
+
 - [ ] Test first (red)：`test/contexts/health/application/import-chaodays-menstrual.test.ts`
-  - **重疊判斷**：起訖完全相同 → 跳過；起始日差一天但區間重疊 → 跳過；**相鄰但不重疊**（既有 5/1–5/5、來源 5/6–5/10）→ 寫入；既有有開放結尾（`endDate == null`）→ 之後開始的都跳過；沒有既有資料 → 全寫
+  - 沒有既有資料 → 全寫；summary 形狀比照既有（imported / skipped）
+  - 與 lifeos 既有期間重疊 → 跳過（含起始日差一天）；相鄰不重疊 → 寫入
+  - lifeos 有開放期間 → 之後的來源期間都跳過
+  - **來源是開放期間（`endDate == null`）→ 不匯入**（design D2a）
+  - **同一次匯入內兩筆彼此重疊 → 只寫一筆**（已接受的要累積進比較集合）
+  - **兩個批次回同一個 `id` → 只寫一筆**（跨 183 天邊界時上游可能重複回）
   - 重跑同一個匯入 → 第二次不新增
   - 長區間（>183 天）→ 對 client 發多次 fetch，且 **`signIn` 只有一次**（比照既有五個 importer 的回歸點）
-  - **某批／某頁失敗 → 整個拋，且寫入方法 call count 為 0**（寫入在所有抓取之後；比照 PR #54 補的那五條）
-  - summary 形狀比照既有（imported / skipped）
-- [ ] `application/import-chaodays-menstrual.ts`：`signIn` 一次 → `fetchInBatches` 抓 → `listByUser` 讀既有 → 濾掉重疊 → 逐筆 `add`。**讀取在所有抓取之後、寫入之前。**
-- [ ] 重疊判斷寫成**可單獨測試的純函式**（兩個區間是否重疊，含開放結尾）—— 它是這個 change 唯一有邏輯的部分。
+  - **失敗不寫入**：第一批回**至少一筆會被寫入**的期間、第二批丟錯 → 整個拋且**寫入 call count 為 0**。配一條資料相同但不失敗的測試斷言 `imported === 1`，兩條互相釘住（否則「第一批其實沒東西可寫」也會讓失敗版假綠）
+- [ ] `application/import-chaodays-menstrual.ts`：`signIn` 一次 → `fetchInBatches` 抓完 → `listByUser` 讀既有 → 依序濾掉重疊／重複 → 逐筆 `addPeriod`。**讀取在所有抓取之後、寫入之前**；寫入走 `addPeriod` 而非 `repository.add`（design D4）。
 
-## 3. Route + 組裝
+## 4. Route + 組裝
+
 - [ ] `adapters/http/routes/import-chaodays.ts`：加 `POST /api/import/chaodays/menstrual`，body 與錯誤映射比照既有五個（`chaodays_uid`/`chaodays_password`/`start_date`/`end_date`；auth → 400、upstream → 502、`from > to` → 400）。
-- [ ] `src/index.ts`：把 `menstrualRepository` 注入 import 路由。
+- [ ] `adapters/http/app.ts`：把 `menstrualRepository` 加進 import 路由的 options（`src/index.ts` 不用改 —— 它已經建好並傳給 `createApp` 了）。
 - [ ] Route 測試比照既有五個（含 `from > to` 的 400）。
 
-## 4. Gate
+## 5. Gate
+
 - [ ] `npm test` + `npm run typecheck` 全綠。基準 **689 passed**，既有五個 importer 零退化。
 
-## 5. On-device verification (manual — 需使用者，部署後)
+## 6. On-device verification (manual — 需使用者，部署後)
+
 - [ ] 匯一段有生理期紀錄的區間，確認筆數與起訖日正確。
 - [ ] **再匯一次同一段**，確認沒有新增重複（重疊跳過生效）。
 - [ ] 若 lifeos 已有手動記的期間，確認它沒有被改動。
+- [ ] 若當下 chaodays 有一次「還沒結束」的生理期，確認它**沒有**被匯入（等結束後再匯才會進來）。

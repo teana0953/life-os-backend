@@ -4,27 +4,39 @@
 
 The import SHALL support pulling the user's menstrual periods from chaodays for a date
 range, mapping each source period's start and end dates onto a lifeos period. Source fields
-lifeos has no home for SHALL be dropped rather than approximated. A period that is still
-open upstream (no end date) SHALL be imported as an open period, not given a made-up end.
+lifeos has no home for SHALL be dropped rather than approximated.
 
 #### Scenario: Periods in the range are imported
-- **WHEN** the user imports a range in which chaodays has recorded periods
+- **WHEN** the user imports a range in which chaodays has recorded completed periods
 - **THEN** each of those periods is created in lifeos with the same start and end dates
-
-#### Scenario: An open period stays open
-- **WHEN** a source period has no end date
-- **THEN** it is imported as a period with no end date
 
 #### Scenario: Fields lifeos cannot hold are dropped
 - **WHEN** a source period carries a day count and a free-text note
 - **THEN** neither is invented into lifeos data; only the dates are imported
+
+#### Scenario: An imported period is subject to the same validation as a manual one
+- **WHEN** a source period ends before it starts
+- **THEN** the import fails as an upstream problem rather than storing a period that could
+  not have been entered by hand
+
+### Requirement: A period still open upstream is not imported
+
+The import SHALL skip a source period that has no end date, because it is data that has not
+finished changing. Importing it as an open lifeos period would silently suppress every
+later import — an open period cannot be shown not to overlap anything after it — and would
+need manual editing to undo. Skipping it costs only a re-import once the period ends.
+
+#### Scenario: An ongoing period is left for a later import
+- **WHEN** the range includes a period chaodays has not yet closed
+- **THEN** nothing is written for it, and importing again after it is closed brings it in
 
 ### Requirement: The menstrual source is read to the end of its pagination
 
 Unlike the other chaodays collections, the menstrual endpoint paginates. The import SHALL
 read every page for the requested range, so the result does not depend on how many periods
 happen to fall in it, and SHALL carry the rotated session from each response into the next
-request.
+request. The number of pages read SHALL be bounded so a misbehaving upstream fails rather
+than looping.
 
 #### Scenario: A range spanning more than one page is fully imported
 - **WHEN** the periods in the requested range do not fit in a single page
@@ -38,13 +50,19 @@ request.
 - **WHEN** the import requests a page after the first
 - **THEN** it presents the session returned by the immediately preceding response
 
-### Requirement: Periods overlapping existing lifeos data are skipped
+#### Scenario: Endless pagination fails instead of looping
+- **WHEN** the upstream keeps reporting further pages past a sane limit
+- **THEN** the import fails as an upstream problem rather than issuing unbounded requests
 
-A source period whose dates overlap any period already recorded in lifeos SHALL be skipped,
-leaving the existing record untouched. Overlap — not an identical start date — SHALL be the
-test, because the same real period recorded in both places often differs by a day, and
-importing it again as a second overlapping period would corrupt the cycle statistics the
-data exists to produce.
+### Requirement: Periods overlapping already-known periods are skipped
+
+A source period whose dates overlap any period already known SHALL be skipped, leaving
+existing records untouched. Already known SHALL cover both what lifeos already stores and
+what earlier in the same import was accepted, so the source repeating a period — which it
+may do when one spans a fetch boundary — cannot produce two overlapping copies. Overlap —
+not an identical start date — SHALL be the test, because the same real period recorded in
+both places often differs by a day, and importing it again as a second overlapping period
+would corrupt the cycle statistics the data exists to produce.
 
 #### Scenario: An identical period is not duplicated
 - **WHEN** the range contains a period lifeos already has with the same dates
@@ -56,13 +74,17 @@ data exists to produce.
 - **THEN** it is skipped rather than added as a second, overlapping period
 
 #### Scenario: A genuinely separate period is imported
-- **WHEN** a source period sits entirely outside every period lifeos already has, even
+- **WHEN** a source period sits entirely outside every period already known, even
   immediately adjacent to one
 - **THEN** it is imported
 
 #### Scenario: An existing open period suppresses later imports
 - **WHEN** lifeos holds a period with no end date and the source has periods starting after it
 - **THEN** those are skipped, because an open period cannot be shown not to overlap them
+
+#### Scenario: The source repeating a period within one import writes it once
+- **WHEN** the same period comes back more than once while reading the requested range
+- **THEN** it is stored once
 
 #### Scenario: Re-running the import writes nothing new
 - **WHEN** the user runs the same import twice
@@ -75,6 +97,6 @@ within it — using the existing error contract, and SHALL NOT have written any 
 periods, so a retry is a clean retry.
 
 #### Scenario: A mid-range failure aborts without partial writes
-- **WHEN** a request after the first fails
-- **THEN** the import fails with the same error mapping as any other chaodays import, and no
-  periods from the earlier requests have been written
+- **WHEN** an earlier request returns periods that would be imported and a later request fails
+- **THEN** the import fails with the same error mapping as any other chaodays import, and
+  none of the earlier periods have been written
