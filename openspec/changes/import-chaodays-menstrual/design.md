@@ -38,7 +38,7 @@ GET users/menstruals?start_date=&end_date=&page=1&per_page=20
 
 代價是每個批次多一次請求（回 0 筆的那次）。生理期資料稀疏，一個 183 天批次約 6 筆，所以三年份的匯入是 6 批 × 2 次 = 12 次請求 —— 買到「不依賴任何上游分頁行為」是划算的。
 
-外加**每批次硬上限 20 頁** → 超過丟 `ChaodaysUpstreamError("pagination")`。20 頁 = 400 筆／183 天，比真實資料量高兩個數量級，所以只有上游壞掉才會碰到。上限不能訂大：它是**每個批次各自**計的，三年份 6 批 × 100 頁 = 600 次 fetch，加上逐筆寫入的 Neon subrequest，已經逼近 Workers 單次呼叫的 subrequest 額度（付費 1000／免費 50）—— 那就違背了設上限的初衷。
+外加**每批次硬上限 20 頁** → 超過丟 `ChaodaysUpstreamError("pagination")`。迴圈唯一的成功出口是「某頁回 0 筆」，所以 20 頁上限實際容納 19 個滿頁 = 380 筆／183 天，比真實資料量高兩個數量級，所以只有上游壞掉才會碰到。上限不能訂大：它是**每個批次各自**計的，三年份 6 批 × 100 頁 = 600 次 fetch，加上逐筆寫入的 Neon subrequest，已經逼近 Workers 單次呼叫的 subrequest 額度（付費 1000／免費 50）—— 那就違背了設上限的初衷。
 
 **必須走既有的 `this.request`**（不是直接 `fetchImpl`），否則會漏掉 relay 的 base URL 與 `X-Relay-Secret`。
 

@@ -74,7 +74,8 @@ interface RawMenstrualRecord {
 const MENSTRUAL_PAGE_SIZE = 20;
 
 /**
- * Hard per-batch page cap. 20 pages is 400 periods in one 183-day batch — two
+ * Hard per-batch page cap. Since the loop only ever succeeds by reading an
+ * empty page, this admits 19 full pages — 380 periods in one 183-day batch, two
  * orders of magnitude above real data — so only a misbehaving upstream reaches
  * it. Kept small on purpose: the cap applies to each batch separately, so a
  * large one multiplied by the batches of a multi-year range would approach the

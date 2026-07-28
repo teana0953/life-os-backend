@@ -79,7 +79,7 @@ export async function importChaodaysMenstrual(
       startDate: source.startDate,
       endDate: source.endDate,
     });
-    known.push(source);
+    known.push({ startDate: source.startDate, endDate: source.endDate });
     imported++;
   }
 
