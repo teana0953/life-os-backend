@@ -70,9 +70,9 @@ data exists to produce.
 
 ### Requirement: A failed menstrual import writes nothing
 
-When any request for the range fails — whether a batch or a page within it — the import
-SHALL surface the failure with the existing error contract and SHALL NOT have written any
-of the periods, so a retry is a clean retry.
+The import SHALL surface any failed request for the range — whether a batch or a page
+within it — using the existing error contract, and SHALL NOT have written any of the
+periods, so a retry is a clean retry.
 
 #### Scenario: A mid-range failure aborts without partial writes
 - **WHEN** a request after the first fails
