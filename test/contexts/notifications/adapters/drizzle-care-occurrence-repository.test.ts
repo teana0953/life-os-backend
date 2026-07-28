@@ -1,6 +1,8 @@
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { DrizzleCareOccurrenceRepository } from "../../../../src/contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import type { Db } from "../../../../src/shared/db/client";
+import { careOccurrence } from "../../../../src/shared/db/schema";
 
 /**
  * `upsertBySlot` inserts only if absent (`onConflictDoNothing` on the unique
@@ -35,6 +37,9 @@ const CREATED_ROW = {
   localDate: "2026-07-24",
   timeOfDay: "09:00",
   lastNotifiedAt: null,
+  lastAttemptAt: null,
+  lastSendOutcome: null,
+  lastSendDetail: null,
 };
 
 describe("DrizzleCareOccurrenceRepository.upsertBySlot", () => {
@@ -64,6 +69,79 @@ describe("DrizzleCareOccurrenceRepository.upsertBySlot", () => {
     });
 
     expect(result.id).toBe("occ-1");
+  });
+});
+
+/**
+ * `recordAttempt` always writes `last_attempt_at` / `last_send_outcome` /
+ * `last_send_detail`, and additionally writes `last_notified_at` only when
+ * `delivered` is true (D10 in design.md). The table and the `where` predicate
+ * are captured too: losing the row filter would UPDATE every occurrence in the
+ * table, which is by far this method's most destructive way to break.
+ */
+interface RecordAttemptCall {
+  table?: unknown;
+  values?: Record<string, unknown>;
+  where?: unknown;
+}
+
+function fakeDbForRecordAttempt(saw: RecordAttemptCall): Db {
+  return {
+    update: (table: unknown) => {
+      saw.table = table;
+      return {
+        set: (values: Record<string, unknown>) => {
+          saw.values = values;
+          return {
+            where: (predicate: unknown) => {
+              saw.where = predicate;
+              return Promise.resolve();
+            },
+          };
+        },
+      };
+    },
+  } as unknown as Db;
+}
+
+describe("DrizzleCareOccurrenceRepository.recordAttempt", () => {
+  it("writes last_attempt_at/outcome/detail and last_notified_at when delivered", async () => {
+    const saw: RecordAttemptCall = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForRecordAttempt(saw));
+    const at = new Date("2026-07-24T01:00:00Z");
+
+    await repo.recordAttempt("occ-1", { at, outcome: "sent", detail: null, delivered: true });
+
+    expect(saw.values).toEqual({
+      lastAttemptAt: at,
+      lastSendOutcome: "sent",
+      lastSendDetail: null,
+      lastNotifiedAt: at,
+    });
+  });
+
+  it("does not write last_notified_at when not delivered", async () => {
+    const saw: RecordAttemptCall = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForRecordAttempt(saw));
+    const at = new Date("2026-07-24T01:00:00Z");
+
+    await repo.recordAttempt("occ-1", { at, outcome: "failed", detail: "status_500", delivered: false });
+
+    expect(saw.values).toEqual({
+      lastAttemptAt: at,
+      lastSendOutcome: "failed",
+      lastSendDetail: "status_500",
+    });
+  });
+
+  it("updates care_occurrence filtered to the given id, never the whole table", async () => {
+    const saw: RecordAttemptCall = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForRecordAttempt(saw));
+
+    await repo.recordAttempt("occ-1", { at: new Date("2026-07-24T01:00:00Z"), outcome: "sent", detail: null, delivered: true });
+
+    expect(saw.table).toBe(careOccurrence);
+    expect(saw.where).toEqual(eq(careOccurrence.id, "occ-1"));
   });
 });
 

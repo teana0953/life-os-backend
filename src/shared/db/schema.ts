@@ -321,8 +321,14 @@ export const careLog = pgTable(
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
 );
 
-// care_occurrence: nag state for one slot (last_notified_at), unique per slot
-// so a repeated/look-back tick never double-fires (D4/D5 in design.md).
+// care_occurrence: nag + send state for one slot, unique per slot so a
+// repeated/look-back tick never double-fires (D4/D5 in design.md).
+// last_notified_at now means "at least one push in that round actually
+// succeeded" (D10) — it used to double as "we tried", which is exactly why a
+// slot could look delivered while the user received nothing. last_attempt_at /
+// last_send_outcome / last_send_detail record every attempt, delivered or not,
+// so "never went out" is distinguishable from "the sender said OK" by SQL alone
+// (D11-D13). Diagnostic query: last_send_detail IS NOT NULL.
 export const careOccurrence = pgTable(
   "care_occurrence",
   {
@@ -339,6 +345,9 @@ export const careOccurrence = pgTable(
     localDate: date("local_date").notNull(),
     timeOfDay: text("time_of_day").notNull(),
     lastNotifiedAt: timestamp("last_notified_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    lastSendOutcome: text("last_send_outcome"),
+    lastSendDetail: text("last_send_detail"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],

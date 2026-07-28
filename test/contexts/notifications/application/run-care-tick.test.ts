@@ -10,7 +10,12 @@ import type {
   CareSchedule,
 } from "../../../../src/contexts/notifications/domain/care-item";
 import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../../src/contexts/notifications/domain/care-log";
-import type { CareOccurrence, CareOccurrenceRepository, CreateCareOccurrenceInput } from "../../../../src/contexts/notifications/domain/care-occurrence";
+import type {
+  CareOccurrence,
+  CareOccurrenceRepository,
+  CreateCareOccurrenceInput,
+  RecordAttemptInput,
+} from "../../../../src/contexts/notifications/domain/care-occurrence";
 import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
 import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
 
@@ -166,6 +171,9 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
       localDate: input.localDate,
       timeOfDay: input.timeOfDay,
       lastNotifiedAt: null,
+      lastAttemptAt: null,
+      lastSendOutcome: null,
+      lastSendDetail: null,
     };
     this.bySlot.set(key, occurrence);
     return occurrence;
@@ -175,10 +183,13 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
   }
 
-  async touchNotified(id: string, at: Date): Promise<void> {
+  async recordAttempt(id: string, input: RecordAttemptInput): Promise<void> {
     for (const occ of this.bySlot.values()) {
       if (occ.id === id) {
-        occ.lastNotifiedAt = at;
+        occ.lastAttemptAt = input.at;
+        occ.lastSendOutcome = input.outcome;
+        occ.lastSendDetail = input.detail;
+        if (input.delivered) occ.lastNotifiedAt = input.at;
         return;
       }
     }
@@ -368,6 +379,55 @@ describe("runCareTick", () => {
     // +10 minutes: elapsed, re-nags.
     await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), deps());
     expect(pushSender.sentTo).toHaveLength(2);
+  });
+
+  // The nag interval on the SUCCESS path must stay exactly nagIntervalMinutes —
+  // the retry floor (10) must never reach it. This needs nag < 10 to have any
+  // discriminating power: with nag = 10 (the test above) max(10, 10) is 10, so
+  // wrongly applying the floor there is invisible. design D11's claim that the
+  // existing nag = 10 test would catch it is wrong.
+  it("a successful nag interval below the retry floor is not stretched by it", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 5 },
+      "Asia/Taipei",
+    );
+    await addSubscription("user-1");
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +5 minutes: the schedule's own interval elapsed, so it must re-nag —
+    // applying the 10-minute retry floor here would wrongly hold it back.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 5 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+  });
+
+  // The no_subscriptions branch is unconditionally due (D12). Before this change
+  // a zero-subscription round wrote nothing at all, so `lastNotifiedAt` stayed
+  // null and every tick stayed due — a user who grants push at 09:01 got the
+  // 09:00 reminder immediately. Recording the outcome must not silently turn
+  // that into "wait out a nag interval you were never notified for". The other
+  // zero-subscription tests use the default nag = 0, where any interval check is
+  // trivially satisfied and so cannot tell the two behaviours apart.
+  it("a zero-subscription slot delivers as soon as a subscription exists, even when nag > 0", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 10 },
+      "Asia/Taipei",
+    );
+
+    // No subscription yet: recorded as no_subscriptions, nothing sent.
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(0);
+    expect(careOccurrenceRepo.all()[0].lastSendOutcome).toBe("no_subscriptions");
+
+    await addSubscription("user-1");
+
+    // +1 minute — well inside nag = 10, but nothing was ever delivered for this
+    // slot, so there is no delivery to space a nag from: it must fire at once.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(1);
   });
 
   it("a care_log stops the nag", async () => {
@@ -595,6 +655,7 @@ describe("runCareTick", () => {
     const occurrences = careOccurrenceRepo.all();
     expect(occurrences).toHaveLength(1);
     expect(occurrences[0].lastNotifiedAt).toBeNull();
+    expect(occurrences[0].lastSendOutcome).toBe("no_subscriptions");
     expect(pushSender.sentTo).toHaveLength(0);
 
     // A subscription is added; a later same-day tick still fires since lastNotifiedAt stayed null.
@@ -602,5 +663,206 @@ describe("runCareTick", () => {
     await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 60_000), deps());
 
     expect(pushSender.sentTo).toEqual([endpoint]);
+  });
+
+  it("repeated identical no_subscriptions outcomes are not re-recorded every tick", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] }, "Asia/Taipei");
+    // No subscription added.
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    const firstAttempt = careOccurrenceRepo.all()[0];
+    expect(firstAttempt.lastAttemptAt).toEqual(FRIDAY_0900_TAIPEI);
+    expect(firstAttempt.lastSendOutcome).toBe("no_subscriptions");
+
+    // A minute later, still no subscription: the outcome is unchanged, so it is not re-recorded.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 60_000), deps());
+
+    expect(careOccurrenceRepo.all()[0].lastAttemptAt).toEqual(FRIDAY_0900_TAIPEI);
+  });
+
+  it("a round where every push fails is not counted as delivered, but the attempt is recorded", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] }, "Asia/Taipei");
+    const endpoint = await addSubscription("user-1");
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "failed", detail: "status_500" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+
+    const [occurrence] = careOccurrenceRepo.all();
+    expect(occurrence.lastNotifiedAt).toBeNull();
+    expect(occurrence.lastAttemptAt).toEqual(FRIDAY_0900_TAIPEI);
+    expect(occurrence.lastSendOutcome).toBe("failed");
+    expect(occurrence.lastSendDetail).toBe("status_500");
+  });
+
+  it("a round where every subscription was gone is not counted as delivered, and the subscriptions are pruned", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] }, "Asia/Taipei");
+    const endpoint = await addSubscription("user-1", "https://push.example.com/gone");
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "expired", detail: "status_410" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+
+    const [occurrence] = careOccurrenceRepo.all();
+    expect(occurrence.lastNotifiedAt).toBeNull();
+    expect(occurrence.lastSendOutcome).toBe("expired");
+    expect(await subscriptionRepo.listByUser("user-1")).toEqual([]);
+  });
+
+  it("a partially successful round counts as delivered, and the detail carries the round's counts", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] }, "Asia/Taipei");
+    const okEndpoint = await addSubscription("user-1", "https://push.example.com/ok");
+    const bad1 = await addSubscription("user-1", "https://push.example.com/bad-1");
+    const bad2 = await addSubscription("user-1", "https://push.example.com/bad-2");
+    pushSender.resultByEndpoint.set(okEndpoint, { outcome: "sent" });
+    pushSender.resultByEndpoint.set(bad1, { outcome: "failed", detail: "status_401" });
+    pushSender.resultByEndpoint.set(bad2, { outcome: "failed", detail: "status_500" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+
+    const [occurrence] = careOccurrenceRepo.all();
+    expect(occurrence.lastNotifiedAt).toEqual(FRIDAY_0900_TAIPEI);
+    expect(occurrence.lastSendOutcome).toBe("sent");
+    // Counts, plus the FIRST failure's detail (subscriptions are sent to in list order: ok, bad-1, bad-2).
+    expect(occurrence.lastSendDetail).toBe("sent=1 failed=2 status_401");
+  });
+
+  // `last_send_detail IS NOT NULL` is this change's whole triage query ("show me
+  // where it went wrong"). A healthy multi-device round must therefore leave it
+  // null, exactly like the single-subscription success path does.
+  it("a fully successful multi-subscription round records no detail", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] }, "Asia/Taipei");
+    await addSubscription("user-1", "https://push.example.com/phone");
+    await addSubscription("user-1", "https://push.example.com/laptop");
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+
+    const [occurrence] = careOccurrenceRepo.all();
+    expect(occurrence.lastSendOutcome).toBe("sent");
+    expect(occurrence.lastSendDetail).toBeNull();
+  });
+
+  // `last_send_outcome` is bare text with no CHECK, and the point of this change
+  // is to invite hand-querying (and so hand-editing) the table. A row claiming
+  // 'sent' with a null last_notified_at must not throw into D8's `catch {}`,
+  // which would silently stop that user's reminders for the rest of the day.
+  it("falls back to last_attempt_at when a 'sent' row has no last_notified_at", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 10 },
+      "Asia/Taipei",
+    );
+    await addSubscription("user-1");
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // Simulate the hand-edited row.
+    careOccurrenceRepo.all()[0].lastNotifiedAt = null;
+
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+  });
+
+  // nag > RETRY_INTERVAL_MINUTES is the only shape that tells `Math.max` apart
+  // from `Math.min`: the other failure tests use nag = 0 or 10, where both give 10.
+  it("a failing slot whose nag interval exceeds the retry floor waits the nag interval, not the floor", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 30 },
+      "Asia/Taipei",
+    );
+    const endpoint = await addSubscription("user-1");
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "failed", detail: "status_500" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +10 min: the retry floor elapsed, but the schedule's own interval did not —
+    // retrying here would make a failing slot noisier than a healthy one.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +30 min: the schedule's own interval elapsed.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 30 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+  });
+
+  // The whole point of the change: after a failed round, a later retry that
+  // succeeds must be visible in the data AND must move the nag basis back to the
+  // delivery, so nagging is spaced from when the user was actually reached.
+  it("a failed round that later succeeds is recorded as recovered, and re-bases the nag on the delivery", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 10 },
+      "Asia/Taipei",
+    );
+    const endpoint = await addSubscription("user-1");
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "failed", detail: "status_500" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(careOccurrenceRepo.all()[0]).toMatchObject({ lastNotifiedAt: null, lastSendOutcome: "failed", lastSendDetail: "status_500" });
+
+    // +10 min: the retry succeeds.
+    const recoveredAt = new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000);
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "sent" });
+    await runCareTick(recoveredAt, deps());
+
+    expect(pushSender.sentTo).toHaveLength(2);
+    expect(careOccurrenceRepo.all()[0]).toMatchObject({ lastNotifiedAt: recoveredAt, lastSendOutcome: "sent", lastSendDetail: null });
+
+    // +15 min: only 5 min since the delivery — the nag is now spaced from the
+    // success, not from the original failure at +0.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 15 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+
+    // +20 min: 10 min since the delivery — nags again.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 20 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(3);
+  });
+
+  it("a persistently failing slot with nag_interval_minutes = 0 retries at the floor interval, not every tick", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 0 },
+      "Asia/Taipei",
+    );
+    const endpoint = await addSubscription("user-1");
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "failed", detail: "status_500" });
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +1 minute: still within the retry floor (10 min) despite nag_interval_minutes = 0 -> no resend.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +10 minutes (RETRY_INTERVAL_MINUTES): resend.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+  });
+
+  it("a retry floor applies only after a round that did not deliver, not because of a stale successful lastNotifiedAt", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 10 },
+      "Asia/Taipei",
+    );
+    const endpoint = await addSubscription("user-1");
+
+    await runCareTick(FRIDAY_0900_TAIPEI, deps()); // sent
+    expect(pushSender.sentTo).toHaveLength(1);
+
+    // +10 min: the normal nag interval elapses; this attempt fails entirely.
+    pushSender.resultByEndpoint.set(endpoint, { outcome: "failed", detail: "status_500" });
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+
+    // +11 min (only 1 min after the failed attempt): must be floor-throttled, NOT retried every
+    // tick just because it has been >10 min since the stale successful lastNotifiedAt (D11).
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 11 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(2);
+
+    // +20 min (10 min after the failed attempt = RETRY_INTERVAL_MINUTES): resend.
+    await runCareTick(new Date(FRIDAY_0900_TAIPEI.getTime() + 20 * 60_000), deps());
+    expect(pushSender.sentTo).toHaveLength(3);
   });
 });
