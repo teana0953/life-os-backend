@@ -207,6 +207,10 @@ class FakeChaodaysClient implements ChaodaysClient {
   fetchDietMenus(): never {
     throw new Error("not used in this test");
   }
+
+  fetchMenstruals(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 /** The day after `day`, computed in UTC. */

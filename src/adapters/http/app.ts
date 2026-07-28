@@ -55,6 +55,7 @@ import {
   createImportChaodaysBowelHandler,
   createImportChaodaysDietHandler,
   createImportChaodaysDietTargetHandler,
+  createImportChaodaysMenstrualHandler,
   createImportChaodaysWaterHandler,
   createImportChaodaysWeightHandler,
 } from "./routes/import-chaodays";
@@ -285,6 +286,16 @@ export function createApp(options: CreateAppOptions) {
     "/api/import/chaodays/diet-target",
     authMiddleware,
     createImportChaodaysDietTargetHandler(importChaodaysDietTargetOptions),
+  );
+  const importChaodaysMenstrualOptions = {
+    userRepository: options.userRepository,
+    menstrualRepository: options.menstrualRepository,
+    chaodaysClient: options.chaodaysClient,
+  };
+  app.post(
+    "/api/import/chaodays/menstrual",
+    authMiddleware,
+    createImportChaodaysMenstrualHandler(importChaodaysMenstrualOptions),
   );
 
   const pushOptions = {

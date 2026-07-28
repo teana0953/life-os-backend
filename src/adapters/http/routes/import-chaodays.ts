@@ -2,12 +2,14 @@ import type { Context } from "hono";
 import { importChaodaysBowel } from "../../../contexts/health/application/import-chaodays-bowel";
 import { importChaodaysDiet } from "../../../contexts/health/application/import-chaodays-diet";
 import { importChaodaysDietTarget } from "../../../contexts/health/application/import-chaodays-diet-target";
+import { importChaodaysMenstrual } from "../../../contexts/health/application/import-chaodays-menstrual";
 import { importChaodaysWater } from "../../../contexts/health/application/import-chaodays-water";
 import { importChaodaysWeight } from "../../../contexts/health/application/import-chaodays-weight";
 import type { BowelRepository } from "../../../contexts/health/domain/bowel-repository";
 import type { ChaodaysClient } from "../../../contexts/health/domain/chaodays-client";
 import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
 import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
+import type { MenstrualRepository } from "../../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../contexts/health/domain/water-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -44,6 +46,12 @@ export interface ImportChaodaysDietTargetHandlerOptions {
   userRepository: UserRepository;
   dailyTargetRepository: DailyTargetRepository;
   waterRepository: WaterRepository;
+  chaodaysClient: ChaodaysClient;
+}
+
+export interface ImportChaodaysMenstrualHandlerOptions {
+  userRepository: UserRepository;
+  menstrualRepository: MenstrualRepository;
   chaodaysClient: ChaodaysClient;
 }
 
@@ -183,6 +191,34 @@ export function createImportChaodaysDietTargetHandler(options: ImportChaodaysDie
       options.chaodaysClient,
       { userId, uid, password, from, to },
     );
+    return c.json(summary);
+  };
+}
+
+/**
+ * Protected `POST /api/import/chaodays/menstrual`: sign in to chaodays with the
+ * supplied credentials, pull menstrual periods for `[start_date, end_date]`,
+ * and create the ones that do not overlap a period lifeos already knows about.
+ * Credentials are used only for this request — never persisted.
+ */
+export function createImportChaodaysMenstrualHandler(options: ImportChaodaysMenstrualHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    const uid = requireString(body.chaodays_uid, "chaodays_uid");
+    const password = requireString(body.chaodays_password, "chaodays_password");
+    const from = requireDay(body.start_date, "start_date");
+    const to = requireDay(body.end_date, "end_date");
+    if (from > to) throw new BadRequestError("start_date must not be later than end_date");
+
+    const summary = await importChaodaysMenstrual(options.menstrualRepository, options.chaodaysClient, {
+      userId,
+      uid,
+      password,
+      from,
+      to,
+    });
     return c.json(summary);
   };
 }

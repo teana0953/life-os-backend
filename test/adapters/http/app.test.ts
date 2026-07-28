@@ -93,6 +93,7 @@ const stubChaodaysClient: ChaodaysClient = {
   fetchWaterRecords: notImplemented,
   fetchDefecationRecords: notImplemented,
   fetchDietMenus: notImplemented,
+  fetchMenstruals: notImplemented,
 };
 
 const PROJECT_ID = "life-os-test";
