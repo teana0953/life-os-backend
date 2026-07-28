@@ -4,6 +4,7 @@ import type {
   ChaodaysDefecationRecord,
   ChaodaysDietMenu,
   ChaodaysDietRecord,
+  ChaodaysMenstrualRecord,
   ChaodaysSession,
   ChaodaysWaterRecord,
   ChaodaysWeightRecord,
@@ -58,6 +59,29 @@ interface RawDietMenu {
   veg: number | null;
   water: number | null;
 }
+
+interface RawMenstrualRecord {
+  id: number;
+  started_date: string;
+  ended_date: string | null;
+}
+
+/**
+ * Page size for the menstrual list — the value chaodays' own frontend uses.
+ * Not raised: if the upstream capped a larger value back to its own default,
+ * any "a short page is the last page" rule would stop after page 1.
+ */
+const MENSTRUAL_PAGE_SIZE = 20;
+
+/**
+ * Hard per-batch page cap. Since the loop only ever succeeds by reading an
+ * empty page, this admits 19 full pages — 380 periods in one 183-day batch, two
+ * orders of magnitude above real data — so only a misbehaving upstream reaches
+ * it. Kept small on purpose: the cap applies to each batch separately, so a
+ * large one multiplied by the batches of a multi-year range would approach the
+ * Workers subrequest budget, defeating the point of having a cap.
+ */
+const MENSTRUAL_MAX_PAGES = 20;
 
 function authHeaders(session: ChaodaysSession): Record<string, string> {
   return { "access-token": session.accessToken, client: session.client, uid: session.uid };
@@ -269,6 +293,63 @@ export class HttpChaodaysClient implements ChaodaysClient {
       throw new ChaodaysUpstreamError("parse");
     }
     return { session: sessionFromHeaders(response.headers, session), menus };
+  }
+
+  /**
+   * Unlike the other collections this endpoint paginates, so the range is read
+   * page by page here and handed back whole.
+   *
+   * The stop condition is "a page came back with no records" — deliberately not
+   * the response envelope's `pagination` block (we would be guessing its key
+   * name, and guessing wrong stops after page 1: a silent under-fetch) and not
+   * "fewer than `per_page` records" (that bets the upstream never post-filters a
+   * page, and losing the bet is the same silent under-fetch).
+   */
+  async fetchMenstruals(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysMenstrualRecord[] }> {
+    let currentSession = session;
+    const records: ChaodaysMenstrualRecord[] = [];
+
+    for (let page = 1; page <= MENSTRUAL_MAX_PAGES; page++) {
+      const url = `${this.baseUrl}/users/menstruals?start_date=${from}&end_date=${to}&page=${page}&per_page=${MENSTRUAL_PAGE_SIZE}`;
+      const response = await this.request(url, { headers: authHeaders(currentSession) });
+      if (!response.ok) throw new ChaodaysUpstreamError(`status_${response.status}`);
+
+      // A 200 with a non-JSON or unexpectedly-shaped body is still an upstream
+      // failure (→ 502), not a lifeos-internal 500.
+      let data: unknown;
+      try {
+        data = ((await response.json()) as { data?: unknown }).data;
+      } catch {
+        throw new ChaodaysUpstreamError("parse");
+      }
+      if (!Array.isArray(data)) throw new ChaodaysUpstreamError("parse");
+
+      currentSession = sessionFromHeaders(response.headers, currentSession);
+      if (data.length === 0) return { session: currentSession, records };
+
+      // Malformed dates are rejected here, before anything is written: a period
+      // ending before it starts would otherwise reach `addPeriod` and escape as
+      // an unmapped InvalidPeriodError (→ 500 rather than 502).
+      for (const raw of data as RawMenstrualRecord[]) {
+        // Without an id the import's de-duplication would treat every record on
+        // the page as the same one and keep only the first — a silent loss.
+        if (raw?.id === undefined || raw.id === null) throw new ChaodaysUpstreamError("parse");
+        const startDate = raw.started_date;
+        if (!startDate) throw new ChaodaysUpstreamError("parse");
+        // An empty ended_date means "not ended"; left as-is it would break every
+        // date comparison downstream.
+        const endDate = raw.ended_date ? raw.ended_date : null;
+        if (endDate !== null && endDate < startDate) throw new ChaodaysUpstreamError("parse");
+        // days/content are dropped — lifeos has no such fields.
+        records.push({ id: raw.id, startDate, endDate });
+      }
+    }
+
+    throw new ChaodaysUpstreamError("pagination");
   }
 
   /** Wraps `fetch`, turning a network failure into `ChaodaysUpstreamError`. */

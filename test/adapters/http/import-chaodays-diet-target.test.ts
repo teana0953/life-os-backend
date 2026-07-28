@@ -262,6 +262,10 @@ class StubChaodaysClient implements ChaodaysClient {
     this.fetchArgs = { from, to };
     return { session, menus: this.menus };
   }
+
+  fetchMenstruals(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 function buildApp() {

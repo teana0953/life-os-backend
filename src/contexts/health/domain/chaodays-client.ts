@@ -61,6 +61,16 @@ export interface ChaodaysDietMenu {
   waterTargetMl: number;
 }
 
+/** A single chaodays menstrual period. `days`/`content` are dropped (lifeos has no such fields). */
+export interface ChaodaysMenstrualRecord {
+  /** chaodays' own record id, used only to de-duplicate a period returned by more than one fetch — never stored. */
+  id: number;
+  /** ISO calendar date, e.g. "2026-07-18". */
+  startDate: string;
+  /** ISO calendar date; null while chaodays has not yet closed the period. */
+  endDate: string | null;
+}
+
 /** Driven port for the external chaodays API. */
 export interface ChaodaysClient {
   signIn(uid: string, password: string): Promise<ChaodaysSession>;
@@ -94,6 +104,17 @@ export interface ChaodaysClient {
     from: string,
     to: string,
   ): Promise<{ session: ChaodaysSession; menus: ChaodaysDietMenu[] }>;
+  /**
+   * Returns the rotated session (devise token rotates each response) alongside
+   * every period in the range. Unlike the other collections this endpoint
+   * paginates, but that is an implementation detail of the adapter: the port
+   * hands back the whole range, in the same shape as the others.
+   */
+  fetchMenstruals(
+    session: ChaodaysSession,
+    from: string,
+    to: string,
+  ): Promise<{ session: ChaodaysSession; records: ChaodaysMenstrualRecord[] }>;
 }
 
 /** chaodays rejected the sign-in (wrong uid/password). Message is fixed and generic — never embeds credentials. */

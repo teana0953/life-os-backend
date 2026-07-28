@@ -226,6 +226,10 @@ class StubChaodaysClient implements ChaodaysClient {
   fetchDietMenus(): never {
     throw new Error("not used in this test");
   }
+
+  fetchMenstruals(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 function buildApp() {

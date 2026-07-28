@@ -382,6 +382,9 @@ const stubChaodaysClient: ChaodaysClient = {
   fetchDietMenus: () => {
     throw new Error("not implemented in this test's fakes");
   },
+  fetchMenstruals: () => {
+    throw new Error("not implemented in this test's fakes");
+  },
 };
 const stubExerciseRepository: ExerciseRepository = {
   addEntry: () => {
