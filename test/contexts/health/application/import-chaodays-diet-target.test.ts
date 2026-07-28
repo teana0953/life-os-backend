@@ -159,6 +159,10 @@ class FakeChaodaysClient implements ChaodaysClient {
     if (this.fetchCalls.length === this.failOnFetchCall) throw new ChaodaysUpstreamError("status_502");
     return { session, menus: this.menus.filter((m) => m.date >= from && m.date <= to) };
   }
+
+  fetchMenstruals(): never {
+    throw new Error("not used in this test");
+  }
 }
 
 /** The day after `day`, computed in UTC. */

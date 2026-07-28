@@ -15,6 +15,19 @@ function fakeFetch(response: Response, calls: FetchCall[]): typeof fetch {
   }) as typeof fetch;
 }
 
+/**
+ * A fake fetch that builds a fresh Response per call (a `Response` body can only
+ * be read once, so a paginating client needs a new one each time). `callIndex`
+ * is 0-based.
+ */
+function fakeFetchPerCall(makeResponse: (callIndex: number) => Response, calls: FetchCall[]): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = makeResponse(calls.length);
+    calls.push({ url: String(input), init });
+    return response;
+  }) as typeof fetch;
+}
+
 describe("HttpChaodaysClient", () => {
   describe("signIn", () => {
     it("posts uid/password and reads the session triple from response headers", async () => {
@@ -502,6 +515,238 @@ describe("HttpChaodaysClient", () => {
       const client = new HttpChaodaysClient(fakeFetch(response, []));
 
       await expect(client.fetchDefecationRecords(session, "2026-07-01", "2026-07-02")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+  });
+
+  describe("fetchMenstruals", () => {
+    const session: ChaodaysSession = { accessToken: "token-1", client: "client-1", uid: "uid-1" };
+
+    /**
+     * One page of the menstrual list. The envelope deliberately carries NO
+     * `pagination` key: the stop condition must not read it (guessing its key
+     * name fails by stopping after page 1 — exactly the bug this endpoint's
+     * paging exists to avoid, and a fake that supplied it would hide).
+     * Each page rotates the session so "page N+1 uses page N's session" can fail.
+     */
+    function page(records: unknown[], accessToken: string): Response {
+      return new Response(JSON.stringify({ data: records }), {
+        status: 200,
+        headers: { "access-token": accessToken, client: "client-1", uid: "uid-1" },
+      });
+    }
+
+    function rawPeriod(id: number, startedDate: string, endedDate: string | null): unknown {
+      return { id, started_date: startedDate, ended_date: endedDate, days: 5, content: "note" };
+    }
+
+    it("pages until a page comes back empty, concatenating in order and returning the last rotated session", async () => {
+      const calls: FetchCall[] = [];
+      const pages = [
+        page([rawPeriod(1, "2026-01-05", "2026-01-09"), rawPeriod(2, "2026-02-03", "2026-02-07")], "token-2"),
+        page([rawPeriod(3, "2026-03-01", "2026-03-05")], "token-3"),
+        page([], "token-4"),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], calls));
+
+      const result = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(result.records).toEqual([
+        { id: 1, startDate: "2026-01-05", endDate: "2026-01-09" },
+        { id: 2, startDate: "2026-02-03", endDate: "2026-02-07" },
+        { id: 3, startDate: "2026-03-01", endDate: "2026-03-05" },
+      ]);
+      expect(result.session).toEqual({ accessToken: "token-4", client: "client-1", uid: "uid-1" });
+      expect(calls).toHaveLength(3);
+      expect(calls[0].url).toBe(
+        "https://api.chaodays.app/api/v1/users/menstruals?start_date=2026-01-01&end_date=2026-03-31&page=1&per_page=20",
+      );
+      expect(calls[1].url).toBe(
+        "https://api.chaodays.app/api/v1/users/menstruals?start_date=2026-01-01&end_date=2026-03-31&page=2&per_page=20",
+      );
+      expect(calls[2].url).toBe(
+        "https://api.chaodays.app/api/v1/users/menstruals?start_date=2026-01-01&end_date=2026-03-31&page=3&per_page=20",
+      );
+      const headers = new Headers(calls[0].init?.headers);
+      expect(headers.get("access-token")).toBe("token-1");
+      expect(headers.get("client")).toBe("client-1");
+      expect(headers.get("uid")).toBe("uid-1");
+    });
+
+    it("keeps paging after a page shorter than per_page (a short page is not the last page)", async () => {
+      const calls: FetchCall[] = [];
+      const pages = [
+        page([rawPeriod(1, "2026-01-05", "2026-01-09")], "token-2"),
+        page([rawPeriod(2, "2026-02-03", "2026-02-07")], "token-3"),
+        page([], "token-4"),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], calls));
+
+      const result = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(result.records.map((r) => r.id)).toEqual([1, 2]);
+      expect(calls).toHaveLength(3);
+    });
+
+    it("presents the session the previous page returned on each following request", async () => {
+      const calls: FetchCall[] = [];
+      const pages = [
+        page([rawPeriod(1, "2026-01-05", "2026-01-09")], "token-2"),
+        page([rawPeriod(2, "2026-02-03", "2026-02-07")], "token-3"),
+        page([], "token-4"),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], calls));
+
+      await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(new Headers(calls[0].init?.headers).get("access-token")).toBe("token-1");
+      expect(new Headers(calls[1].init?.headers).get("access-token")).toBe("token-2");
+      expect(new Headers(calls[2].init?.headers).get("access-token")).toBe("token-3");
+    });
+
+    it("fails with 'pagination' instead of looping when the upstream never returns an empty page", async () => {
+      const calls: FetchCall[] = [];
+      const fullPage = (i: number) =>
+        page(
+          Array.from({ length: 20 }, (_, n) => rawPeriod(i * 20 + n, "2026-01-05", "2026-01-09")),
+          `token-${i + 2}`,
+        );
+      const client = new HttpChaodaysClient(fakeFetchPerCall(fullPage, calls));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("pagination");
+      expect(calls).toHaveLength(20);
+    });
+
+    it("maps an empty ended_date to null", async () => {
+      const pages = [page([rawPeriod(1, "2026-01-05", "")], "token-2"), page([], "token-3")];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const result = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(result.records).toEqual([{ id: 1, startDate: "2026-01-05", endDate: null }]);
+    });
+
+    it("maps a null ended_date to null", async () => {
+      const pages = [page([rawPeriod(1, "2026-01-05", null)], "token-2"), page([], "token-3")];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const result = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(result.records).toEqual([{ id: 1, startDate: "2026-01-05", endDate: null }]);
+    });
+
+    it("discards the pages it had already read when a later page fails", async () => {
+      // The "a failed import writes nothing" guarantee has a page axis as well
+      // as a batch axis: a partial range must not surface as if it were whole.
+      const pages = [
+        page([rawPeriod(1, "2026-01-05", "2026-01-09")], "token-2"),
+        new Response("", { status: 500 }),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("status_500");
+    });
+
+    it("throws 'parse' when ended_date is earlier than started_date (→ 502, never a 500 from addPeriod)", async () => {
+      const pages = [page([rawPeriod(1, "2026-01-09", "2026-01-05")], "token-2")];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("parse");
+    });
+
+    it.each([
+      ["missing", undefined],
+      ["empty", ""],
+    ])("throws 'parse' when started_date is %s", async (_desc, startedDate) => {
+      const pages = [
+        page([{ id: 1, started_date: startedDate, ended_date: "2026-01-09" }], "token-2"),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("parse");
+    });
+
+    it("throws 'parse' when a record has no id (de-duplication would silently collapse the page)", async () => {
+      const pages = [
+        page(
+          [
+            { started_date: "2026-01-05", ended_date: "2026-01-09" },
+            { started_date: "2026-02-05", ended_date: "2026-02-09" },
+          ],
+          "token-2",
+        ),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("parse");
+    });
+
+    it("targets the relay base URL and carries the X-Relay-Secret header on every page", async () => {
+      const calls: FetchCall[] = [];
+      const pages = [page([rawPeriod(1, "2026-01-05", "2026-01-09")], "token-2"), page([], "token-3")];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], calls), {
+        baseUrl: "https://1-2-3-4.nip.io/api/v1",
+        relaySecret: "s3cret",
+      });
+
+      await client.fetchMenstruals(session, "2026-01-01", "2026-03-31");
+
+      expect(calls).toHaveLength(2);
+      for (const call of calls) {
+        expect(call.url.startsWith("https://1-2-3-4.nip.io/api/v1/users/menstruals?")).toBe(true);
+        expect(new Headers(call.init?.headers).get("X-Relay-Secret")).toBe("s3cret");
+      }
+    });
+
+    it("throws ChaodaysUpstreamError on a non-200 response", async () => {
+      const response = new Response("{}", { status: 500 });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("status_500");
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-array data body (→ 502, not 500)", async () => {
+      const response = new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchMenstruals(session, "2026-01-01", "2026-03-31")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 with a non-JSON body", async () => {
+      const response = new Response("<html>oops</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      });
+      const client = new HttpChaodaysClient(fakeFetch(response, []));
+
+      await expect(client.fetchMenstruals(session, "2026-01-01", "2026-03-31")).rejects.toThrow(ChaodaysUpstreamError);
+    });
+
+    it("throws ChaodaysUpstreamError on a 200 whose data array has a null record (→ 502, not 500)", async () => {
+      const pages = [page([null], "token-2")];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      await expect(client.fetchMenstruals(session, "2026-01-01", "2026-03-31")).rejects.toThrow(ChaodaysUpstreamError);
     });
   });
 });

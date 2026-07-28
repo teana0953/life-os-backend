@@ -18,7 +18,11 @@ export interface UpdatePeriodPatch {
 }
 
 export interface MenstrualRepository {
-  /** Inserts a period and returns it. */
+  /**
+   * Inserts a period and returns it. Does NOT check that `endDate` is not
+   * earlier than `startDate` — that invariant lives in the `addPeriod` use
+   * case, which every writer is expected to go through.
+   */
   add(input: AddPeriodInput): Promise<MenstrualPeriod>;
   /** The user's periods, ascending by startDate. */
   listByUser(userId: string): Promise<MenstrualPeriod[]>;
