@@ -1,7 +1,7 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { careLog, careOccurrence } from "../../../shared/db/schema";
-import type { CareOccurrence, CareOccurrenceRepository, CreateCareOccurrenceInput } from "../domain/care-occurrence";
+import type { CareOccurrence, CareOccurrenceRepository, CreateCareOccurrenceInput, RecordAttemptInput } from "../domain/care-occurrence";
 
 type CareOccurrenceRow = typeof careOccurrence.$inferSelect;
 
@@ -14,6 +14,9 @@ function toDomain(row: CareOccurrenceRow): CareOccurrence {
     localDate: row.localDate,
     timeOfDay: row.timeOfDay,
     lastNotifiedAt: row.lastNotifiedAt,
+    lastAttemptAt: row.lastAttemptAt,
+    lastSendOutcome: row.lastSendOutcome as CareOccurrence["lastSendOutcome"],
+    lastSendDetail: row.lastSendDetail,
   };
 }
 
@@ -62,9 +65,17 @@ export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository
     return row ? toDomain(row) : null;
   }
 
-  async touchNotified(id: string, at: Date): Promise<void> {
+  async recordAttempt(id: string, input: RecordAttemptInput): Promise<void> {
     const db = this.getDb();
-    await db.update(careOccurrence).set({ lastNotifiedAt: at }).where(eq(careOccurrence.id, id));
+    await db
+      .update(careOccurrence)
+      .set({
+        lastAttemptAt: input.at,
+        lastSendOutcome: input.outcome,
+        lastSendDetail: input.detail,
+        ...(input.delivered ? { lastNotifiedAt: input.at } : {}),
+      })
+      .where(eq(careOccurrence.id, id));
   }
 
   async listPastUnlogged(careScheduleId: string, todayLocalDate: string): Promise<CareOccurrence[]> {

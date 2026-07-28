@@ -2,8 +2,8 @@ import { localMinute, localParts } from "../domain/reminder-clock";
 import { isActiveOn } from "../domain/care-schedule";
 import type { CareItem, CareItemRepository, CareSchedule } from "../domain/care-item";
 import type { CareLogRepository } from "../domain/care-log";
-import type { CareOccurrenceRepository } from "../domain/care-occurrence";
-import type { PushSender } from "../domain/push-sender";
+import type { CareOccurrence, CareOccurrenceRepository, CareSendOutcome } from "../domain/care-occurrence";
+import type { PushSendResult, PushSender } from "../domain/push-sender";
 import type { PushSubscriptionRepository } from "../domain/push-subscription";
 
 /**
@@ -12,6 +12,15 @@ import type { PushSubscriptionRepository } from "../domain/push-subscription";
  * midnight (D4/D7 in design.md; unlike Slice-2's cross-midnight look-back).
  */
 const LOOKBACK_MINUTES = 5;
+
+/**
+ * Floor on retrying a round that did not deliver (failed/expired), so a
+ * persistent failure retries at most every 10 minutes instead of every tick
+ * (design D11). Bigger than either existing nag value (5, 10) so a failing
+ * slot is never noisier than a healthy one; small enough to retry several
+ * times an hour.
+ */
+const RETRY_INTERVAL_MINUTES = 10;
 
 export interface RunCareTickDeps {
   careItemRepo: CareItemRepository;
@@ -24,6 +33,79 @@ export interface RunCareTickDeps {
 /** Push body: dose summary for medication (when set), else the free-text note. */
 function messageBody(item: CareItem): string {
   return item.dose ?? item.note ?? "";
+}
+
+/**
+ * Whether the next attempt for `occurrence` is due (design D11): a slot never
+ * attempted is always due (also avoids `null.getTime()` — a first-materialize
+ * that threw here would be silently swallowed by D8's `catch {}`). Otherwise
+ * the basis/interval/floor depend on the *last* attempt's outcome — see the
+ * three-branch table in design.md D11.
+ */
+function shouldNotify(occurrence: CareOccurrence, schedule: CareSchedule, now: Date): boolean {
+  if (occurrence.lastAttemptAt === null) return true;
+
+  if (occurrence.lastSendOutcome === "sent") {
+    // Unchanged pre-existing semantics: nag_interval_minutes = 0 fires once.
+    // `lastNotifiedAt` is non-null for a 'sent' row by construction of
+    // `recordAttempt`, but `last_send_outcome` is bare text with no CHECK and
+    // this change exists to be hand-queried (and so hand-edited): falling back
+    // beats throwing into D8's `catch {}`, which would silently stop this
+    // user's reminders for the rest of the day.
+    const basis = occurrence.lastNotifiedAt ?? occurrence.lastAttemptAt;
+    return schedule.nagIntervalMinutes > 0 && now.getTime() - basis.getTime() >= schedule.nagIntervalMinutes * 60_000;
+  }
+
+  if (occurrence.lastSendOutcome === "no_subscriptions") {
+    // Unconditionally due (D12). Before this change a zero-subscription round
+    // wrote nothing at all, so `lastNotifiedAt` stayed null and every tick was
+    // due — a user who grants push at 09:01 gets the 09:00 reminder at once.
+    // Recording the outcome must not turn that into "wait out a nag interval
+    // you were never notified for" — that is the very symptom being fixed.
+    // Cost is identical to pre-change: one `listByUser` read per tick while
+    // subscription-less, no extra push, and no extra write (the skip-write
+    // guard in `dispatchSlot` still collapses repeats to a single UPDATE).
+    return true;
+  }
+
+  // failed / expired: floor applies, and NOT gated by `nagIntervalMinutes > 0` —
+  // that gate is for "fire once" semantics on a successful send, not retries (D11).
+  const intervalMinutes = Math.max(schedule.nagIntervalMinutes, RETRY_INTERVAL_MINUTES);
+  return now.getTime() - occurrence.lastAttemptAt.getTime() >= intervalMinutes * 60_000;
+}
+
+/**
+ * Aggregates one round's per-subscription send results into the occurrence-level
+ * outcome/detail recorded via `recordAttempt` (D10/D13 in design.md). Only called
+ * with at least one subscription — zero subscriptions is handled separately as
+ * `no_subscriptions` (D12).
+ */
+function summarizeOutcome(results: PushSendResult[]): { outcome: CareSendOutcome; detail: string | null; delivered: boolean } {
+  const sentCount = results.filter((r) => r.outcome === "sent").length;
+  const expiredCount = results.filter((r) => r.outcome === "expired").length;
+  const failedCount = results.length - sentCount - expiredCount;
+
+  const delivered = sentCount > 0; // Partial success counts as delivered (D10) — the user already got it.
+  const outcome: CareSendOutcome = delivered ? "sent" : expiredCount > 0 && failedCount === 0 ? "expired" : "failed";
+
+  // A round with nothing to report carries no detail, however many subscriptions
+  // it covered: `last_send_detail IS NOT NULL` is the triage query, so a healthy
+  // multi-device row must not show up in it.
+  if (failedCount + expiredCount === 0) return { outcome, detail: null, delivered };
+
+  if (results.length === 1) return { outcome, detail: results[0].detail ?? null, delivered };
+
+  // Multiple subscriptions: detail carries this round's counts, plus the first
+  // non-`sent` subscription's detail (D13) — otherwise "one device OK, one
+  // failing" would record indistinguishably from "all OK".
+  const counts: string[] = [];
+  if (sentCount > 0) counts.push(`sent=${sentCount}`);
+  if (failedCount > 0) counts.push(`failed=${failedCount}`);
+  if (expiredCount > 0) counts.push(`expired=${expiredCount}`);
+  const firstFailureDetail = results.find((r) => r.outcome !== "sent")?.detail;
+  const detail = [counts.join(" "), firstFailureDetail].filter(Boolean).join(" ") || null;
+
+  return { outcome, detail, delivered };
 }
 
 /**
@@ -66,25 +148,32 @@ async function dispatchSlot(
   const existingLog = await deps.careLogRepo.getBySlot(schedule.id, todayLocalDate, schedule.timeOfDay);
   if (existingLog) return; // answered — the nag stops (D4).
 
-  const shouldNotify =
-    occurrence.lastNotifiedAt === null ||
-    (schedule.nagIntervalMinutes > 0 &&
-      now.getTime() - occurrence.lastNotifiedAt.getTime() >= schedule.nagIntervalMinutes * 60_000);
-  if (!shouldNotify) return;
+  if (!shouldNotify(occurrence, schedule, now)) return;
 
   const subscriptions = await deps.subscriptionRepo.listByUser(item.userId);
+
+  if (subscriptions.length === 0) {
+    // Distinguishable from a send failure (D12/D13) — but only written when
+    // the outcome actually changed, else a nag_interval=0 slot (due every
+    // tick against `lastAttemptAt`) would cost one UPDATE per minute for as
+    // long as it stays subscription-less.
+    if (occurrence.lastSendOutcome !== "no_subscriptions") {
+      await deps.careOccurrenceRepo.recordAttempt(occurrence.id, { at: now, outcome: "no_subscriptions", detail: null, delivered: false });
+    }
+    return;
+  }
+
+  const results: PushSendResult[] = [];
   for (const subscription of subscriptions) {
     const result = await deps.pushSender.send(subscription, { title: item.title, body: messageBody(item) });
+    results.push(result);
     if (result.outcome === "expired") {
       await deps.subscriptionRepo.deleteByEndpoint(item.userId, subscription.endpoint);
     }
   }
-  // Only mark the slot notified when a send was actually attempted — with zero
-  // subscriptions nothing was delivered, and touching it (with nag_interval=0)
-  // would wrongly suppress the nag forever even once a subscription is added.
-  if (subscriptions.length > 0) {
-    await deps.careOccurrenceRepo.touchNotified(occurrence.id, now);
-  }
+
+  const { outcome, detail, delivered } = summarizeOutcome(results);
+  await deps.careOccurrenceRepo.recordAttempt(occurrence.id, { at: now, outcome, detail, delivered });
 }
 
 /**

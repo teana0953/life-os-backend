@@ -113,6 +113,13 @@
       "when": 1784887450482,
       "tag": "0015_loud_mauler",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785207014003,
+      "tag": "0016_wealthy_peter_parker",
+      "breakpoints": true
     }
   ]
 }
