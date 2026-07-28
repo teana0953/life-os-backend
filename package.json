@@ -16,15 +16,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/loftapartment/life-os-backend.git"
+    "url": "git+https://github.com/teana0953/life-os-backend.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/loftapartment/life-os-backend/issues"
+    "url": "https://github.com/teana0953/life-os-backend/issues"
   },
-  "homepage": "https://github.com/loftapartment/life-os-backend#readme",
+  "homepage": "https://github.com/teana0953/life-os-backend#readme",
   "description": "",
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",

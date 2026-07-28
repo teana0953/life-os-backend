@@ -1,6 +1,6 @@
 ## Why
 
-[issue #86](https://github.com/loftapartment/life-os/issues/86)：「匯入太長的時間區間，會被對方的 server 擋住」。issue 的前半（選擇要匯哪些類型）已由前端 PR #92 完成，這個 change 做後半。
+[issue #86](https://github.com/teana0953/life-os/issues/86)：「匯入太長的時間區間，會被對方的 server 擋住」。issue 的前半（選擇要匯哪些類型）已由前端 PR #92 完成，這個 change 做後半。
 
 五個 import use case 都是同一個形狀：`signIn()` 之後一次 `fetch*(session, from, to)`，把使用者給的整段區間原封不動放進 chaodays 的 `start_date`/`end_date` query。區間一長就被擋，而且沒有降級 —— 整批失敗。
 

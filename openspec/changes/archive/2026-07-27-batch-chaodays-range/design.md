@@ -2,7 +2,7 @@
 
 ## 問題
 
-[issue #86](https://github.com/loftapartment/life-os/issues/86)：「匯入太長的時間區間，會被對方的 server 擋住」。
+[issue #86](https://github.com/teana0953/life-os/issues/86)：「匯入太長的時間區間，會被對方的 server 擋住」。
 
 五個 import use case 都是同一個形狀：
 

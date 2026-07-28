@@ -2,7 +2,7 @@
 
 ## 問題
 
-[issue #85](https://github.com/loftapartment/life-os/issues/85)：「[匯入 chaodays] 增加生理期」。
+[issue #85](https://github.com/teana0953/life-os/issues/85)：「[匯入 chaodays] 增加生理期」。
 
 chaodays 匯入目前支援五種：體重／飲食＋血糖／飲水／排便／飲食目標。生理期是第六種。
 
