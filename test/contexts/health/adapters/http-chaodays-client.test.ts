@@ -637,6 +637,21 @@ describe("HttpChaodaysClient", () => {
       expect(result.records).toEqual([{ id: 1, startDate: "2026-01-05", endDate: null }]);
     });
 
+    it("discards the pages it had already read when a later page fails", async () => {
+      // The "a failed import writes nothing" guarantee has a page axis as well
+      // as a batch axis: a partial range must not surface as if it were whole.
+      const pages = [
+        page([rawPeriod(1, "2026-01-05", "2026-01-09")], "token-2"),
+        new Response("", { status: 500 }),
+      ];
+      const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));
+
+      const error = await client.fetchMenstruals(session, "2026-01-01", "2026-03-31").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ChaodaysUpstreamError);
+      expect((error as ChaodaysUpstreamError).reason).toBe("status_500");
+    });
+
     it("throws 'parse' when ended_date is earlier than started_date (→ 502, never a 500 from addPeriod)", async () => {
       const pages = [page([rawPeriod(1, "2026-01-09", "2026-01-05")], "token-2")];
       const client = new HttpChaodaysClient(fakeFetchPerCall((i) => pages[i], []));

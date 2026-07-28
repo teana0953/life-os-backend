@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { InvalidPeriodError } from "../../../../src/contexts/health/application/add-period";
 import { importChaodaysMenstrual } from "../../../../src/contexts/health/application/import-chaodays-menstrual";
 import { ChaodaysAuthError, ChaodaysUpstreamError } from "../../../../src/contexts/health/domain/chaodays-client";
 import type {
@@ -205,6 +206,33 @@ describe("importChaodaysMenstrual", () => {
 
     expect(summary).toEqual({ imported: 1, skipped: 1, from: "2026-01-01", to: "2026-03-31" });
     expect(await storedDates()).toEqual([{ startDate: "2026-01-05", endDate: "2026-01-09" }]);
+  });
+
+  it("imports the once-open period on a later run, after chaodays has closed it", async () => {
+    // The whole justification for skipping an open period is that it costs only
+    // a re-import. Without this, "skipped" could be a permanent loss and the
+    // suite would not notice.
+    chaodaysClient.records = [record(2, "2026-03-20", null)];
+    await runImport();
+    expect(await storedDates()).toEqual([]);
+
+    chaodaysClient.records = [record(2, "2026-03-20", "2026-03-25")];
+    const summary = await runImport();
+
+    expect(summary.imported).toBe(1);
+    expect(await storedDates()).toEqual([{ startDate: "2026-03-20", endDate: "2026-03-25" }]);
+  });
+
+  it("rejects a source period that ends before it starts, without writing it", async () => {
+    // Writes go through `addPeriod` rather than the repository so an import
+    // cannot be a back door around the rule manual entry obeys. The adapter
+    // normally rejects such a record first; this pins the second line.
+    chaodaysClient.records = [record(1, "2026-01-09", "2026-01-05")];
+
+    await expect(runImport()).rejects.toThrow(InvalidPeriodError);
+
+    expect(menstrualRepository.addCallCount).toBe(0);
+    expect(await storedDates()).toEqual([]);
   });
 
   it("writes only one of two source periods that overlap each other within one import", async () => {

@@ -39,6 +39,12 @@ describe("periodsOverlap", () => {
     expectSymmetric(span("2026-05-01", "2026-05-05"), span("2026-06-01", "2026-06-05"), false);
   });
 
+  it("treats spans sharing a single day as overlapping", () => {
+    // The boundary the closed-interval reading turns on: one ends the day the
+    // other starts. Off by one here and every day-apart duplicate slips through.
+    expectSymmetric(span("2026-05-01", "2026-05-05"), span("2026-05-05", "2026-05-09"), true);
+  });
+
   it("treats an open-ended span as reaching indefinitely forward", () => {
     expectSymmetric(span("2026-05-10", null), span("2026-06-01", "2026-06-05"), true);
     expectSymmetric(span("2026-05-10", null), span("2026-05-10", "2026-05-14"), true);
