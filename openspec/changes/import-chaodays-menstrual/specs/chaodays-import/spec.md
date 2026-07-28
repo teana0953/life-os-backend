@@ -36,7 +36,9 @@ Unlike the other chaodays collections, the menstrual endpoint paginates. The imp
 read every page for the requested range, so the result does not depend on how many periods
 happen to fall in it, and SHALL carry the rotated session from each response into the next
 request. The number of pages read SHALL be bounded so a misbehaving upstream fails rather
-than looping.
+than looping. Pagination is a second axis inside a batch: the existing requirement that a
+short range is a single request is about how the range is split, and SHALL NOT be read as
+capping the requests a single batch makes.
 
 #### Scenario: A range spanning more than one page is fully imported
 - **WHEN** the periods in the requested range do not fit in a single page
