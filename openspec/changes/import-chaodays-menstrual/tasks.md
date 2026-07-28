@@ -3,13 +3,12 @@
 ## 1. Client: `fetchMenstruals` 含分頁 (TDD)
 
 - [ ] Test first (red)：比照既有五個 fetch 的測試位置
-  - 第一頁回 < 20 筆 → **只發一個請求**，URL 帶 `start_date`/`end_date`/`page=1`/`per_page=20`
-  - 第一頁回滿 20 筆 → 發第二次且 `page=2`；第二頁回 5 筆 → 停。結果**依序串接**
-  - 回 0 筆 → 停（防無窮迴圈）
-  - 一直回滿 20 筆 → 打到 100 頁上限後丟 `ChaodaysUpstreamError("pagination")`
+  - 第一頁有資料 → 發第二次且 `page=2`；第二頁回 **0 筆 → 停**。結果**依序串接**。URL 帶 `start_date`/`end_date`/`page`/`per_page=20`
+  - **第一頁回 3 筆（不足 20）、第二頁還有資料 → 那些也要匯入**（釘住「不足 requested 不等於最後一頁」，見 design D1）
+  - 一直回滿 20 筆 → 打到**每批 20 頁**上限後丟 `ChaodaysUpstreamError("pagination")`
   - **第二頁用第一頁回傳的輪替 session**（假 fetch 每次要回**不同**的 session header，否則這條恆綠 —— 與 PR #54 的 `fetch-in-batches` 同款陷阱）
   - **假 fetch 回的信封不要放 `pagination`** —— 停止條件不該讀它；回了就掩蓋掉「實作偷讀信封鍵名」這個 bug
-  - `ended_date` 是空字串 → 映射成 `null`；`ended_date < started_date` → `ChaodaysUpstreamError("parse")`
+  - `ended_date` 是空字串 → 映射成 `null`；`ended_date < started_date` → `ChaodaysUpstreamError("parse")`；`started_date` 缺失或空字串 → `"parse"`（沒有這道檢查，畸形資料會在 `addPeriod` 丟出沒被 onError 映射的 `InvalidPeriodError` → 500）
   - 非 200 → `ChaodaysUpstreamError(status_*)`；JSON 壞掉／`data` 不是陣列 → `"parse"`（比照既有五個）
 - [ ] `domain/chaodays-client.ts`：加 `ChaodaysMenstrualRecord { id, startDate, endDate: string | null }`（`id` 只用於跨批次去重，不落地）與 `fetchMenstruals(session, from, to): Promise<{ session, records }>`。**port 形狀與其他五個一致** —— 分頁是實作細節，不外洩到 use case。
 - [ ] `adapters/http-chaodays-client.ts`：實作分頁迴圈。**走 `this.request`**（不是 `fetchImpl`），否則漏掉 relay base URL 與 `X-Relay-Secret`。明確帶 `per_page=20`（見 design D1，不要改大）。`started_date`/`ended_date` → 對應欄位；`days`/`content` 丟掉。
@@ -19,7 +18,8 @@
 - [ ] Test first (red)：閉區間重疊判斷，含開放結尾
   - 完全相同 → 重疊；部分重疊 → 重疊；包含 → 重疊
   - **相鄰不重疊**（5/1–5/5 vs 5/6–5/10）→ 不重疊
-  - 其中一段 `endDate == null` → 視為延伸到無限遠，任何起始日不早於它的都算重疊
+  - **對稱**：`overlaps(a,b) === overlaps(b,a)`，兩個方向的部分重疊各測一次
+  - 其中一段 `endDate == null` → 視為延伸到無限遠；**含「另一段起始日早於它但仍重疊」**（開放 5/10–，另一段 5/09–5/14 → 重疊）
 - [ ] 實作成可單獨測試的純函式 —— 它是這個 change 唯一有邏輯的部分。
 
 ## 3. Use case: `importChaodaysMenstrual` (TDD)
@@ -30,7 +30,8 @@
   - lifeos 有開放期間 → 之後的來源期間都跳過
   - **來源是開放期間（`endDate == null`）→ 不匯入**（design D2a）
   - **同一次匯入內兩筆彼此重疊 → 只寫一筆**（已接受的要累積進比較集合）
-  - **兩個批次回同一個 `id` → 只寫一筆**（跨 183 天邊界時上游可能重複回）
+  - **來源期間早於既有開放期間但重疊 → 跳過**（單向規則會漏掉這個，見 design D2）
+  - **summary 的批次無關性**：同一區間，一次抓完 vs 拆成多批（讓一筆生理期落在批次交界、被上游回兩次）→ **寫入筆數與 imported/skipped 都相同**。這條才是 `id` 去重的守門測試；只測「同一個 id 只寫一筆」的話，沒有 id 去重也會綠（重複那筆必然與已接受的重疊而被跳過）
   - 重跑同一個匯入 → 第二次不新增
   - 長區間（>183 天）→ 對 client 發多次 fetch，且 **`signIn` 只有一次**（比照既有五個 importer 的回歸點）
   - **失敗不寫入**：第一批回**至少一筆會被寫入**的期間、第二批丟錯 → 整個拋且**寫入 call count 為 0**。配一條資料相同但不失敗的測試斷言 `imported === 1`，兩條互相釘住（否則「第一批其實沒東西可寫」也會讓失敗版假綠）

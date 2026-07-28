@@ -42,9 +42,14 @@ than looping.
 - **WHEN** the periods in the requested range do not fit in a single page
 - **THEN** the import fetches the following pages and imports the periods from all of them
 
-#### Scenario: A single page is a single request
-- **WHEN** all the periods in the range fit in one page
-- **THEN** only one request is made for that range
+#### Scenario: Paging stops on a page that returns nothing
+- **WHEN** a page comes back with no periods
+- **THEN** no further page is requested for that range
+
+#### Scenario: A page shorter than requested is not assumed to be the last
+- **WHEN** a page comes back with fewer periods than were asked for and a following page
+  still has periods
+- **THEN** those following periods are imported too
 
 #### Scenario: Paging uses the session the previous page returned
 - **WHEN** the import requests a page after the first
@@ -78,9 +83,14 @@ would corrupt the cycle statistics the data exists to produce.
   immediately adjacent to one
 - **THEN** it is imported
 
-#### Scenario: An existing open period suppresses later imports
+#### Scenario: An existing open period suppresses periods it could cover
 - **WHEN** lifeos holds a period with no end date and the source has periods starting after it
 - **THEN** those are skipped, because an open period cannot be shown not to overlap them
+
+#### Scenario: Overlap is judged in both directions
+- **WHEN** the source period starts before an existing period but their days overlap
+- **THEN** it is skipped, exactly as when it starts after — the day-apart case the overlap
+  test exists for happens in both directions
 
 #### Scenario: The source repeating a period within one import writes it once
 - **WHEN** the same period comes back more than once while reading the requested range
@@ -89,6 +99,23 @@ would corrupt the cycle statistics the data exists to produce.
 #### Scenario: Re-running the import writes nothing new
 - **WHEN** the user runs the same import twice
 - **THEN** the second run adds no periods
+
+### Requirement: The menstrual summary does not depend on how the range was split
+
+The counts the import reports SHALL be the same whether the range was fetched in one batch
+or several, as they are for every other chaodays import. Because this source may return the
+same period while reading more than one batch, a period the source repeats SHALL be counted
+once, not once per time it was seen.
+
+#### Scenario: Splitting the range does not change the counts
+- **WHEN** the same range is imported as one request and as several batches, and a period
+  falls where the batches meet
+- **THEN** the periods written and the reported counts are identical
+
+#### Scenario: A period that is not written is reported as skipped
+- **WHEN** a period is left out, whether because it overlaps a known period or because it
+  has not ended yet
+- **THEN** it is counted among the skipped ones
 
 ### Requirement: A failed menstrual import writes nothing
 
