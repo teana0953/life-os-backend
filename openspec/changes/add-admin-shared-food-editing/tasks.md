@@ -171,9 +171,9 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 8. Verify
 
-- [ ] 8.1 `npm test` green.
-- [ ] 8.2 `npm run typecheck` clean (the real gate for tasks 1.5 and 2.3).
-- [ ] 8.3 `npx openspec validate add-admin-shared-food-editing --strict` passes.
-- [ ] 8.4 Confirm no regression in existing dictionary behavior: search/favorites
+- [x] 8.1 `npm test` green.
+- [x] 8.2 `npm run typecheck` clean (the real gate for tasks 1.5 and 2.3).
+- [x] 8.3 `npx openspec validate add-admin-shared-food-editing --strict` passes.
+- [x] 8.4 Confirm no regression in existing dictionary behavior: search/favorites
       tests untouched and still green; `POST /api/food-items` still creates an
       owner-private item; `care` route tests still green after the helper move.
