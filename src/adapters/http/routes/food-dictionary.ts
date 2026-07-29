@@ -16,7 +16,7 @@ export interface FoodDictionaryHandlerOptions {
   foodDictionaryRepository: FoodDictionaryRepository;
 }
 
-function toJson(item: FoodItem) {
+export function toJson(item: FoodItem) {
   return {
     id: item.id,
     owner_user_id: item.ownerUserId,

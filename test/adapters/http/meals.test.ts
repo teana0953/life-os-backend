@@ -7,7 +7,9 @@ import type { DailyTargetRepository, SetDailyTargetInput } from "../../../src/co
 import { portionsToNutrients } from "../../../src/contexts/health/domain/conversion";
 import type {
   CreateCustomFoodItemInput,
+  CreateSharedFoodItemInput,
   FoodDictionaryRepository,
+  UpdateSharedFoodItemPatch,
 } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { FoodItem } from "../../../src/contexts/health/domain/food-item";
 import type { MealEntry, MealItem, MealSummary } from "../../../src/contexts/health/domain/meal-entry";
@@ -71,6 +73,7 @@ class InMemoryUserRepository implements UserRepository {
       email: input.email,
       displayName: input.displayName,
       timezone: "Asia/Taipei",
+      isAdmin: false,
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
@@ -125,6 +128,19 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   async unfavorite(): Promise<void> {}
   async listFavorites(): Promise<FoodItem[]> {
     return [];
+  }
+
+  async findSharedById(id: string): Promise<FoodItem | null> {
+    const item = this.items.find((i) => i.id === id);
+    return item && item.ownerUserId === null ? item : null;
+  }
+
+  async createShared(input: CreateSharedFoodItemInput): Promise<FoodItem> {
+    return this.seed({ ...input, ownerUserId: null });
+  }
+
+  async updateSharedById(_id: string, _patch: UpdateSharedFoodItemPatch): Promise<FoodItem | null> {
+    return null;
   }
 }
 

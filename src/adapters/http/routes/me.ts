@@ -24,6 +24,7 @@ export function createMeHandler(options: MeHandlerOptions) {
       email: user.email,
       display_name: user.displayName,
       created_at: user.createdAt.toISOString(),
+      is_admin: user.isAdmin,
     });
   };
 }

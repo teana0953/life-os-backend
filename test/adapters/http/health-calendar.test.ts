@@ -21,7 +21,7 @@ function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
 }
 
-const stubFoodDictionaryRepository = { search: notImplemented, findById: notImplemented, createCustom: notImplemented, favorite: notImplemented, unfavorite: notImplemented, listFavorites: notImplemented } as unknown as FoodDictionaryRepository;
+const stubFoodDictionaryRepository = { search: notImplemented, findById: notImplemented, createCustom: notImplemented, favorite: notImplemented, unfavorite: notImplemented, listFavorites: notImplemented, findSharedById: notImplemented, createShared: notImplemented, updateSharedById: notImplemented } as unknown as FoodDictionaryRepository;
 const stubWaterRepository = { getIntake: notImplemented, addIntake: notImplemented, getTarget: notImplemented, getLatestTargetOnOrBefore: notImplemented, setTarget: notImplemented } as unknown as WaterRepository;
 const stubBowelRepository = { get: notImplemented, set: notImplemented } as unknown as BowelRepository;
 const stubExerciseRepository = { addEntry: notImplemented, listByDay: notImplemented, deleteEntry: notImplemented } as unknown as ExerciseRepository;
@@ -88,6 +88,7 @@ class InMemoryUserRepository implements UserRepository {
       email: input.email,
       displayName: input.displayName,
       timezone: "Asia/Taipei",
+      isAdmin: false,
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.byUid.set(input.firebaseUid, user);

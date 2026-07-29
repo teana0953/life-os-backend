@@ -26,6 +26,9 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   favorite: notImplemented,
   unfavorite: notImplemented,
   listFavorites: notImplemented,
+  findSharedById: notImplemented,
+  createShared: notImplemented,
+  updateSharedById: notImplemented,
 };
 const stubMealRepository: MealRepository = {
   upsertMealWithItems: notImplemented,
@@ -141,6 +144,8 @@ class InMemoryUserRepository implements UserRepository {
   private usersByFirebaseUid = new Map<string, User>();
   private nextId = 1;
 
+  constructor(private readonly isAdmin: boolean = false) {}
+
   async getOrCreate(input: GetOrCreateUserInput): Promise<User> {
     const existing = this.usersByFirebaseUid.get(input.firebaseUid);
     if (existing) return existing;
@@ -151,6 +156,7 @@ class InMemoryUserRepository implements UserRepository {
       email: input.email,
       displayName: input.displayName,
       timezone: "Asia/Taipei",
+      isAdmin: this.isAdmin,
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
@@ -352,7 +358,19 @@ describe("GET /api/me", () => {
       email: "alice@example.com",
       display_name: "Alice",
       created_at: "2026-01-01T00:00:00.000Z",
+      is_admin: false,
     });
+  });
+
+  it("returns is_admin: true for an administrator", async () => {
+    const repo = new InMemoryUserRepository(true);
+    const app = buildApp({ userRepository: repo });
+    const token = await validToken();
+
+    const res = await app.request("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { is_admin: boolean }).toMatchObject({ is_admin: true });
   });
 
   it("reuses the same user record across calls (no duplicate)", async () => {

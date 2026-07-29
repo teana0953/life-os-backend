@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { Db } from "../../../../../src/shared/db/client";
 import { FOOD_SEED_ROWS } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed-data";
-import { seedRowToFoodItem } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed";
+import { seedFoodDictionary, seedRowToFoodItem } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed";
+import type { FoodSeedRow } from "../../../../../src/contexts/health/adapters/seed/food-dictionary-seed";
 
 describe("seedRowToFoodItem", () => {
   it("converts a 主食 1 份 row to ~15 g carbohydrate, storing both the portion and the derived nutrient", () => {
@@ -191,5 +193,77 @@ describe("seed measure-basis coverage over the 271-row catalog", () => {
     expect(FOOD_SEED_ROWS.length).toBe(271);
     expect(counts).toEqual({ g: 61, ml: 15, quantifier: 132, nul: 63 });
     expect(counts.g + counts.ml + counts.quantifier + counts.nul).toBe(FOOD_SEED_ROWS.length);
+  });
+});
+
+/**
+ * Hand-rolled Db double (no real database), following
+ * test/contexts/notifications/adapters/drizzle-care-item-repository.test.ts:10-21.
+ * `select().from().where()` returns the given existing shared item names;
+ * `insert().values()` records what was inserted rather than writing anywhere.
+ * There is deliberately no `update`/`delete` implementation, so a re-run that
+ * ever touched an existing row would throw instead of silently passing.
+ */
+function fakeDbWithExistingSharedNames(existingNames: string[], onInsertValues: (values: unknown[]) => void): Db {
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => existingNames.map((name) => ({ name })),
+      }),
+    }),
+    insert: () => ({
+      values: (values: unknown[]) => {
+        onInsertValues(values);
+        return Promise.resolve();
+      },
+    }),
+  } as unknown as Db;
+}
+
+describe("seedFoodDictionary", () => {
+  const rows: FoodSeedRow[] = [
+    { id: 1, name: "飯/1碗", staple: 4, meat: 0, fruit: 0, veg: 0 },
+    { id: 2, name: "香蕉/1根", staple: 0, meat: 0, fruit: 2, veg: 0 },
+    { id: 3, name: "熟肉(雞豬牛羊魚)/30g", staple: 0, meat: 1, fruit: 0, veg: 0 },
+  ];
+
+  it("inserts only the rows whose name is not already among the existing shared items", async () => {
+    let inserted: unknown[] = [];
+    const db = fakeDbWithExistingSharedNames(["飯/1碗"], (values) => {
+      inserted = values;
+    });
+
+    const result = await seedFoodDictionary(db, rows);
+
+    expect(inserted).toHaveLength(2);
+    expect((inserted as { name: string }[]).map((v) => v.name)).toEqual(["香蕉/1根", "熟肉(雞豬牛羊魚)/30g"]);
+    expect(result).toEqual({ inserted: 2, skipped: 1 });
+  });
+
+  it("leaves every existing shared row untouched: no insert call at all when every name already exists", async () => {
+    let insertCalled = false;
+    const db = fakeDbWithExistingSharedNames(
+      ["飯/1碗", "香蕉/1根", "熟肉(雞豬牛羊魚)/30g"],
+      () => {
+        insertCalled = true;
+      },
+    );
+
+    const result = await seedFoodDictionary(db, rows);
+
+    expect(insertCalled).toBe(false);
+    expect(result).toEqual({ inserted: 0, skipped: 3 });
+  });
+
+  it("inserts every row, and reports zero skipped, when none already exist", async () => {
+    let inserted: unknown[] = [];
+    const db = fakeDbWithExistingSharedNames([], (values) => {
+      inserted = values;
+    });
+
+    const result = await seedFoodDictionary(db, rows);
+
+    expect(inserted).toHaveLength(3);
+    expect(result).toEqual({ inserted: 3, skipped: 0 });
   });
 });

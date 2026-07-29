@@ -9,11 +9,15 @@ import { SEED_ROWS, seedFoodDictionary } from "./food-dictionary-seed";
  * database. Reads DATABASE_URL from the environment or the untracked `.dev.vars`
  * (same convention as `drizzle.config.ts`), so the secret never touches the CLI.
  *
- * Idempotent: it clears existing shared (owner_user_id IS NULL) items before
- * re-inserting, so it is safe to re-run after the seed data file is refreshed.
- * User-custom items are never touched.
+ * Default behavior inserts only the rows not already present among the
+ * existing shared items, leaving every existing shared row (including
+ * administrator corrections and administrator-created shared items) untouched
+ * (D11 in design.md). The old destructive delete-then-reinsert behavior is
+ * still available, but only behind an explicit `--force` flag, for refreshing
+ * seed data on a disposable database. User-custom items are never touched
+ * either way.
  *
- * Run with `npm run db:seed`.
+ * Run with `npm run db:seed` (or `npm run db:seed -- --force`).
  */
 function loadDatabaseUrl(): string {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -32,9 +36,16 @@ function loadDatabaseUrl(): string {
 
 async function main(): Promise<void> {
   const db = createDbClient(loadDatabaseUrl());
-  await db.delete(foodItem).where(isNull(foodItem.ownerUserId));
-  await seedFoodDictionary(db, SEED_ROWS);
-  console.log(`Seeded ${SEED_ROWS.length} shared food items.`);
+
+  if (process.argv.includes("--force")) {
+    await db.delete(foodItem).where(isNull(foodItem.ownerUserId));
+    const result = await seedFoodDictionary(db, SEED_ROWS);
+    console.log(`Force-refreshed the shared catalog: inserted ${result.inserted}, skipped ${result.skipped}.`);
+    return;
+  }
+
+  const result = await seedFoodDictionary(db, SEED_ROWS);
+  console.log(`Seeded the shared food dictionary: inserted ${result.inserted}, skipped ${result.skipped} (already present).`);
 }
 
 main()

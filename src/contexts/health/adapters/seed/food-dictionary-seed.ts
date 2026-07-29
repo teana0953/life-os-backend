@@ -1,3 +1,4 @@
+import { isNull } from "drizzle-orm";
 import type { Db } from "../../../../shared/db/client";
 import { foodItem } from "../../../../shared/db/schema";
 import { portionsToNutrients } from "../../domain/conversion";
@@ -112,9 +113,27 @@ export function seedRowToFoodItem(row: FoodSeedRow): SeedFoodItem {
  */
 export const SEED_ROWS: FoodSeedRow[] = FOOD_SEED_ROWS;
 
-/** Inserts the seed rows as shared (owner_user_id = null) food_item rows. */
-export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS): Promise<void> {
-  const values = rows.map((row) => {
+export interface SeedResult {
+  inserted: number;
+  skipped: number;
+}
+
+/**
+ * Inserts the seed rows as shared (owner_user_id = null) food_item rows,
+ * skipping any row whose name is already among the existing shared items
+ * (D11 in design.md): re-running the seed never modifies or removes an
+ * existing shared row, so administrator corrections and admin-created shared
+ * items survive. `SEED_ROWS` itself has no duplicate names, so name is a
+ * usable key.
+ */
+export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS): Promise<SeedResult> {
+  const existing = await db.select({ name: foodItem.name }).from(foodItem).where(isNull(foodItem.ownerUserId));
+  const existingNames = new Set(existing.map((row) => row.name));
+
+  const rowsToInsert = rows.filter((row) => !existingNames.has(row.name));
+  const skipped = rows.length - rowsToInsert.length;
+
+  const values = rowsToInsert.map((row) => {
     const item = seedRowToFoodItem(row);
     return {
       ownerUserId: null,
@@ -133,6 +152,7 @@ export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS
       measureUnit: item.measureUnit,
     };
   });
-  if (values.length === 0) return;
-  await db.insert(foodItem).values(values);
+  if (values.length > 0) await db.insert(foodItem).values(values);
+
+  return { inserted: values.length, skipped };
 }

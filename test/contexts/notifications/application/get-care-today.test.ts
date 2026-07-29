@@ -117,6 +117,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     email: "alice@example.com",
     displayName: "Alice",
     timezone: "Asia/Taipei",
+    isAdmin: false,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     ...overrides,
   };
