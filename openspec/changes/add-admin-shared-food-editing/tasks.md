@@ -65,11 +65,11 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 3. Application use cases
 
-- [ ] 3.1 Test first — `createSharedFoodItem(repo, input)`: creates an item with
+- [x] 3.1 Test first — `createSharedFoodItem(repo, input)`: creates an item with
       `ownerUserId === null`; rejects a measure basis with only one part supplied
       (base amount without unit, and unit without base amount) and creates nothing.
-- [ ] 3.2 Implement `src/contexts/health/application/create-shared-food-item.ts`.
-- [ ] 3.3 Test first — `updateSharedFoodItem(repo, id, patch)`:
+- [x] 3.2 Implement `src/contexts/health/application/create-shared-food-item.ts`.
+- [x] 3.3 Test first — `updateSharedFoodItem(repo, id, patch)`:
       - partial patch changes only the supplied fields, leaving the rest intact;
       - an empty patch is rejected as invalid and nothing is written;
       - an id owned by a user, and an unknown id, both resolve to not-found
@@ -79,7 +79,7 @@ green `npm test` as proof that the fakes are up to date.
         parts on an item with neither is accepted; clearing **both** parts together
         on an item that has them is accepted (the positive cases keep the negative
         ones from passing for the wrong reason).
-- [ ] 3.4 Implement `src/contexts/health/application/update-shared-food-item.ts`.
+- [x] 3.4 Implement `src/contexts/health/application/update-shared-food-item.ts`.
       The invariant is evaluated on the **merged** (post-patch) state, so the use case
       reads the current item via `findSharedById` before validating, and must not
       write when validation fails. Return distinct, typed outcomes for not-found vs

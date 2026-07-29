@@ -19,3 +19,8 @@ export interface FoodItem {
   measureUnit: string | null;
   createdAt: Date;
 }
+
+/** True when the measure basis is consistent: both null, or both present (D7 in design.md). */
+export function isValidMeasureBasis(baseAmount: number | null, measureUnit: string | null): boolean {
+  return (baseAmount === null) === (measureUnit === null);
+}
