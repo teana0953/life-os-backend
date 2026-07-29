@@ -142,7 +142,7 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 7. Seed must stop clobbering the shared catalog
 
-- [ ] 7.1 Test first — put the skip logic in `seedFoodDictionary(db, rows)`
+- [x] 7.1 Test first — put the skip logic in `seedFoodDictionary(db, rows)`
       (`src/contexts/health/adapters/seed/food-dictionary-seed.ts:116`), NOT in
       `run-seed.ts`: that file calls `main()` at module top level (run-seed.ts:40),
       which opens a real DB connection and calls `process.exit`, so importing it from
@@ -156,7 +156,7 @@ green `npm test` as proof that the fakes are up to date.
       among them, leaves every existing shared row untouched, and returns/logs how
       many were inserted vs skipped. (`SEED_ROWS` itself has no duplicate names, so
       name is a usable key.)
-- [ ] 7.2 Then make `src/contexts/health/adapters/seed/run-seed.ts` a thin runner:
+- [x] 7.2 Then make `src/contexts/health/adapters/seed/run-seed.ts` a thin runner:
       drop the unconditional `db.delete(foodItem).where(isNull(foodItem.ownerUserId))`
       (line 35) from the default path and keep it only behind an explicit
       `process.argv` `--force` flag (`npm run db:seed -- --force`). Update the file's

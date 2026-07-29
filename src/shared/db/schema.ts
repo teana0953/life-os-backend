@@ -53,9 +53,11 @@ export const foodFavorite = pgTable(
       .notNull()
       // A favorite is meaningless once its food item is gone, so cascade-delete
       // it (unlike meal_item, which keeps the historical log row and only nulls
-      // the link). This also lets the seed reseed shared items — a delete +
-      // reinsert — without a foreign-key violation from favorites still
-      // pointing at the old rows.
+      // the link). This also lets the seed's explicit --force refresh (delete +
+      // reinsert every shared item; NOT the default seed behavior, which only
+      // inserts missing rows — D11 in add-admin-shared-food-editing/design.md)
+      // run without a foreign-key violation from favorites still pointing at
+      // the old rows.
       .references(() => foodItem.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
