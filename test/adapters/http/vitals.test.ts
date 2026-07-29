@@ -35,6 +35,9 @@ const stubFoodDictionaryRepository: FoodDictionaryRepository = {
   favorite: notImplemented,
   unfavorite: notImplemented,
   listFavorites: notImplemented,
+  findSharedById: notImplemented,
+  createShared: notImplemented,
+  updateSharedById: notImplemented,
 };
 const stubMealRepository: MealRepository = {
   upsertMealWithItems: notImplemented,

@@ -6,7 +6,9 @@ import { searchFoodDictionary } from "../../../../src/contexts/health/applicatio
 import { unfavoriteFoodItem } from "../../../../src/contexts/health/application/unfavorite-food-item";
 import type {
   CreateCustomFoodItemInput,
+  CreateSharedFoodItemInput,
   FoodDictionaryRepository,
+  UpdateSharedFoodItemPatch,
 } from "../../../../src/contexts/health/domain/food-dictionary-repository";
 import type { FoodItem } from "../../../../src/contexts/health/domain/food-item";
 
@@ -48,6 +50,36 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
 
   async listFavorites(userId: string): Promise<FoodItem[]> {
     return [...this.items.values()].filter((item) => this.favorites.has(`${userId}:${item.id}`));
+  }
+
+  async findSharedById(id: string): Promise<FoodItem | null> {
+    const item = this.items.get(id);
+    return item && item.ownerUserId === null ? item : null;
+  }
+
+  async createShared(input: CreateSharedFoodItemInput): Promise<FoodItem> {
+    return this.seed({ ...input, ownerUserId: null });
+  }
+
+  async updateSharedById(id: string, patch: UpdateSharedFoodItemPatch): Promise<FoodItem | null> {
+    const item = this.items.get(id);
+    if (!item || item.ownerUserId !== null) return null;
+    const updated: FoodItem = { ...item };
+    if ("name" in patch && patch.name !== undefined) updated.name = patch.name;
+    if ("carbG" in patch && patch.carbG !== undefined) updated.carbG = patch.carbG;
+    if ("proteinG" in patch && patch.proteinG !== undefined) updated.proteinG = patch.proteinG;
+    if ("fatG" in patch && patch.fatG !== undefined) updated.fatG = patch.fatG;
+    if ("sugarG" in patch && patch.sugarG !== undefined) updated.sugarG = patch.sugarG;
+    if ("fiberG" in patch && patch.fiberG !== undefined) updated.fiberG = patch.fiberG;
+    if ("kcal" in patch && patch.kcal !== undefined) updated.kcal = patch.kcal;
+    if ("staple" in patch && patch.staple !== undefined) updated.staple = patch.staple;
+    if ("meat" in patch && patch.meat !== undefined) updated.meat = patch.meat;
+    if ("fruit" in patch && patch.fruit !== undefined) updated.fruit = patch.fruit;
+    if ("veg" in patch && patch.veg !== undefined) updated.veg = patch.veg;
+    if ("baseAmount" in patch) updated.baseAmount = patch.baseAmount ?? null;
+    if ("measureUnit" in patch) updated.measureUnit = patch.measureUnit ?? null;
+    this.items.set(id, updated);
+    return updated;
   }
 }
 

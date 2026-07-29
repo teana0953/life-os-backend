@@ -31,7 +31,7 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 2. Repository port + adapter
 
-- [ ] 2.1 Extend `src/contexts/health/domain/food-dictionary-repository.ts`:
+- [x] 2.1 Extend `src/contexts/health/domain/food-dictionary-repository.ts`:
       - `CreateSharedFoodItemInput` = the existing custom input **without**
         `ownerUserId`, **plus** `baseAmount: number | null` and
         `measureUnit: string | null`.
@@ -45,7 +45,7 @@ green `npm test` as proof that the fakes are up to date.
       - `updateSharedById(id, patch): Promise<FoodItem | null>` — applies only the
         supplied keys to a shared item; returns the updated item, or null when the
         id is absent or not shared.
-- [ ] 2.2 Implement the three methods in
+- [x] 2.2 Implement the three methods in
       `src/contexts/health/adapters/drizzle-food-dictionary-repository.ts`, reusing
       `toDomain`. `updateSharedById` builds its `set` object from the patch keys that
       are **present** (numbers stringified as elsewhere in this adapter, but an
@@ -54,7 +54,7 @@ green `npm test` as proof that the fakes are up to date.
       user-owned item can never be hit. `createShared` writes `baseAmount` /
       `measureUnit` (the first write path in this adapter that touches them —
       `createCustom` never did).
-- [ ] 2.3 Update **every** in-memory fake / stub implementing
+- [x] 2.3 Update **every** in-memory fake / stub implementing
       `FoodDictionaryRepository` so it satisfies the widened port: the
       `InMemoryFoodDictionaryRepository` in
       `test/contexts/health/application/food-dictionary.test.ts` (shared-only
