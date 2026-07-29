@@ -5,7 +5,14 @@ import type { FoodDictionaryRepository, UpdateSharedFoodItemPatch } from "../../
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveAdminUser } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { BadRequestError, nullableNumber, nullableString, optionalFiniteNumber, requireFiniteNumber, requireString } from "../validation";
+import {
+  BadRequestError,
+  nullablePositiveNumber,
+  nullableString,
+  optionalFiniteNumber,
+  requireFiniteNumber,
+  requireString,
+} from "../validation";
 import { toJson } from "./food-dictionary";
 
 export interface AdminFoodDictionaryHandlerOptions {
@@ -36,7 +43,7 @@ export function createCreateSharedFoodItemHandler(options: AdminFoodDictionaryHa
         meat: optionalFiniteNumber(body.meat, "meat", 0),
         fruit: optionalFiniteNumber(body.fruit, "fruit", 0),
         veg: optionalFiniteNumber(body.veg, "veg", 0),
-        baseAmount: body.base_amount === undefined ? null : nullableNumber(body.base_amount, "base_amount"),
+        baseAmount: body.base_amount === undefined ? null : nullablePositiveNumber(body.base_amount, "base_amount"),
         measureUnit: body.measure_unit === undefined ? null : nullableString(body.measure_unit, "measure_unit"),
       });
       return c.json(toJson(item), 201);
@@ -74,7 +81,7 @@ export function createUpdateSharedFoodItemHandler(options: AdminFoodDictionaryHa
     if ("meat" in body) patch.meat = requireFiniteNumber(body.meat, "meat");
     if ("fruit" in body) patch.fruit = requireFiniteNumber(body.fruit, "fruit");
     if ("veg" in body) patch.veg = requireFiniteNumber(body.veg, "veg");
-    if ("base_amount" in body) patch.baseAmount = nullableNumber(body.base_amount, "base_amount");
+    if ("base_amount" in body) patch.baseAmount = nullablePositiveNumber(body.base_amount, "base_amount");
     if ("measure_unit" in body) patch.measureUnit = nullableString(body.measure_unit, "measure_unit");
 
     try {

@@ -332,6 +332,53 @@ describe("POST /api/admin/food-items", () => {
     expect(foodDictionaryRepository.items.size).toBe(0);
   });
 
+  it("rejects a zero base_amount, as 400, creating nothing", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request("/api/admin/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...validSharedBody, base_amount: 0, measure_unit: "g" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(foodDictionaryRepository.items.size).toBe(0);
+  });
+
+  it("rejects a negative base_amount, as 400, creating nothing", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request("/api/admin/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...validSharedBody, base_amount: -50, measure_unit: "g" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(foodDictionaryRepository.items.size).toBe(0);
+  });
+
+  it("accepts a positive base_amount together with measure_unit, as 201", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request("/api/admin/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...validSharedBody, base_amount: 50, measure_unit: "g" }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.base_amount).toBe(50);
+    expect(body.measure_unit).toBe("g");
+  });
+
   it("without an Authorization header, refuses as 401", async () => {
     const app = buildApp({
       userRepository: new InMemoryUserRepository(),
@@ -535,6 +582,100 @@ describe("PATCH /api/admin/food-items/:id", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.base_amount).toBeNull();
     expect(body.measure_unit).toBeNull();
+  });
+
+  it("rejects setting base_amount to 0, as 400, leaving the item unchanged", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const item = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/50g",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: 50,
+      measureUnit: "g",
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request(`/api/admin/food-items/${item.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_amount: 0 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(foodDictionaryRepository.items.get(item.id)).toMatchObject({ baseAmount: 50, measureUnit: "g" });
+  });
+
+  it("rejects setting a negative base_amount, as 400, leaving the item unchanged", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const item = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/50g",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: 50,
+      measureUnit: "g",
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request(`/api/admin/food-items/${item.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_amount: -10 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(foodDictionaryRepository.items.get(item.id)).toMatchObject({ baseAmount: 50, measureUnit: "g" });
+  });
+
+  it("accepts setting a positive base_amount, as 200", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const item = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "飯/50g",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: 50,
+      measureUnit: "g",
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request(`/api/admin/food-items/${item.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_amount: 100 }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.base_amount).toBe(100);
   });
 
   it("as a non-administrator, refuses as 403, leaving the item unchanged", async () => {

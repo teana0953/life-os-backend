@@ -154,6 +154,14 @@ export function nullableNumber(value: unknown, field: string): number | null {
   return requireFiniteNumber(value, field);
 }
 
+/** A nullable number field present in the body; `null` stays `null`, otherwise a finite number greater than 0. */
+export function nullablePositiveNumber(value: unknown, field: string): number | null {
+  if (value === null) return null;
+  const n = requireFiniteNumber(value, field);
+  if (n <= 0) throw new BadRequestError(`${field} must be greater than 0`);
+  return n;
+}
+
 /** A calendar month `YYYY-MM` (01-12); throws otherwise. */
 export function requireMonth(value: unknown, field = "month"): string {
   const s = requireString(value, field);
