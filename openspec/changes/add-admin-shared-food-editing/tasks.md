@@ -15,17 +15,17 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 1. Admin flag on the user record
 
-- [ ] 1.1 Add `isAdmin: boolean` to `src/contexts/user/domain/user.ts` (doc comment:
+- [x] 1.1 Add `isAdmin: boolean` to `src/contexts/user/domain/user.ts` (doc comment:
       false by default; granted out of band by direct data change).
-- [ ] 1.2 Add `isAdmin: boolean("is_admin").notNull().default(false)` to the `users`
+- [x] 1.2 Add `isAdmin: boolean("is_admin").notNull().default(false)` to the `users`
       table in `src/shared/db/schema.ts`.
-- [ ] 1.3 Generate the migration with `npm run db:generate` and commit the produced
+- [x] 1.3 Generate the migration with `npm run db:generate` and commit the produced
       `drizzle/00xx_*.sql` + `drizzle/meta` updates. Verify the generated SQL is a
       single `ALTER TABLE "users" ADD COLUMN "is_admin" boolean DEFAULT false NOT NULL`
       (no destructive statement); do NOT hand-write the file.
-- [ ] 1.4 Map the column in `src/contexts/user/adapters/drizzle-user-repository.ts`
+- [x] 1.4 Map the column in `src/contexts/user/adapters/drizzle-user-repository.ts`
       (`toDomain` / the insert-returning path), so `getOrCreate` and `getById` return it.
-- [ ] 1.5 Fix every existing `User` object literal in `src/` and `test/` that now
+- [x] 1.5 Fix every existing `User` object literal in `src/` and `test/` that now
       misses `isAdmin` (grep for `firebaseUid:` in test files). This is a compile
       error, invisible to `npm test` — confirm with `npm run typecheck`.
 

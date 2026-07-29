@@ -13,6 +13,7 @@ function toDomain(row: UserRow): User {
     email: row.email,
     displayName: row.displayName,
     timezone: row.timezone,
+    isAdmin: row.isAdmin,
     createdAt: row.createdAt,
   };
 }

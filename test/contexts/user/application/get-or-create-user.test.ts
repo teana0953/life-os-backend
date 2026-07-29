@@ -21,6 +21,7 @@ class InMemoryUserRepository implements UserRepository {
       email: input.email,
       displayName: input.displayName,
       timezone: "Asia/Taipei",
+      isAdmin: false,
       createdAt: new Date(),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);

@@ -8,6 +8,7 @@ export const users = pgTable("users", {
   // IANA zone used for all reminder time-of-day evaluation (D6b in
   // add-medication-reminders/design.md); defaults to the primary user's zone.
   timezone: text("timezone").notNull().default("Asia/Taipei"),
+  isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
