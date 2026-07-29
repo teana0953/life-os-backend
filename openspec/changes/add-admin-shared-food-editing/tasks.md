@@ -87,15 +87,15 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 4. Admin authorization
 
-- [ ] 4.1 Test first — `resolveAdminUser(userRepository, claims)` returns the user
+- [x] 4.1 Test first — `resolveAdminUser(userRepository, claims)` returns the user
       when `isAdmin` is true and `null` when it is false (get-or-create still runs, as
       with `resolveUserId`).
-- [ ] 4.2 Implement `resolveAdminUser` in `src/adapters/http/current-user.ts`
+- [x] 4.2 Implement `resolveAdminUser` in `src/adapters/http/current-user.ts`
       alongside `resolveUserId` (no exception flow; `null` means forbidden).
 
 ## 5. Shared validation helpers (prerequisite for PATCH semantics)
 
-- [ ] 5.1 Move `nullableString` and `nullableNumber` from
+- [x] 5.1 Move `nullableString` and `nullableNumber` from
       `src/adapters/http/routes/care.ts:44,51` into
       `src/adapters/http/validation.ts` as exported helpers, and import them in
       `care.ts`. Pure move — no behavior change; `care` tests stay green as-is.

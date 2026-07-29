@@ -141,6 +141,19 @@ export function optionalBooleanOrUndefined(value: unknown, field: string): boole
   return value;
 }
 
+/** A nullable string field present in the body; `null` stays `null`, a non-string throws 400. */
+export function nullableString(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new BadRequestError(`${field} must be a string`);
+  return value;
+}
+
+/** A nullable number field present in the body; `null` stays `null`, otherwise a finite number. */
+export function nullableNumber(value: unknown, field: string): number | null {
+  if (value === null) return null;
+  return requireFiniteNumber(value, field);
+}
+
 /** A calendar month `YYYY-MM` (01-12); throws otherwise. */
 export function requireMonth(value: unknown, field = "month"): string {
   const s = requireString(value, field);
