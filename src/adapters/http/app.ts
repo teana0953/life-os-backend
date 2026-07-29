@@ -20,6 +20,10 @@ import type { CareLogRepository } from "../../contexts/notifications/domain/care
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
+  createCreateSharedFoodItemHandler,
+  createUpdateSharedFoodItemHandler,
+} from "./routes/admin-food-dictionary";
+import {
   createGetDailyTargetHandler,
   createSetDailyTargetHandler,
 } from "./routes/daily-target";
@@ -170,6 +174,8 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/food-items", authMiddleware, createCustomFoodItemHandler(foodDictionaryOptions));
   app.post("/api/food-items/:id/favorite", authMiddleware, createFavoriteFoodItemHandler(foodDictionaryOptions));
   app.delete("/api/food-items/:id/favorite", authMiddleware, createUnfavoriteFoodItemHandler(foodDictionaryOptions));
+  app.post("/api/admin/food-items", authMiddleware, createCreateSharedFoodItemHandler(foodDictionaryOptions));
+  app.patch("/api/admin/food-items/:id", authMiddleware, createUpdateSharedFoodItemHandler(foodDictionaryOptions));
 
   const mealOptions = {
     userRepository: options.userRepository,

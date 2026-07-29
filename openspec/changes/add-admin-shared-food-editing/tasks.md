@@ -105,7 +105,7 @@ green `npm test` as proof that the fakes are up to date.
 
 ## 6. HTTP routes
 
-- [ ] 6.1 Test first — `test/adapters/http/admin-food-dictionary.test.ts`, driving the
+- [x] 6.1 Test first — `test/adapters/http/admin-food-dictionary.test.ts`, driving the
       app the way `test/adapters/http/user-timezone.test.ts` does (fake repositories,
       fake verifier):
       - `POST /api/admin/food-items` as an admin → `201`, response `owner_user_id`
@@ -123,7 +123,7 @@ green `npm test` as proof that the fakes are up to date.
       - `PATCH` as a non-admin → `403`, item unchanged;
       - both routes without an `Authorization` header → `401` (auth middleware runs
         before the admin check).
-- [ ] 6.2 Implement the handlers in
+- [x] 6.2 Implement the handlers in
       `src/adapters/http/routes/admin-food-dictionary.ts`, reusing the existing
       `toJson` shape (export it from `routes/food-dictionary.ts` rather than
       duplicating it). The PATCH handler distinguishes "key absent" from "key present
@@ -133,10 +133,10 @@ green `npm test` as proof that the fakes are up to date.
       `:id` that is not a well-formed UUID as `404` before touching the repository
       (`food_item.id` is a uuid column — passing garbage would raise Postgres 22P02
       and surface as a 500).
-- [ ] 6.3 Wire both routes in `src/adapters/http/app.ts` behind `authMiddleware`,
+- [x] 6.3 Wire both routes in `src/adapters/http/app.ts` behind `authMiddleware`,
       next to the existing `/api/food-items` block, and inject them from
       `src/index.ts` if the composition root needs it.
-- [ ] 6.4 Test first, then implement — `GET /api/me` returns `is_admin`
+- [x] 6.4 Test first, then implement — `GET /api/me` returns `is_admin`
       (`src/adapters/http/routes/me.ts` serializes fields one by one; add
       `is_admin: user.isAdmin`). Cover both an admin and a non-admin caller.
 
