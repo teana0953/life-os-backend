@@ -120,17 +120,20 @@ export interface SeedResult {
 
 /**
  * Inserts the seed rows as shared (owner_user_id = null) food_item rows,
- * skipping any row whose name is already among the existing shared items
- * (D11 in design.md): re-running the seed never modifies or removes an
- * existing shared row, so administrator corrections and admin-created shared
- * items survive. `SEED_ROWS` itself has no duplicate names, so name is a
- * usable key.
+ * skipping any row whose seed key is already among the existing shared
+ * items' seed keys (D11 in design.md, sharpened by design.md's seed-key
+ * change): re-running the seed never modifies or removes an existing shared
+ * row, so administrator corrections and admin-created shared items survive.
+ * The seed key is the seed row's `name` at insert time and never changes
+ * afterwards, so a later administrator rename of the item's `name` does not
+ * cause it to be re-inserted. An administrator-created shared item or a
+ * user's custom item has a null seed key and so never suppresses a seed row.
  */
 export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS): Promise<SeedResult> {
-  const existing = await db.select({ name: foodItem.name }).from(foodItem).where(isNull(foodItem.ownerUserId));
-  const existingNames = new Set(existing.map((row) => row.name));
+  const existing = await db.select({ seedKey: foodItem.seedKey }).from(foodItem).where(isNull(foodItem.ownerUserId));
+  const existingSeedKeys = new Set(existing.map((row) => row.seedKey));
 
-  const rowsToInsert = rows.filter((row) => !existingNames.has(row.name));
+  const rowsToInsert = rows.filter((row) => !existingSeedKeys.has(row.name));
   const skipped = rows.length - rowsToInsert.length;
 
   const values = rowsToInsert.map((row) => {
@@ -138,6 +141,7 @@ export async function seedFoodDictionary(db: Db, rows: FoodSeedRow[] = SEED_ROWS
     return {
       ownerUserId: null,
       name: item.name,
+      seedKey: item.name,
       carbG: String(item.carbG),
       proteinG: String(item.proteinG),
       fatG: String(item.fatG),
