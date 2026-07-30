@@ -29,9 +29,9 @@ share the same seed key.
 
 Re-running the seed SHALL preserve the shared catalog as it currently stands: it
 SHALL insert only the rows whose **seed key** is not already present among the
-existing shared items — so an item whose name an administrator has since corrected
-is still recognized as already seeded — and SHALL NOT modify or remove any
-existing shared item, so that administrator corrections and
+existing shared items (a user's private custom item never suppresses a seed row) —
+so an item whose name an administrator has since corrected is still recognized as
+already seeded — and SHALL NOT modify or remove any existing shared item, so that administrator corrections and
 administrator-created shared items survive. A destructive full refresh (discard
 the shared catalog and reinsert every row) SHALL remain available only when
 explicitly requested by the operator.
