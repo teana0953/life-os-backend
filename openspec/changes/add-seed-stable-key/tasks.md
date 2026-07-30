@@ -10,18 +10,18 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
 
 ## 1. Schema + migration
 
-- [ ] 1.1 Add `seedKey: text("seed_key")` (nullable) to `foodItem` in
+- [x] 1.1 Add `seedKey: text("seed_key")` (nullable) to `foodItem` in
       `src/shared/db/schema.ts`, with a short comment: set for seed-created rows,
       null for administrator-created shared items and users' custom items; it is the
       seed's identity key and never changes when `name` is corrected.
-- [ ] 1.2 Add a partial unique index in the same table definition —
+- [x] 1.2 Add a partial unique index in the same table definition —
       `uniqueIndex("food_item_seed_key_key").on(table.seedKey).where(sql\`seed_key is not null\`)`
       Both `uniqueIndex` and `sql` are new imports here: `uniqueIndex` from
       `drizzle-orm/pg-core` (schema.ts:1 imports `index`/`unique` from there but not
       `uniqueIndex`) and `sql` from `drizzle-orm` (the file has no `drizzle-orm`
       import line yet — add one). Name the index in the file's existing `_idx` style
       rather than `_key`.
-- [ ] 1.3 Generate the migration with `npm run db:generate` — do NOT hand-write the
+- [x] 1.3 Generate the migration with `npm run db:generate` — do NOT hand-write the
       ADD COLUMN or the index. drizzle-kit emits exactly two statements, in this
       order: `ALTER TABLE "food_item" ADD COLUMN "seed_key" text;` then
       `CREATE UNIQUE INDEX "food_item_seed_key_key" ...`. **Insert the backfill by
@@ -29,7 +29,7 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
       index. Precedents for a hand-written statement inside a generated migration:
       `drizzle/0004_chubby_tomorrow_man.sql:6-7` (same `food_item` table) and
       `drizzle/0016_wealthy_peter_parker.sql:17-21`.
-- [ ] 1.4 The backfill must be the **defensive** form — a bare
+- [x] 1.4 The backfill must be the **defensive** form — a bare
       `SET seed_key = name WHERE owner_user_id IS NULL` is not acceptable:
       ```sql
       UPDATE "food_item" f SET "seed_key" = f."name"
@@ -49,12 +49,12 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
       `seed_key` is one the next seed run will insert again (a third row with that
       name), so the situation still needs a human to clean up; the backfill only keeps
       the deployment from dying.
-- [ ] 1.5 Do NOT run `npm run db:migrate` or `npm run db:seed` — they hit the real
+- [x] 1.5 Do NOT run `npm run db:migrate` or `npm run db:seed` — they hit the real
       database; CI runs the migration on merge.
 
 ## 2. Seed keys off `seed_key`
 
-- [ ] 2.1 Test first — `test/contexts/health/adapters/seed/food-dictionary-seed.test.ts`.
+- [x] 2.1 Test first — `test/contexts/health/adapters/seed/food-dictionary-seed.test.ts`.
       Note the existing `Db` double `fakeDbWithExistingSharedNames` (lines ~207-221)
       **cannot be extended**: it ignores the select projection and returns
       `existingNames.map((name) => ({ name }))`, so once the implementation reads
@@ -68,20 +68,20 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
       - every inserted row carries `seedKey` equal to its seed row's name;
       - empty catalog still inserts all rows; all-keys-present still inserts none;
         `{ inserted, skipped }` keeps its shape.
-- [ ] 2.2 Implement in `src/contexts/health/adapters/seed/food-dictionary-seed.ts`:
+- [x] 2.2 Implement in `src/contexts/health/adapters/seed/food-dictionary-seed.ts`:
       select `seed_key` instead of `name` for the existing-set query (keep the
       `isNull(foodItem.ownerUserId)` scoping — a user's private custom item must still
       never suppress a seed row), compare `row.name` against that set, and write
       `seedKey: row.name` in the inserted values. Update the function's doc comment,
       which currently explains the name-based rule.
-- [ ] 2.3 Check `src/contexts/health/adapters/seed/run-seed.ts`: the `--force` path
+- [x] 2.3 Check `src/contexts/health/adapters/seed/run-seed.ts`: the `--force` path
       deletes shared rows then calls `seedFoodDictionary`, so it inherits the new
       behavior — confirm there is no separate insert path needing the column, and
       leave the file alone if so.
 
 ## 3. Keep the key out of the API
 
-- [ ] 3.1 Test first — assert what is actually observable through the HTTP seam (the
+- [x] 3.1 Test first — assert what is actually observable through the HTTP seam (the
       admin tests drive the app with in-memory `FoodDictionaryRepository` fakes, and
       per 3.3 `seedKey` is NOT on the `FoodItem` domain type, so there is no field on
       the returned item to assert against):
@@ -92,11 +92,11 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
         body is treated as an empty patch → 400);
       - no admin response body contains a `seed_key` key;
       - the dictionary search/read response shape likewise has no `seed_key`.
-- [ ] 3.2 Implement whatever those tests require — expected to be nothing beyond
+- [x] 3.2 Implement whatever those tests require — expected to be nothing beyond
       leaving `toJson` (`src/adapters/http/routes/food-dictionary.ts`) and both admin
       handlers untouched, since they whitelist fields rather than echo the body. Do
       NOT add `seedKey` to `CreateSharedFoodItemInput` or `UpdateSharedFoodItemPatch`.
-- [ ] 3.3 Do NOT add `seedKey` to the `FoodItem` domain type: `toDomain`
+- [x] 3.3 Do NOT add `seedKey` to the `FoodItem` domain type: `toDomain`
       (`src/contexts/health/adapters/drizzle-food-dictionary-repository.ts`) is an
       explicit whitelist mapper, so ignoring the new column is a no-op, nothing in
       domain or application logic reads it, and adding it would force every fake in
@@ -104,10 +104,10 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
 
 ## 4. Verify
 
-- [ ] 4.1 `npm test` green (see the passing summary, not merely no red).
-- [ ] 4.2 `npm run typecheck` clean.
-- [ ] 4.3 `npx openspec validate add-seed-stable-key --strict` passes.
-- [ ] 4.4 Re-read the generated migration: ADD COLUMN → backfill → partial unique
+- [x] 4.1 `npm test` green (see the passing summary, not merely no red).
+- [x] 4.2 `npm run typecheck` clean.
+- [x] 4.3 `npx openspec validate add-seed-stable-key --strict` passes.
+- [x] 4.4 Re-read the generated migration: ADD COLUMN → backfill → partial unique
       index, in that order, no destructive statement anywhere.
 - [ ] 4.5 **Immediately before merging** (not at implementation time), re-verify the
       backfill's precondition against the live database, because the backfill runs
