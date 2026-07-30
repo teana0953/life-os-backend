@@ -109,7 +109,7 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
 - [x] 4.3 `npx openspec validate add-seed-stable-key --strict` passes.
 - [x] 4.4 Re-read the generated migration: ADD COLUMN → backfill → partial unique
       index, in that order, no destructive statement anywhere.
-- [ ] 4.5 **Immediately before merging** (not at implementation time), re-verify the
+- [x] 4.5 **Immediately before merging** (not at implementation time), re-verify the
       backfill's precondition against the live database, because the backfill runs
       unattended on merge and its correctness depends on database state, not on code:
       every shared row (`owner_user_id IS NULL`) still matches a `SEED_ROWS` name
@@ -125,3 +125,8 @@ admin endpoints' behavior, no change to `--force` semantics, no API surface chan
       `src/contexts/health/adapters/seed/run-seed.ts:18-31` does), comparing
       `select name from food_item where owner_user_id is null` against `SEED_ROWS`,
       then delete the script. Record the result in the PR body.
+
+      **Result (2026-07-30, run against the live database):** 271 shared rows,
+      271 seed rows, 0 shared rows absent from the seed file (no rename, no
+      administrator-created shared item), 0 seed rows missing, 0 duplicate names —
+      PRECONDITION HOLDS, so the backfill maps exactly the seeded rows.
