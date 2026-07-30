@@ -76,13 +76,23 @@ countable household quantifiers (顆, 碗, 杯, 片, 個, 條, 隻, 根, 湯匙,
 fraction (`3分之2碗`), a packaging count (`290mL/1瓶`, `/1盒`, `/1包`, `/1罐`), a
 vague size (`掌心大`, `2指寬`), `份`, or `卡` — SHALL leave both null.
 
+Each seeded item SHALL record a **stable seed key** identifying the seed row it
+came from. The key SHALL NOT change when the item's name is later corrected, and
+SHALL be absent for an item that did not come from the seed (an
+administrator-created shared item, or a user's custom item). No two items SHALL
+share the same seed key.
+
 Re-running the seed SHALL preserve the shared catalog as it currently stands: it
-SHALL insert only the rows whose names are not already present **among the
-existing shared items** (a user's private custom item with the same name does not
-suppress a seed row) and SHALL NOT modify or remove any existing shared item, so
-that administrator corrections and administrator-created shared items survive. A destructive full refresh (discard
+SHALL insert only the rows whose **seed key** is not already present among the
+existing shared items (a user's private custom item never suppresses a seed row) —
+so an item whose name an administrator has since corrected is still recognized as
+already seeded — and SHALL NOT modify or remove any existing shared item, so that administrator corrections and
+administrator-created shared items survive. A destructive full refresh (discard
 the shared catalog and reinsert every row) SHALL remain available only when
 explicitly requested by the operator.
+
+The seed key SHALL NOT be settable or modifiable through the API, and SHALL NOT
+appear in the food item representation returned to clients.
 
 #### Scenario: Seed stores both axes
 - **WHEN** the seed loads a row recorded as 主食 1 份
@@ -111,6 +121,18 @@ explicitly requested by the operator.
 #### Scenario: Explicit full refresh still replaces the catalog
 - **WHEN** the operator explicitly requests a destructive refresh
 - **THEN** the shared catalog is discarded and reinserted from the seed rows
+
+#### Scenario: A renamed seeded item is not re-inserted
+- **WHEN** an administrator corrects the name of a seeded item and the seed is then re-run
+- **THEN** no item is inserted and the renamed item remains the only copy of that seed row
+
+#### Scenario: Seeded items carry their key, other shared items do not
+- **WHEN** the seed creates an item and an administrator separately creates a shared item
+- **THEN** the seeded item carries a seed key and the administrator-created item carries none
+
+#### Scenario: Seed key is not client-visible or client-settable
+- **WHEN** a client reads a food item, or an administrator creates or edits one
+- **THEN** the seed key is absent from the response and cannot be supplied or changed by the request
 
 ### Requirement: User-custom food items
 
