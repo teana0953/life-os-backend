@@ -159,6 +159,9 @@ class InMemoryUserRepository implements UserRepository {
 class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   items = new Map<string, FoodItem>();
   private nextId = 1;
+  /** Records the raw argument each call received, so a test can assert on exactly what crossed the port boundary (e.g. that no `seedKey` property leaked through). */
+  lastCreateSharedInput: CreateSharedFoodItemInput | null = null;
+  lastUpdateSharedPatch: UpdateSharedFoodItemPatch | null = null;
 
   seed(item: Omit<FoodItem, "id" | "createdAt"> & { id?: string }): FoodItem {
     const id = item.id ?? `00000000-0000-0000-0000-${String(this.nextId++).padStart(12, "0")}`;
@@ -196,10 +199,12 @@ class InMemoryFoodDictionaryRepository implements FoodDictionaryRepository {
   }
 
   async createShared(input: CreateSharedFoodItemInput): Promise<FoodItem> {
+    this.lastCreateSharedInput = input;
     return this.seed({ ...input, ownerUserId: null });
   }
 
   async updateSharedById(id: string, patch: UpdateSharedFoodItemPatch): Promise<FoodItem | null> {
+    this.lastUpdateSharedPatch = patch;
     const item = this.items.get(id);
     if (!item || item.ownerUserId !== null) return null;
     const updated: FoodItem = { ...item };
@@ -392,6 +397,23 @@ describe("POST /api/admin/food-items", () => {
     });
 
     expect(res.status).toBe(401);
+  });
+
+  it("accepts a body carrying seed_key as 201, but does not pass it through to the repository or the response", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request("/api/admin/food-items", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...validSharedBody, seed_key: "飯/1碗" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(foodDictionaryRepository.lastCreateSharedInput).not.toHaveProperty("seedKey");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("seed_key");
   });
 });
 
@@ -722,5 +744,102 @@ describe("PATCH /api/admin/food-items/:id", () => {
     });
 
     expect(res.status).toBe(401);
+  });
+
+  it("treats seed_key alone in the body as an empty patch, rejected as 400, leaving the item unchanged", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const item = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "白吐司/1片",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: null,
+      measureUnit: null,
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request(`/api/admin/food-items/${item.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ seed_key: "白吐司/1片" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(foodDictionaryRepository.items.get(item.id)?.name).toBe("白吐司/1片");
+  });
+
+  it("accepts a seed_key alongside a real field as 200, but does not pass seed_key through to the repository or the response", async () => {
+    const userRepository = new InMemoryUserRepository(new Set(["uid-admin"]));
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    const item = foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "白吐司/1片",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: null,
+      measureUnit: null,
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request(`/api/admin/food-items/${item.id}`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${await tokenFor("uid-admin")}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "全麥吐司/1片", seed_key: "白吐司/1片" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(foodDictionaryRepository.lastUpdateSharedPatch).not.toHaveProperty("seedKey");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("seed_key");
+  });
+});
+
+describe("GET /api/food-items search response shape", () => {
+  it("does not include seed_key on any returned item", async () => {
+    const userRepository = new InMemoryUserRepository();
+    const foodDictionaryRepository = new InMemoryFoodDictionaryRepository();
+    foodDictionaryRepository.seed({
+      ownerUserId: null,
+      name: "白吐司/1片",
+      carbG: 15,
+      proteinG: 2,
+      fatG: 1,
+      sugarG: 1,
+      fiberG: 1,
+      kcal: 80,
+      staple: 1,
+      meat: 0,
+      fruit: 0,
+      veg: 0,
+      baseAmount: null,
+      measureUnit: null,
+    });
+    const app = buildApp({ userRepository, foodDictionaryRepository });
+
+    const res = await app.request("/api/food-items?q=白吐司", {
+      headers: { Authorization: `Bearer ${await tokenFor("uid-user")}` },
+    });
+
+    expect(res.status).toBe(200);
+    const results = (await res.json()) as Record<string, unknown>[];
+    expect(results.length).toBeGreaterThan(0);
+    for (const item of results) expect(item).not.toHaveProperty("seed_key");
   });
 });
