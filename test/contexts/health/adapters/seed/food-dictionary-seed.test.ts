@@ -199,16 +199,18 @@ describe("seed measure-basis coverage over the 271-row catalog", () => {
 /**
  * Hand-rolled Db double (no real database), following
  * test/contexts/notifications/adapters/drizzle-care-item-repository.test.ts:10-21.
- * `select().from().where()` returns the given existing shared item names;
- * `insert().values()` records what was inserted rather than writing anywhere.
- * There is deliberately no `update`/`delete` implementation, so a re-run that
- * ever touched an existing row would throw instead of silently passing.
+ * `select().from().where()` returns the given existing shared items' seed
+ * keys (each `null | string`, matching a real row's `seedKey` column, since
+ * an administrator-created shared row has a null seed_key); `insert().values()`
+ * records what was inserted rather than writing anywhere. There is
+ * deliberately no `update`/`delete` implementation, so a re-run that ever
+ * touched an existing row would throw instead of silently passing.
  */
-function fakeDbWithExistingSharedNames(existingNames: string[], onInsertValues: (values: unknown[]) => void): Db {
+function fakeDbWithExistingSeedKeys(existingSeedKeys: (string | null)[], onInsertValues: (values: unknown[]) => void): Db {
   return {
     select: () => ({
       from: () => ({
-        where: () => existingNames.map((name) => ({ name })),
+        where: () => existingSeedKeys.map((seedKey) => ({ seedKey })),
       }),
     }),
     insert: () => ({
@@ -227,9 +229,9 @@ describe("seedFoodDictionary", () => {
     { id: 3, name: "熟肉(雞豬牛羊魚)/30g", staple: 0, meat: 1, fruit: 0, veg: 0 },
   ];
 
-  it("inserts only the rows whose name is not already among the existing shared items", async () => {
+  it("inserts only the rows whose seed key is not already among the existing shared items' seed keys", async () => {
     let inserted: unknown[] = [];
-    const db = fakeDbWithExistingSharedNames(["飯/1碗"], (values) => {
+    const db = fakeDbWithExistingSeedKeys(["飯/1碗"], (values) => {
       inserted = values;
     });
 
@@ -240,10 +242,50 @@ describe("seedFoodDictionary", () => {
     expect(result).toEqual({ inserted: 2, skipped: 1 });
   });
 
-  it("leaves every existing shared row untouched: no insert call at all when every name already exists", async () => {
+  it("skips a shared row whose seed_key matches a seed row even though its name has since been changed (the regression this change fixes)", async () => {
     let insertCalled = false;
-    const db = fakeDbWithExistingSharedNames(
-      ["飯/1碗", "香蕉/1根", "熟肉(雞豬牛羊魚)/30g"],
+    // The shared row's current `name` is irrelevant here — the fake never
+    // models it, because the production query no longer selects `name` at
+    // all — only its seed_key ("飯/1碗") is compared.
+    const db = fakeDbWithExistingSeedKeys(["飯/1碗"], () => {
+      insertCalled = true;
+    });
+
+    const result = await seedFoodDictionary(db, [rows[0]]);
+
+    expect(insertCalled).toBe(false);
+    expect(result).toEqual({ inserted: 0, skipped: 1 });
+  });
+
+  it("does not suppress a seed row when an existing shared row's seed_key is null, even though its name matches (name is no longer the key)", async () => {
+    let inserted: unknown[] = [];
+    const db = fakeDbWithExistingSeedKeys([null], (values) => {
+      inserted = values;
+    });
+
+    const result = await seedFoodDictionary(db, [rows[0]]);
+
+    expect(inserted).toHaveLength(1);
+    expect(result).toEqual({ inserted: 1, skipped: 0 });
+  });
+
+  it("every inserted row carries seedKey equal to its seed row's name", async () => {
+    let inserted: unknown[] = [];
+    const db = fakeDbWithExistingSeedKeys([], (values) => {
+      inserted = values;
+    });
+
+    await seedFoodDictionary(db, rows);
+
+    expect((inserted as { name: string; seedKey: string }[]).map((v) => ({ name: v.name, seedKey: v.seedKey }))).toEqual(
+      rows.map((row) => ({ name: row.name, seedKey: row.name })),
+    );
+  });
+
+  it("leaves every existing shared row untouched: no insert call at all when every seed key already exists", async () => {
+    let insertCalled = false;
+    const db = fakeDbWithExistingSeedKeys(
+      rows.map((row) => row.name),
       () => {
         insertCalled = true;
       },
@@ -257,7 +299,7 @@ describe("seedFoodDictionary", () => {
 
   it("inserts every row, and reports zero skipped, when none already exist", async () => {
     let inserted: unknown[] = [];
-    const db = fakeDbWithExistingSharedNames([], (values) => {
+    const db = fakeDbWithExistingSeedKeys([], (values) => {
       inserted = values;
     });
 

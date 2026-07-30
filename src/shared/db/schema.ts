@@ -1,4 +1,5 @@
-import { boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -31,16 +32,26 @@ const portionColumns = {
   veg: numeric("veg").notNull(),
 };
 
-export const foodItem = pgTable("food_item", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  ownerUserId: uuid("owner_user_id").references(() => users.id),
-  name: text("name").notNull(),
-  ...nutrientColumns,
-  ...portionColumns,
-  baseAmount: numeric("base_amount"),
-  measureUnit: text("measure_unit"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const foodItem = pgTable(
+  "food_item",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerUserId: uuid("owner_user_id").references(() => users.id),
+    name: text("name").notNull(),
+    ...nutrientColumns,
+    ...portionColumns,
+    baseAmount: numeric("base_amount"),
+    measureUnit: text("measure_unit"),
+    // Set for seed-created rows, null for administrator-created shared items
+    // and users' custom items; it is the seed's identity key and never
+    // changes when `name` is corrected. Intentionally NOT surfaced on the
+    // FoodItem domain type: nothing in domain/application reads it, and
+    // toDomain's whitelist mapping already ignores it (task 3.3).
+    seedKey: text("seed_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("food_item_seed_key_idx").on(t.seedKey).where(sql`seed_key is not null`)],
+);
 
 export const foodFavorite = pgTable(
   "food_favorite",
