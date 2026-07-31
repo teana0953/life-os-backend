@@ -21,4 +21,4 @@
 
 ## 4. 收尾
 
-- [ ] 4.1 `npm test` + `npm run typecheck` 全綠;migration 已 commit。
+- [x] 4.1 `npm test` + `npm run typecheck` 全綠;migration 已 commit。
