@@ -24,6 +24,19 @@ describe("getNetWorthTrend", () => {
     ]);
   });
 
+  it("still counts an archived account's existing snapshots in the trend (archive is not retroactive)", async () => {
+    const asset = await repo.createAccount({ userId: "user-1", kind: "asset", name: "股票" });
+    const oldCash = await repo.createAccount({ userId: "user-1", kind: "asset", name: "舊帳戶" });
+    await repo.upsertSnapshot({ userId: "user-1", accountId: asset.id, month: "2026-01", value: 100000 });
+    await repo.upsertSnapshot({ userId: "user-1", accountId: oldCash.id, month: "2026-01", value: 50000 });
+    // Archive AFTER the January snapshot exists.
+    oldCash.archived = true;
+
+    const points = await getNetWorthTrend(repo, "user-1", "2026-01", "2026-01");
+    // 100000 + 50000 must stay; the January point must not shrink to 100000.
+    expect(points).toEqual([{ month: "2026-01", netWorth: 150000 }]);
+  });
+
   it("returns an empty series for a range with no snapshots", async () => {
     const asset = await repo.createAccount({ userId: "user-1", kind: "asset", name: "股票" });
     await repo.upsertSnapshot({ userId: "user-1", accountId: asset.id, month: "2026-01", value: 100 });

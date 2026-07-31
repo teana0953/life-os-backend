@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createNetWorthAccount } from "../../../../src/contexts/finance/application/create-networth-account";
 import { listNetWorthAccounts } from "../../../../src/contexts/finance/application/list-networth-accounts";
 import { updateNetWorthAccount } from "../../../../src/contexts/finance/application/update-networth-account";
-import { NetWorthAccountNameConflict, NetWorthAccountNotFound } from "../../../../src/contexts/finance/domain/networth-errors";
+import {
+  NetWorthAccountNameConflict,
+  NetWorthAccountNotFound,
+  NetWorthInvalidKind,
+} from "../../../../src/contexts/finance/domain/networth-errors";
 import { InMemoryNetWorthRepository } from "../networth-fakes";
 
 let repo: InMemoryNetWorthRepository;
@@ -28,10 +32,10 @@ describe("createNetWorthAccount", () => {
     expect(account).toMatchObject({ kind: "asset", name: "加密貨幣", sortOrder: 0, archived: false });
   });
 
-  it("rejects an unknown kind", async () => {
+  it("rejects an unknown kind with NetWorthInvalidKind, not a name conflict", async () => {
     await expect(
-      createNetWorthAccount(repo, { userId: "user-1", kind: "savings" as never, name: "x" }),
-    ).rejects.toBeInstanceOf(NetWorthAccountNameConflict);
+      createNetWorthAccount(repo, { userId: "user-1", kind: "foo" as never, name: "x" }),
+    ).rejects.toBeInstanceOf(NetWorthInvalidKind);
   });
 
   it("rejects a duplicate name within the same kind as a name conflict, not a DB error", async () => {

@@ -6,3 +6,6 @@ export class NetWorthAccountArchived extends Error {}
 
 /** A create/rename collided with another of the user's accounts of the same kind (route maps this to 400). */
 export class NetWorthAccountNameConflict extends Error {}
+
+/** An account create supplied a `kind` outside the fixed `"asset" | "liability"` set (route maps this to 400). */
+export class NetWorthInvalidKind extends Error {}

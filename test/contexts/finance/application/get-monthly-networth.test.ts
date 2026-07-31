@@ -85,6 +85,33 @@ describe("getMonthlyNetWorth", () => {
     expect(result.growthRate).toBeCloseTo(-0.04, 4);
   });
 
+  it("still counts an archived account's existing snapshot in that month's totals (archive is not retroactive)", async () => {
+    const stock = await seedAccount("user-1", "asset", "股票");
+    const oldCash = await seedAccount("user-1", "asset", "舊帳戶");
+    await repo.upsertSnapshot({ userId: "user-1", accountId: stock.id, month: "2026-07", value: 100000 });
+    await repo.upsertSnapshot({ userId: "user-1", accountId: oldCash.id, month: "2026-07", value: 50000 });
+    // Archive the account AFTER it already has a July snapshot.
+    oldCash.archived = true;
+
+    const result = await getMonthlyNetWorth(repo, "user-1", "2026-07");
+    // The archived account's 50000 must remain in the total (not shrink to 100000).
+    expect(result.totalAsset).toBe(150000);
+    expect(result.netWorth).toBe(150000);
+    expect(result.accounts).toHaveLength(2);
+  });
+
+  it("returns zeroed totals with null prev/growth (no NaN) for a month with no snapshots at all", async () => {
+    await seedAccount("user-1", "asset", "股票");
+    const result = await getMonthlyNetWorth(repo, "user-1", "2026-07");
+    expect(result.totalAsset).toBe(0);
+    expect(result.totalLiability).toBe(0);
+    expect(result.netWorth).toBe(0);
+    expect(Number.isNaN(result.netWorth)).toBe(false);
+    expect(result.prevNetWorth).toBeNull();
+    expect(result.growthRate).toBeNull();
+    expect(result.accounts).toEqual([]);
+  });
+
   it("scopes to the requested user only", async () => {
     const mine = await seedAccount("user-1", "asset", "股票");
     const theirs = await seedAccount("user-2", "asset", "股票");

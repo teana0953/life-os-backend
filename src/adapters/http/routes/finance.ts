@@ -30,6 +30,7 @@ import {
   NetWorthAccountArchived,
   NetWorthAccountNameConflict,
   NetWorthAccountNotFound,
+  NetWorthInvalidKind,
 } from "../../../contexts/finance/domain/networth-errors";
 import type { NetWorthAccount } from "../../../contexts/finance/domain/networth-account";
 import type { NetWorthRepository } from "../../../contexts/finance/domain/networth-repository";
@@ -77,7 +78,8 @@ function mapFinanceError(err: unknown, c: Context): Response {
     err instanceof FinanceCategoryTypeMismatch ||
     err instanceof InvalidFinanceInputError ||
     err instanceof NetWorthAccountArchived ||
-    err instanceof NetWorthAccountNameConflict
+    err instanceof NetWorthAccountNameConflict ||
+    err instanceof NetWorthInvalidKind
   ) {
     throw new BadRequestError(err.message);
   }
