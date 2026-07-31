@@ -252,6 +252,17 @@ function buildApp(vapidPublicKey = "test-vapid-public-key") {
       delete: notImplemented,
       getMonthlySummaryRaw: notImplemented,
     },
+    financeBudgetRepository: {
+      upsert: notImplemented,
+      findByUserAndCategory: notImplemented,
+      delete: notImplemented,
+      listWithSpent: notImplemented,
+      getSpent: notImplemented,
+      tryRecordAlert: notImplemented,
+    },
+    budgetAlertNotifier: {
+      notify: notImplemented,
+    },
     vapidPublicKey,
     ping: async () => {},
   });

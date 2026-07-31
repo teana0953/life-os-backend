@@ -14,10 +14,10 @@
 
 ## 3. Adapters + HTTP
 
-- [ ] 3.1 `adapters/drizzle-finance-budget-repository.ts`(spent SQL 彙總 bigint cast;`tryRecordAlert` 用 `onConflictDoNothing().returning()` 看回列判斷;update 顯式 updatedAt)。
-- [ ] 3.2 `adapters/push-budget-alert-notifier.ts`:包 notifications 的 `PushSender`+`PushSubscriptionRepository`(照 send-test-push 慣例:expired 訂閱刪除、失敗計數);文案照 design(80/100 兩款,總額/分類兩式,不含金額)。
-- [ ] 3.3 `routes/finance.ts` +3 handlers(GET/PUT/DELETE budgets);`app.ts` 掛、`index.ts` 組線(組合 notifier)。
-- [ ] 3.4 route 測試(workers vitest 注入 fake):三 endpoint 401/400/404/happy、GET 進度形狀。
+- [x] 3.1 `adapters/drizzle-finance-budget-repository.ts`(spent SQL 彙總 bigint cast;`tryRecordAlert` 用 `onConflictDoNothing().returning()` 看回列判斷;update 顯式 updatedAt)。
+- [x] 3.2 `adapters/push-budget-alert-notifier.ts`:包 notifications 的 `PushSender`+`PushSubscriptionRepository`(照 send-test-push 慣例:expired 訂閱刪除、失敗計數);文案照 design(80/100 兩款,總額/分類兩式,不含金額)。
+- [x] 3.3 `routes/finance.ts` +3 handlers(GET/PUT/DELETE budgets);`app.ts` 掛、`index.ts` 組線(組合 notifier)。
+- [x] 3.4 route 測試(workers vitest 注入 fake):三 endpoint 401/400/404/happy、GET 進度形狀。
 
 ## 4. 收尾
 

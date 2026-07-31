@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import { createApp } from "./adapters/http/app";
+import { DrizzleFinanceBudgetRepository } from "./contexts/finance/adapters/drizzle-finance-budget-repository";
 import { DrizzleFinanceCategoryRepository } from "./contexts/finance/adapters/drizzle-finance-category-repository";
 import { DrizzleFinanceTransactionRepository } from "./contexts/finance/adapters/drizzle-finance-transaction-repository";
+import { PushBudgetAlertNotifier } from "./contexts/finance/adapters/push-budget-alert-notifier";
 import { DrizzleBodyProfileRepository } from "./contexts/health/adapters/drizzle-body-profile-repository";
 import { DrizzleBowelRepository } from "./contexts/health/adapters/drizzle-bowel-repository";
 import { DrizzleDailyTargetRepository } from "./contexts/health/adapters/drizzle-daily-target-repository";
@@ -78,6 +80,7 @@ function buildDeps(env: Env) {
     careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
     financeCategoryRepository: new DrizzleFinanceCategoryRepository(getDb),
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
+    financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -108,6 +111,8 @@ export default {
       careLogRepository: deps.careLogRepository,
       financeCategoryRepository: deps.financeCategoryRepository,
       financeTransactionRepository: deps.financeTransactionRepository,
+      financeBudgetRepository: deps.financeBudgetRepository,
+      budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {
