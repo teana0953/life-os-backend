@@ -1,5 +1,7 @@
 import { sql } from "drizzle-orm";
 import { createApp } from "./adapters/http/app";
+import { DrizzleFinanceCategoryRepository } from "./contexts/finance/adapters/drizzle-finance-category-repository";
+import { DrizzleFinanceTransactionRepository } from "./contexts/finance/adapters/drizzle-finance-transaction-repository";
 import { DrizzleBodyProfileRepository } from "./contexts/health/adapters/drizzle-body-profile-repository";
 import { DrizzleBowelRepository } from "./contexts/health/adapters/drizzle-bowel-repository";
 import { DrizzleDailyTargetRepository } from "./contexts/health/adapters/drizzle-daily-target-repository";
@@ -74,6 +76,8 @@ function buildDeps(env: Env) {
     careItemRepository: new DrizzleCareItemRepository(getDb),
     careLogRepository: new DrizzleCareLogRepository(getDb),
     careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
+    financeCategoryRepository: new DrizzleFinanceCategoryRepository(getDb),
+    financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -102,6 +106,8 @@ export default {
       pushSender: deps.pushSender,
       careItemRepository: deps.careItemRepository,
       careLogRepository: deps.careLogRepository,
+      financeCategoryRepository: deps.financeCategoryRepository,
+      financeTransactionRepository: deps.financeTransactionRepository,
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {

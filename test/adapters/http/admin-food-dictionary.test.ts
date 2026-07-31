@@ -268,6 +268,22 @@ function buildApp(options: { userRepository: UserRepository; foodDictionaryRepos
       upsert: notImplemented,
     },
     vapidPublicKey: "",
+    financeCategoryRepository: {
+      listByUser: notImplemented,
+      findById: notImplemented,
+      findByUserTypeName: notImplemented,
+      create: notImplemented,
+      update: notImplemented,
+      insertDefaultsIfMissing: notImplemented,
+    },
+    financeTransactionRepository: {
+      create: notImplemented,
+      findById: notImplemented,
+      listByUserAndRange: notImplemented,
+      update: notImplemented,
+      delete: notImplemented,
+      getMonthlySummaryRaw: notImplemented,
+    },
     ping: async () => {},
   });
 }

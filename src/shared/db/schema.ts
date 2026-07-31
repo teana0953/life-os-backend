@@ -335,6 +335,54 @@ export const careLog = pgTable(
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
 );
 
+// finance_category: per-user expense/income categories (add-finance-ledger
+// design.md). The unique index doubles as the concurrency guard for lazy
+// per-user default seeding (`ensureDefaultCategories`): concurrent seed
+// attempts race an `onConflictDoNothing` on (user_id, type, name) rather than
+// double-inserting.
+export const financeCategory = pgTable(
+  "finance_category",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    name: text("name").notNull(),
+    type: text("type").notNull(),
+    icon: text("icon").notNull().default("other"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    archived: boolean("archived").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("finance_category_user_type_name_idx").on(t.userId, t.type, t.name)],
+);
+
+// finance_transaction: a single expense/income record. `amount` is a positive
+// integer in the currency's minor-or-natural unit (TWD in 元, USD in cents —
+// design.md). `day` follows the mealEntry.day convention (a date, not a
+// timestamp).
+export const financeTransaction = pgTable(
+  "finance_transaction",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    type: text("type").notNull(),
+    amount: integer("amount").notNull(),
+    currency: text("currency").notNull(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => financeCategory.id),
+    day: date("day").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("finance_transaction_user_day_idx").on(t.userId, t.day)],
+);
+
 // care_occurrence: nag + send state for one slot, unique per slot so a
 // repeated/look-back tick never double-fires (D4/D5 in design.md).
 // last_notified_at now means "at least one push in that round actually

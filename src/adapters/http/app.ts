@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { FinanceCategoryRepository } from "../../contexts/finance/domain/finance-category-repository";
+import type { FinanceTransactionRepository } from "../../contexts/finance/domain/finance-transaction-repository";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { ChaodaysClient } from "../../contexts/health/domain/chaodays-client";
@@ -89,6 +91,16 @@ import {
   createListCareItemsHandler,
   createUpdateCareItemHandler,
 } from "./routes/care";
+import {
+  createCreateCategoryHandler,
+  createCreateTransactionHandler,
+  createDeleteTransactionHandler,
+  createGetSummaryHandler,
+  createListCategoriesHandler,
+  createListTransactionsHandler,
+  createUpdateCategoryHandler,
+  createUpdateTransactionHandler,
+} from "./routes/finance";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -127,6 +139,8 @@ export interface CreateAppOptions {
   vapidPublicKey: string;
   careItemRepository: CareItemRepository;
   careLogRepository: CareLogRepository;
+  financeCategoryRepository: FinanceCategoryRepository;
+  financeTransactionRepository: FinanceTransactionRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -330,6 +344,20 @@ export function createApp(options: CreateAppOptions) {
   app.put("/api/care/log", authMiddleware, createEditCareSlotHandler(careOptions));
   app.get("/api/care/today", authMiddleware, createGetCareTodayHandler(careOptions));
   app.get("/api/care/range", authMiddleware, createGetCareRangeHandler(careOptions));
+
+  const financeOptions = {
+    userRepository: options.userRepository,
+    financeCategoryRepository: options.financeCategoryRepository,
+    financeTransactionRepository: options.financeTransactionRepository,
+  };
+  app.get("/api/finance/transactions", authMiddleware, createListTransactionsHandler(financeOptions));
+  app.post("/api/finance/transactions", authMiddleware, createCreateTransactionHandler(financeOptions));
+  app.put("/api/finance/transactions/:id", authMiddleware, createUpdateTransactionHandler(financeOptions));
+  app.delete("/api/finance/transactions/:id", authMiddleware, createDeleteTransactionHandler(financeOptions));
+  app.get("/api/finance/categories", authMiddleware, createListCategoriesHandler(financeOptions));
+  app.post("/api/finance/categories", authMiddleware, createCreateCategoryHandler(financeOptions));
+  app.put("/api/finance/categories/:id", authMiddleware, createUpdateCategoryHandler(financeOptions));
+  app.get("/api/finance/summary", authMiddleware, createGetSummaryHandler(financeOptions));
 
   return app;
 }
