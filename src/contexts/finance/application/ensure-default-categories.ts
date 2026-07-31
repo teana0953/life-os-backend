@@ -11,8 +11,5 @@ import type { FinanceCategoryRepository } from "../domain/finance-category-repos
 export async function ensureDefaultCategories(repository: FinanceCategoryRepository, userId: string): Promise<void> {
   const existing = await repository.listByUser(userId);
   if (existing.length > 0) return;
-  await repository.insertDefaultsIfMissing(
-    userId,
-    DEFAULT_CATEGORIES.map((c) => ({ ...c, userId })),
-  );
+  await repository.insertDefaultsIfMissing(DEFAULT_CATEGORIES.map((c) => ({ ...c, userId })));
 }

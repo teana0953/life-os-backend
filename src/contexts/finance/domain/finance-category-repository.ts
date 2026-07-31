@@ -14,5 +14,5 @@ export interface FinanceCategoryRepository {
    * concurrency guard — this is the safety net behind the application-layer
    * "seed only if the user has none" check in `ensureDefaultCategories`).
    */
-  insertDefaultsIfMissing(userId: string, defaults: CreateFinanceCategoryInput[]): Promise<void>;
+  insertDefaultsIfMissing(defaults: CreateFinanceCategoryInput[]): Promise<void>;
 }

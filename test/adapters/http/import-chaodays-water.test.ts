@@ -289,6 +289,22 @@ function buildApp() {
       listByUserAndDateRange: notImplemented,
       upsert: notImplemented,
     },
+    financeCategoryRepository: {
+      listByUser: notImplemented,
+      findById: notImplemented,
+      findByUserTypeName: notImplemented,
+      create: notImplemented,
+      update: notImplemented,
+      insertDefaultsIfMissing: notImplemented,
+    },
+    financeTransactionRepository: {
+      create: notImplemented,
+      findById: notImplemented,
+      listByUserAndRange: notImplemented,
+      update: notImplemented,
+      delete: notImplemented,
+      getMonthlySummaryRaw: notImplemented,
+    },
     vapidPublicKey: "",
     ping: async () => {},
   });

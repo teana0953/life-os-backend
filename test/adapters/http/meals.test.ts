@@ -513,6 +513,46 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
+    financeCategoryRepository: {
+      listByUser: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findById: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findByUserTypeName: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      create: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      update: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      insertDefaultsIfMissing: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    financeTransactionRepository: {
+      create: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findById: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listByUserAndRange: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      update: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      delete: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      getMonthlySummaryRaw: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     vapidPublicKey: "",
     ping: async () => {},
   });
