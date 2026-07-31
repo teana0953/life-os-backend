@@ -54,9 +54,9 @@ export class InMemoryFinanceCategoryRepository implements FinanceCategoryReposit
     return category;
   }
 
-  async insertDefaultsIfMissing(userId: string, defaults: CreateFinanceCategoryInput[]): Promise<void> {
+  async insertDefaultsIfMissing(defaults: CreateFinanceCategoryInput[]): Promise<void> {
     for (const d of defaults) {
-      const exists = this.categories.some((c) => c.userId === userId && c.type === d.type && c.name === d.name);
+      const exists = this.categories.some((c) => c.userId === d.userId && c.type === d.type && c.name === d.name);
       if (!exists) await this.create(d);
     }
   }

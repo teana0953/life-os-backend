@@ -17,8 +17,8 @@
 - [x] 3.1 `src/contexts/finance/adapters/`:`DrizzleFinanceCategoryRepository`、`DrizzleFinanceTransactionRepository`(summary 用 SQL group by;pg `SUM` 回 bigint 字串,cast number;update 顯式 `set({ updatedAt })`)。
 - [x] 3.2 `src/adapters/http/routes/finance.ts`:handler factories(照 water.ts 模式),驗證用現有 `requireX` helpers(`requireDay`/`requireMonth` 已存在);currency 白名單 `TWD/USD/JPY/EUR/CNY/KRW/GBP/HKD/AUD/CAD`(POST 預設 TWD、PUT 必填);typed error → HTTP 映射(NotFound→404 `{"error":"not_found"}`、其餘驗證→400)。
 - [x] 3.3 `src/adapters/http/app.ts` `createApp` 掛 `/api/finance/*`(auth middleware 後)、`src/index.ts` DI 注入,既有 route 不動。
-- [ ] 3.4 route 測試(workers vitest,照現有模式注入 fake):CRUD + categories + summary 全 endpoint、401 未帶 token、user 隔離 404、PUT 缺 currency 400。
+- [x] 3.4 route 測試(workers vitest,照現有模式注入 fake):CRUD + categories + summary 全 endpoint、401 未帶 token、user 隔離 404、PUT 缺 currency 400。
 
 ## 4. 收尾
 
-- [ ] 4.1 `npm test` + `npm run typecheck` 全綠;確認 migration 檔已 commit。
+- [x] 4.1 `npm test` + `npm run typecheck` 全綠;確認 migration 檔已 commit。
