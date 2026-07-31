@@ -134,6 +134,13 @@
       "when": 1785370002040,
       "tag": "0018_hot_toxin",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785483081063,
+      "tag": "0019_exotic_fantastic_four",
+      "breakpoints": true
     }
   ]
 }
