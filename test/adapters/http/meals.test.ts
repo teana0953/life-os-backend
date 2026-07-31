@@ -573,6 +573,41 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
+    financeNetWorthRepository: {
+      listAccounts: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findAccountById: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findAccountByUserKindName: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      createAccount: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      updateAccount: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      insertDefaultAccountsIfMissing: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      upsertSnapshot: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listMonthValues: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      getMonthlyTotals: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findPreviousSnapshotMonth: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      getTrend: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     budgetAlertNotifier: {
       notify: async () => {
         throw new Error("not implemented in this test's fakes");

@@ -5,6 +5,7 @@ import type { BudgetAlertNotifier } from "../../contexts/finance/domain/budget-a
 import type { FinanceBudgetRepository } from "../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../contexts/finance/domain/finance-category-repository";
 import type { FinanceTransactionRepository } from "../../contexts/finance/domain/finance-transaction-repository";
+import type { NetWorthRepository } from "../../contexts/finance/domain/networth-repository";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
 import type { ChaodaysClient } from "../../contexts/health/domain/chaodays-client";
@@ -95,16 +96,22 @@ import {
 } from "./routes/care";
 import {
   createCreateCategoryHandler,
+  createCreateNetWorthAccountHandler,
   createCreateTransactionHandler,
   createDeleteBudgetHandler,
   createDeleteTransactionHandler,
   createGetBudgetsHandler,
+  createGetNetWorthHandler,
+  createGetNetWorthTrendHandler,
   createGetSummaryHandler,
   createListCategoriesHandler,
+  createListNetWorthAccountsHandler,
   createListTransactionsHandler,
   createUpdateCategoryHandler,
+  createUpdateNetWorthAccountHandler,
   createUpdateTransactionHandler,
   createUpsertBudgetHandler,
+  createUpsertNetWorthSnapshotHandler,
 } from "./routes/finance";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
@@ -147,6 +154,7 @@ export interface CreateAppOptions {
   financeCategoryRepository: FinanceCategoryRepository;
   financeTransactionRepository: FinanceTransactionRepository;
   financeBudgetRepository: FinanceBudgetRepository;
+  financeNetWorthRepository: NetWorthRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
@@ -357,6 +365,7 @@ export function createApp(options: CreateAppOptions) {
     financeCategoryRepository: options.financeCategoryRepository,
     financeTransactionRepository: options.financeTransactionRepository,
     financeBudgetRepository: options.financeBudgetRepository,
+    financeNetWorthRepository: options.financeNetWorthRepository,
     budgetAlertNotifier: options.budgetAlertNotifier,
   };
   app.get("/api/finance/transactions", authMiddleware, createListTransactionsHandler(financeOptions));
@@ -370,6 +379,13 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/finance/budgets", authMiddleware, createGetBudgetsHandler(financeOptions));
   app.put("/api/finance/budgets", authMiddleware, createUpsertBudgetHandler(financeOptions));
   app.delete("/api/finance/budgets/:id", authMiddleware, createDeleteBudgetHandler(financeOptions));
+
+  app.get("/api/finance/networth/accounts", authMiddleware, createListNetWorthAccountsHandler(financeOptions));
+  app.post("/api/finance/networth/accounts", authMiddleware, createCreateNetWorthAccountHandler(financeOptions));
+  app.put("/api/finance/networth/accounts/:id", authMiddleware, createUpdateNetWorthAccountHandler(financeOptions));
+  app.put("/api/finance/networth/snapshots", authMiddleware, createUpsertNetWorthSnapshotHandler(financeOptions));
+  app.get("/api/finance/networth/trend", authMiddleware, createGetNetWorthTrendHandler(financeOptions));
+  app.get("/api/finance/networth", authMiddleware, createGetNetWorthHandler(financeOptions));
 
   return app;
 }

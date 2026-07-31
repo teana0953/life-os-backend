@@ -20,6 +20,7 @@ import {
   InMemoryFinanceCategoryRepository,
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
+import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -174,6 +175,7 @@ function buildApp() {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
   const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
+  const financeNetWorthRepository = new InMemoryNetWorthRepository();
   const budgetAlertNotifier = new FakeBudgetAlertNotifier();
   const app = createApp({
     projectId: PROJECT_ID,
@@ -220,11 +222,12 @@ function buildApp() {
     financeCategoryRepository,
     financeTransactionRepository,
     financeBudgetRepository,
+    financeNetWorthRepository,
     budgetAlertNotifier,
     vapidPublicKey: "",
     ping: async () => {},
   });
-  return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, budgetAlertNotifier };
+  return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, financeNetWorthRepository, budgetAlertNotifier };
 }
 
 function authed(token: string, method = "GET", body?: unknown) {

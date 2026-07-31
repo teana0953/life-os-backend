@@ -12,6 +12,12 @@ import { updateTransaction } from "../../../contexts/finance/application/update-
 import { upsertBudget } from "../../../contexts/finance/application/upsert-budget";
 import type { BudgetAlertNotifier } from "../../../contexts/finance/domain/budget-alert-notifier";
 import { DEFAULT_CURRENCY } from "../../../contexts/finance/domain/currency";
+import { createNetWorthAccount } from "../../../contexts/finance/application/create-networth-account";
+import { getMonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
+import { getNetWorthTrend } from "../../../contexts/finance/application/get-networth-trend";
+import { listNetWorthAccounts } from "../../../contexts/finance/application/list-networth-accounts";
+import { updateNetWorthAccount } from "../../../contexts/finance/application/update-networth-account";
+import { upsertNetWorthSnapshot } from "../../../contexts/finance/application/upsert-networth-snapshot";
 import {
   FinanceBudgetNotFound,
   FinanceCategoryArchived,
@@ -20,6 +26,15 @@ import {
   FinanceTransactionNotFound,
   InvalidFinanceInputError,
 } from "../../../contexts/finance/domain/errors";
+import {
+  NetWorthAccountArchived,
+  NetWorthAccountNameConflict,
+  NetWorthAccountNotFound,
+} from "../../../contexts/finance/domain/networth-errors";
+import type { NetWorthAccount } from "../../../contexts/finance/domain/networth-account";
+import type { NetWorthRepository } from "../../../contexts/finance/domain/networth-repository";
+import type { MonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
+import type { NetWorthAccountValue, NetWorthTrendPoint } from "../../../contexts/finance/domain/networth-snapshot";
 import type { BudgetProgress, FinanceBudget } from "../../../contexts/finance/domain/finance-budget";
 import type { FinanceBudgetRepository } from "../../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategory } from "../../../contexts/finance/domain/finance-category";
@@ -37,6 +52,7 @@ export interface FinanceHandlerOptions {
   financeCategoryRepository: FinanceCategoryRepository;
   financeTransactionRepository: FinanceTransactionRepository;
   financeBudgetRepository: FinanceBudgetRepository;
+  financeNetWorthRepository: NetWorthRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
 }
 
@@ -48,10 +64,21 @@ export interface FinanceHandlerOptions {
  * central `onError` turns into 400.
  */
 function mapFinanceError(err: unknown, c: Context): Response {
-  if (err instanceof FinanceCategoryNotFound || err instanceof FinanceTransactionNotFound || err instanceof FinanceBudgetNotFound) {
+  if (
+    err instanceof FinanceCategoryNotFound ||
+    err instanceof FinanceTransactionNotFound ||
+    err instanceof FinanceBudgetNotFound ||
+    err instanceof NetWorthAccountNotFound
+  ) {
     return c.json({ error: "not_found" }, 404);
   }
-  if (err instanceof FinanceCategoryArchived || err instanceof FinanceCategoryTypeMismatch || err instanceof InvalidFinanceInputError) {
+  if (
+    err instanceof FinanceCategoryArchived ||
+    err instanceof FinanceCategoryTypeMismatch ||
+    err instanceof InvalidFinanceInputError ||
+    err instanceof NetWorthAccountArchived ||
+    err instanceof NetWorthAccountNameConflict
+  ) {
     throw new BadRequestError(err.message);
   }
   throw err;
@@ -305,5 +332,118 @@ export function createDeleteBudgetHandler(options: FinanceHandlerOptions) {
     } catch (err) {
       return mapFinanceError(err, c);
     }
+  };
+}
+
+function networthAccountToJson(account: NetWorthAccount) {
+  return { id: account.id, kind: account.kind, name: account.name, sort_order: account.sortOrder, archived: account.archived };
+}
+
+function networthAccountValueToJson(value: NetWorthAccountValue) {
+  return { account_id: value.accountId, kind: value.kind, name: value.name, value: value.value };
+}
+
+function networthTrendPointToJson(point: NetWorthTrendPoint) {
+  return { month: point.month, net_worth: point.netWorth };
+}
+
+function monthlyNetWorthToJson(result: MonthlyNetWorth) {
+  return {
+    month: result.month,
+    accounts: result.accounts.map(networthAccountValueToJson),
+    total_asset: result.totalAsset,
+    total_liability: result.totalLiability,
+    net_worth: result.netWorth,
+    prev_net_worth: result.prevNetWorth,
+    growth_rate: result.growthRate,
+  };
+}
+
+/** Protected `GET /api/finance/networth/accounts`: the user's net-worth accounts, lazily seeding the defaults on first call. */
+export function createListNetWorthAccountsHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const accounts = await listNetWorthAccounts(options.financeNetWorthRepository, userId);
+    return c.json({ accounts: accounts.map(networthAccountToJson) });
+  };
+}
+
+/** Protected `POST /api/finance/networth/accounts`: create a net-worth account (`kind` fixed at creation). */
+export function createCreateNetWorthAccountHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const account = await createNetWorthAccount(options.financeNetWorthRepository, {
+        userId,
+        kind: requireString(body.kind, "kind") as NetWorthAccount["kind"],
+        name: requireString(body.name, "name"),
+        sortOrder: typeof body.sort_order === "number" ? body.sort_order : undefined,
+      });
+      return c.json(networthAccountToJson(account));
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `PUT /api/finance/networth/accounts/:id`: partial-update an owned account (name/sort_order/archived; `kind` is not editable). */
+export function createUpdateNetWorthAccountHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const account = await updateNetWorthAccount(options.financeNetWorthRepository, userId, c.req.param("id") ?? "", {
+        name: typeof body.name === "string" ? body.name : undefined,
+        sortOrder: typeof body.sort_order === "number" ? body.sort_order : undefined,
+        archived: typeof body.archived === "boolean" ? body.archived : undefined,
+      });
+      return c.json(networthAccountToJson(account));
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `PUT /api/finance/networth/snapshots`: upsert one (account, month) market-value snapshot. */
+export function createUpsertNetWorthSnapshotHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const snapshot = await upsertNetWorthSnapshot(options.financeNetWorthRepository, {
+        userId,
+        accountId: requireString(body.account_id, "account_id"),
+        month: requireMonth(body.month),
+        value: requireFiniteNumber(body.value, "value"),
+      });
+      return c.json({ id: snapshot.id, account_id: snapshot.accountId, month: snapshot.month, value: snapshot.value });
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `GET /api/finance/networth?month=YYYY-MM`: the month's account values, net worth, and growth rate. */
+export function createGetNetWorthHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const month = requireMonth(c.req.query("month"));
+    const result = await getMonthlyNetWorth(options.financeNetWorthRepository, userId, month);
+    return c.json(monthlyNetWorthToJson(result));
+  };
+}
+
+/** Protected `GET /api/finance/networth/trend?from=YYYY-MM&to=YYYY-MM`: the per-month net-worth series (ascending). */
+export function createGetNetWorthTrendHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const from = requireMonth(c.req.query("from"), "from");
+    const to = requireMonth(c.req.query("to"), "to");
+    const points = await getNetWorthTrend(options.financeNetWorthRepository, userId, from, to);
+    return c.json({ points: points.map(networthTrendPointToJson) });
   };
 }
