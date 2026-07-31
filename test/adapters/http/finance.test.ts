@@ -646,4 +646,163 @@ describe("finance HTTP routes", () => {
       expect(budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月餐飲支出已達預算 8 成" });
     });
   });
+
+  describe("networth", () => {
+    async function seedAccount(app: ReturnType<typeof buildApp>["app"], token: string, kind: "asset" | "liability", name: string) {
+      const res = await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind, name }));
+      return (await res.json()) as { id: string; kind: string; name: string };
+    }
+
+    it("requires auth for every /api/finance/networth endpoint", async () => {
+      const { app } = ctx;
+      expect((await app.request("/api/finance/networth/accounts")).status).toBe(401);
+      expect((await app.request("/api/finance/networth/accounts", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
+      expect((await app.request("/api/finance/networth/accounts/some-id", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
+      expect((await app.request("/api/finance/networth/snapshots", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
+      expect((await app.request("/api/finance/networth?month=2026-07")).status).toBe(401);
+      expect((await app.request("/api/finance/networth/trend?from=2026-01&to=2026-07")).status).toBe(401);
+    });
+
+    it("seeds the defaults idempotently on the first two GETs", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const first = (await (await app.request("/api/finance/networth/accounts", authed(token))).json()) as { accounts: unknown[] };
+      const second = (await (await app.request("/api/finance/networth/accounts", authed(token))).json()) as { accounts: unknown[] };
+      expect(first.accounts).toHaveLength(10);
+      expect(second.accounts).toHaveLength(10);
+    });
+
+    it("creates an account and rejects a duplicate name within the same kind as 400", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const res = await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset", name: "加密貨幣" }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ kind: "asset", name: "加密貨幣", sort_order: 0, archived: false });
+
+      const dup = await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset", name: "加密貨幣" }));
+      expect(dup.status).toBe(400);
+    });
+
+    it("rejects a create with a missing name (400)", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      expect((await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset" }))).status).toBe(400);
+    });
+
+    it("PUT updates an owned account's archived flag and 404s for another user's account", async () => {
+      const { app } = ctx;
+      const owner = await validToken("uid-owner");
+      const other = await validToken("uid-other");
+      const account = await seedAccount(app, owner, "asset", "股票");
+
+      const ok = await app.request(`/api/finance/networth/accounts/${account.id}`, authed(owner, "PUT", { archived: true }));
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toMatchObject({ archived: true });
+
+      expect((await app.request(`/api/finance/networth/accounts/${account.id}`, authed(other, "PUT", { name: "x" }))).status).toBe(404);
+      expect((await app.request("/api/finance/networth/accounts/nope", authed(owner, "PUT", { name: "x" }))).status).toBe(404);
+    });
+
+    it("PUT snapshot upserts (overwrites), rejects negative/archived/foreign", async () => {
+      const { app } = ctx;
+      const owner = await validToken("uid-owner");
+      const other = await validToken("uid-other");
+      const account = await seedAccount(app, owner, "asset", "股票");
+
+      await app.request("/api/finance/networth/snapshots", authed(owner, "PUT", { account_id: account.id, month: "2026-07", value: 30000 }));
+      const overwrite = await app.request("/api/finance/networth/snapshots", authed(owner, "PUT", { account_id: account.id, month: "2026-07", value: 25000 }));
+      expect(overwrite.status).toBe(200);
+      expect(await overwrite.json()).toMatchObject({ account_id: account.id, month: "2026-07", value: 25000 });
+
+      // negative value -> 400, malformed month -> 400
+      expect((await app.request("/api/finance/networth/snapshots", authed(owner, "PUT", { account_id: account.id, month: "2026-07", value: -1 }))).status).toBe(400);
+      expect((await app.request("/api/finance/networth/snapshots", authed(owner, "PUT", { account_id: account.id, month: "2026-13", value: 1 }))).status).toBe(400);
+      // foreign account -> 404
+      expect((await app.request("/api/finance/networth/snapshots", authed(other, "PUT", { account_id: account.id, month: "2026-07", value: 1 }))).status).toBe(404);
+
+      // archived account -> 400
+      await app.request(`/api/finance/networth/accounts/${account.id}`, authed(owner, "PUT", { archived: true }));
+      expect((await app.request("/api/finance/networth/snapshots", authed(owner, "PUT", { account_id: account.id, month: "2026-08", value: 1 }))).status).toBe(400);
+    });
+
+    it("GET networth returns totals, net worth, prev, and growth rate (spec example)", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const stock = await seedAccount(app, token, "asset", "股票");
+      const cash = await seedAccount(app, token, "asset", "台幣活存");
+      const card = await seedAccount(app, token, "liability", "信用卡");
+      const juneAsset = await seedAccount(app, token, "asset", "基金");
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: juneAsset.id, month: "2026-06", value: 460181 }));
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: stock.id, month: "2026-07", value: 350000 }));
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: cash.id, month: "2026-07", value: 170000 }));
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: card.id, month: "2026-07", value: 41484 }));
+
+      const res = await app.request("/api/finance/networth?month=2026-07", authed(token));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        month: string;
+        accounts: unknown[];
+        total_asset: number;
+        total_liability: number;
+        net_worth: number;
+        prev_net_worth: number | null;
+        growth_rate: number | null;
+      };
+      expect(body.month).toBe("2026-07");
+      expect(body.total_asset).toBe(520000);
+      expect(body.total_liability).toBe(41484);
+      expect(body.net_worth).toBe(478516);
+      expect(body.prev_net_worth).toBe(460181);
+      expect(body.growth_rate).toBeCloseTo(0.0398, 4);
+      expect(body.accounts).toHaveLength(3);
+    });
+
+    it("GET networth returns null prev/growth for the first month with data", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const stock = await seedAccount(app, token, "asset", "股票");
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: stock.id, month: "2026-07", value: 100000 }));
+      const body = (await (await app.request("/api/finance/networth?month=2026-07", authed(token))).json()) as {
+        net_worth: number;
+        prev_net_worth: number | null;
+        growth_rate: number | null;
+      };
+      expect(body.net_worth).toBe(100000);
+      expect(body.prev_net_worth).toBeNull();
+      expect(body.growth_rate).toBeNull();
+    });
+
+    it("GET networth rejects a malformed month with 400", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      expect((await app.request("/api/finance/networth?month=2026-13", authed(token))).status).toBe(400);
+    });
+
+    it("GET trend lists months ascending, skipping empty months, and empty for a barren range", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const asset = await seedAccount(app, token, "asset", "股票");
+      const liability = await seedAccount(app, token, "liability", "信用卡");
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: asset.id, month: "2026-01", value: 400000 }));
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: liability.id, month: "2026-01", value: 24959 }));
+      await app.request("/api/finance/networth/snapshots", authed(token, "PUT", { account_id: asset.id, month: "2026-03", value: 420000 }));
+
+      const res = await app.request("/api/finance/networth/trend?from=2026-01&to=2026-03", authed(token));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { points: { month: string; net_worth: number }[] };
+      expect(body.points).toEqual([
+        { month: "2026-01", net_worth: 375041 },
+        { month: "2026-03", net_worth: 420000 },
+      ]);
+
+      const empty = (await (await app.request("/api/finance/networth/trend?from=2026-05&to=2026-08", authed(token))).json()) as { points: unknown[] };
+      expect(empty.points).toEqual([]);
+    });
+
+    it("GET trend rejects a malformed range with 400", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      expect((await app.request("/api/finance/networth/trend?from=nope&to=2026-08", authed(token))).status).toBe(400);
+    });
+  });
 });
