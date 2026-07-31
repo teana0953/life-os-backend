@@ -148,6 +148,13 @@
       "when": 1785489471653,
       "tag": "0020_daffy_pride",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785496886529,
+      "tag": "0021_hot_zarek",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,7 @@ import { createApp } from "./adapters/http/app";
 import { DrizzleFinanceBudgetRepository } from "./contexts/finance/adapters/drizzle-finance-budget-repository";
 import { DrizzleFinanceCategoryRepository } from "./contexts/finance/adapters/drizzle-finance-category-repository";
 import { DrizzleFinanceTransactionRepository } from "./contexts/finance/adapters/drizzle-finance-transaction-repository";
+import { DrizzleNetWorthRepository } from "./contexts/finance/adapters/drizzle-networth-repository";
 import { PushBudgetAlertNotifier } from "./contexts/finance/adapters/push-budget-alert-notifier";
 import { DrizzleBodyProfileRepository } from "./contexts/health/adapters/drizzle-body-profile-repository";
 import { DrizzleBowelRepository } from "./contexts/health/adapters/drizzle-bowel-repository";
@@ -81,6 +82,7 @@ function buildDeps(env: Env) {
     financeCategoryRepository: new DrizzleFinanceCategoryRepository(getDb),
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),
+    financeNetWorthRepository: new DrizzleNetWorthRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -112,6 +114,7 @@ export default {
       financeCategoryRepository: deps.financeCategoryRepository,
       financeTransactionRepository: deps.financeTransactionRepository,
       financeBudgetRepository: deps.financeBudgetRepository,
+      financeNetWorthRepository: deps.financeNetWorthRepository,
       budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
