@@ -427,6 +427,51 @@ export const financeBudgetAlert = pgTable(
   (t) => [unique().on(t.budgetId, t.month, t.threshold)],
 );
 
+// finance_networth_account: a per-user net-worth account (add-finance-networth
+// design.md). `kind` is a fixed macro-class (asset|liability, immutable after
+// creation); `name` is user-chosen (e.g. 台幣活存/股票/學貸). `archived` is a
+// soft-disable: an archived account rejects new snapshots but keeps its history
+// readable. Names are unique within a user's same kind.
+export const financeNetworthAccount = pgTable(
+  "finance_networth_account",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    archived: boolean("archived").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("finance_networth_account_user_kind_name_idx").on(t.userId, t.kind, t.name)],
+);
+
+// finance_networth_snapshot: one market-value snapshot per account per month
+// (`YYYY-MM`), a non-negative TWD integer where both assets and liabilities are
+// stored as positive amounts (net worth subtracts the liability sum). Writing a
+// snapshot for an existing (account, month) overwrites it (upsert on the
+// (account_id, month) unique index). Deleting an account cascades its snapshots.
+export const financeNetworthSnapshot = pgTable(
+  "finance_networth_snapshot",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => financeNetworthAccount.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    value: integer("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("finance_networth_snapshot_account_month_idx").on(t.accountId, t.month)],
+);
+
 // care_occurrence: nag + send state for one slot, unique per slot so a
 // repeated/look-back tick never double-fires (D4/D5 in design.md).
 // last_notified_at now means "at least one push in that round actually
