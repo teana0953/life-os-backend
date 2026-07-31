@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { BudgetAlertNotifier } from "../../contexts/finance/domain/budget-alert-notifier";
+import type { FinanceBudgetRepository } from "../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../contexts/finance/domain/finance-category-repository";
 import type { FinanceTransactionRepository } from "../../contexts/finance/domain/finance-transaction-repository";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
@@ -94,12 +96,15 @@ import {
 import {
   createCreateCategoryHandler,
   createCreateTransactionHandler,
+  createDeleteBudgetHandler,
   createDeleteTransactionHandler,
+  createGetBudgetsHandler,
   createGetSummaryHandler,
   createListCategoriesHandler,
   createListTransactionsHandler,
   createUpdateCategoryHandler,
   createUpdateTransactionHandler,
+  createUpsertBudgetHandler,
 } from "./routes/finance";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
@@ -141,6 +146,8 @@ export interface CreateAppOptions {
   careLogRepository: CareLogRepository;
   financeCategoryRepository: FinanceCategoryRepository;
   financeTransactionRepository: FinanceTransactionRepository;
+  financeBudgetRepository: FinanceBudgetRepository;
+  budgetAlertNotifier: BudgetAlertNotifier;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -349,6 +356,8 @@ export function createApp(options: CreateAppOptions) {
     userRepository: options.userRepository,
     financeCategoryRepository: options.financeCategoryRepository,
     financeTransactionRepository: options.financeTransactionRepository,
+    financeBudgetRepository: options.financeBudgetRepository,
+    budgetAlertNotifier: options.budgetAlertNotifier,
   };
   app.get("/api/finance/transactions", authMiddleware, createListTransactionsHandler(financeOptions));
   app.post("/api/finance/transactions", authMiddleware, createCreateTransactionHandler(financeOptions));
@@ -358,6 +367,9 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/finance/categories", authMiddleware, createCreateCategoryHandler(financeOptions));
   app.put("/api/finance/categories/:id", authMiddleware, createUpdateCategoryHandler(financeOptions));
   app.get("/api/finance/summary", authMiddleware, createGetSummaryHandler(financeOptions));
+  app.get("/api/finance/budgets", authMiddleware, createGetBudgetsHandler(financeOptions));
+  app.put("/api/finance/budgets", authMiddleware, createUpsertBudgetHandler(financeOptions));
+  app.delete("/api/finance/budgets/:id", authMiddleware, createDeleteBudgetHandler(financeOptions));
 
   return app;
 }

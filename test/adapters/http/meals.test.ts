@@ -553,6 +553,31 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
+    financeBudgetRepository: {
+      upsert: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findByUserAndCategory: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      delete: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listWithSpent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      getSpent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      tryRecordAlert: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
+    budgetAlertNotifier: {
+      notify: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     vapidPublicKey: "",
     ping: async () => {},
   });

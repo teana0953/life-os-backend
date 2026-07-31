@@ -141,6 +141,13 @@
       "when": 1785483081063,
       "tag": "0019_exotic_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785489471653,
+      "tag": "0020_daffy_pride",
+      "breakpoints": true
     }
   ]
 }

@@ -14,7 +14,12 @@ import type { VitalsRepository } from "../../../src/contexts/health/domain/vital
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
-import { InMemoryFinanceCategoryRepository, InMemoryFinanceTransactionRepository } from "../../contexts/finance/fakes";
+import {
+  FakeBudgetAlertNotifier,
+  InMemoryFinanceBudgetRepository,
+  InMemoryFinanceCategoryRepository,
+  InMemoryFinanceTransactionRepository,
+} from "../../contexts/finance/fakes";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -168,6 +173,8 @@ class InMemoryUserRepository implements UserRepository {
 function buildApp() {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
   const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
+  const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
+  const budgetAlertNotifier = new FakeBudgetAlertNotifier();
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
@@ -212,10 +219,12 @@ function buildApp() {
     },
     financeCategoryRepository,
     financeTransactionRepository,
+    financeBudgetRepository,
+    budgetAlertNotifier,
     vapidPublicKey: "",
     ping: async () => {},
   });
-  return { app, financeCategoryRepository, financeTransactionRepository };
+  return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, budgetAlertNotifier };
 }
 
 function authed(token: string, method = "GET", body?: unknown) {
@@ -252,6 +261,9 @@ describe("finance HTTP routes", () => {
     expect((await app.request("/api/finance/categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/api/finance/categories/some-id", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/api/finance/summary?month=2026-07")).status).toBe(401);
+    expect((await app.request("/api/finance/budgets?month=2026-07")).status).toBe(401);
+    expect((await app.request("/api/finance/budgets", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
+    expect((await app.request("/api/finance/budgets/some-id", { method: "DELETE" })).status).toBe(401);
   });
 
   describe("categories", () => {
@@ -535,6 +547,100 @@ describe("finance HTTP routes", () => {
 
       const res = await app.request("/api/finance/summary?month=2026-07", authed(token));
       expect(await res.json()).toEqual({ month: "2026-07", totals: [], by_category: [] });
+    });
+  });
+
+  describe("budgets", () => {
+    it("PUT creates then updates (upsert) an overall budget, GET reports its progress", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+
+      const created = await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 20000 }));
+      expect(created.status).toBe(200);
+      const createdBody = (await created.json()) as Record<string, unknown>;
+      expect(createdBody).toMatchObject({ category_id: null, amount: 20000 });
+
+      const updated = await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 25000 }));
+      expect(updated.status).toBe(200);
+      expect(await updated.json()).toMatchObject({ id: createdBody.id, category_id: null, amount: 25000 });
+
+      const progress = await app.request("/api/finance/budgets?month=2026-07", authed(token));
+      expect(progress.status).toBe(200);
+      const progressBody = (await progress.json()) as { month: string; budgets: { id: string; amount: number; spent: number; remaining: number }[] };
+      expect(progressBody.month).toBe("2026-07");
+      expect(progressBody.budgets).toEqual([{ id: createdBody.id, category_id: null, amount: 25000, spent: 0, remaining: 25000, percent: 0 }]);
+    });
+
+    it("PUT creates a category budget and GET splits overall vs category spent, excluding a USD transaction", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const food = await seedCategory(app, token, { name: "餐飲" });
+      const transit = await seedCategory(app, token, { name: "交通" });
+
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 10000 }));
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: food.id, amount: 3000 }));
+
+      await app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 2500, category_id: food.id, date: "2026-07-10" }));
+      await app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 1000, category_id: transit.id, date: "2026-07-11" }));
+      await app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 999, currency: "USD", category_id: food.id, date: "2026-07-12" }));
+
+      const progress = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as {
+        budgets: { category_id: string | null; spent: number }[];
+      };
+      const overall = progress.budgets.find((b) => b.category_id === null);
+      const foodProgress = progress.budgets.find((b) => b.category_id === food.id);
+      expect(overall?.spent).toBe(3500);
+      expect(foodProgress?.spent).toBe(2500);
+    });
+
+    it("PUT rejects amount <= 0 (400) and an unknown month on GET (400)", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      expect((await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 0 }))).status).toBe(400);
+      expect((await app.request("/api/finance/budgets?month=not-a-month", authed(token))).status).toBe(400);
+    });
+
+    it("PUT rejects an income category (400), an archived category (400), and another user's category (404)", async () => {
+      const { app } = ctx;
+      const token = await validToken();
+      const income = await seedCategory(app, token, { name: "薪資", type: "income" });
+      const archivable = await seedCategory(app, token, { name: "娛樂" });
+      await app.request(`/api/finance/categories/${archivable.id}`, authed(token, "PUT", { archived: true }));
+      const otherToken = await validToken("uid-other");
+      const otherCategory = await seedCategory(app, otherToken);
+
+      expect((await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: income.id, amount: 1000 }))).status).toBe(400);
+      expect((await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: archivable.id, amount: 1000 }))).status).toBe(400);
+      expect((await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: otherCategory.id, amount: 1000 }))).status).toBe(404);
+    });
+
+    it("DELETE removes an owned budget (200) and 404s for another user's or an unknown budget", async () => {
+      const { app } = ctx;
+      const owner = await validToken("uid-owner");
+      const other = await validToken("uid-other");
+      const created = (await (await app.request("/api/finance/budgets", authed(owner, "PUT", { category_id: null, amount: 1000 }))).json()) as { id: string };
+
+      expect((await app.request(`/api/finance/budgets/${created.id}`, authed(other, "DELETE"))).status).toBe(404);
+      expect((await app.request("/api/finance/budgets/nope", authed(owner, "DELETE"))).status).toBe(404);
+
+      const deleteRes = await app.request(`/api/finance/budgets/${created.id}`, authed(owner, "DELETE"));
+      expect(deleteRes.status).toBe(200);
+
+      const progress = (await (await app.request("/api/finance/budgets?month=2026-07", authed(owner))).json()) as { budgets: unknown[] };
+      expect(progress.budgets).toEqual([]);
+    });
+
+    it("crossing 80% on a TWD expense POST records and pushes a budget alert", async () => {
+      const { app, budgetAlertNotifier } = ctx;
+      const token = await validToken();
+      const food = await seedCategory(app, token, { name: "餐飲" });
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: food.id, amount: 1000 }));
+
+      const res = await app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 900, category_id: food.id, date: "2026-07-01" }));
+      expect(res.status).toBe(200); // the transaction write succeeds regardless of the alert side effect
+
+      expect(budgetAlertNotifier.messages).toHaveLength(1);
+      expect(budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月餐飲支出已達預算 8 成" });
     });
   });
 });

@@ -17,6 +17,11 @@ the user's transactions in that range.
 Every operation SHALL be scoped to the authenticated user: another user's
 transaction SHALL be indistinguishable from a missing one (404).
 
+A successful create or update of a TWD expense transaction SHALL additionally
+trigger the budget-alert check defined by the `finance-budgets` capability;
+this side effect is best-effort and SHALL NOT change the operation's response
+or failure behavior.
+
 #### Scenario: Create and list a transaction
 
 - **WHEN** a user POSTs a valid expense transaction for `2026-07-15`
@@ -41,6 +46,12 @@ transaction SHALL be indistinguishable from a missing one (404).
   `income` category, or a category belonging to another user
 - **THEN** the request fails (400 for type mismatch, 404 for another user's
   category) and nothing is stored
+
+#### Scenario: Write succeeds even when the alert side effect fails
+
+- **WHEN** a user POSTs a valid TWD expense and the budget-alert check or its
+  push delivery throws
+- **THEN** the transaction is stored and the response is the normal success
 
 ### Requirement: Finance categories are per-user with lazy defaults and soft archive
 

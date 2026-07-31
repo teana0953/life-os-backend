@@ -1,20 +1,27 @@
 import type { Context } from "hono";
 import { createCategory } from "../../../contexts/finance/application/create-category";
 import { createTransaction } from "../../../contexts/finance/application/create-transaction";
+import { deleteBudget } from "../../../contexts/finance/application/delete-budget";
 import { deleteTransaction } from "../../../contexts/finance/application/delete-transaction";
 import { getMonthlySummary } from "../../../contexts/finance/application/get-monthly-summary";
+import { listBudgetsWithProgress } from "../../../contexts/finance/application/list-budgets-with-progress";
 import { listCategories } from "../../../contexts/finance/application/list-categories";
 import { listTransactions } from "../../../contexts/finance/application/list-transactions";
 import { updateCategory } from "../../../contexts/finance/application/update-category";
 import { updateTransaction } from "../../../contexts/finance/application/update-transaction";
+import { upsertBudget } from "../../../contexts/finance/application/upsert-budget";
+import type { BudgetAlertNotifier } from "../../../contexts/finance/domain/budget-alert-notifier";
 import { DEFAULT_CURRENCY } from "../../../contexts/finance/domain/currency";
 import {
+  FinanceBudgetNotFound,
   FinanceCategoryArchived,
   FinanceCategoryNotFound,
   FinanceCategoryTypeMismatch,
   FinanceTransactionNotFound,
   InvalidFinanceInputError,
 } from "../../../contexts/finance/domain/errors";
+import type { BudgetProgress, FinanceBudget } from "../../../contexts/finance/domain/finance-budget";
+import type { FinanceBudgetRepository } from "../../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategory } from "../../../contexts/finance/domain/finance-category";
 import type { FinanceCategoryRepository } from "../../../contexts/finance/domain/finance-category-repository";
 import type { FinanceTransaction } from "../../../contexts/finance/domain/finance-transaction";
@@ -29,6 +36,8 @@ export interface FinanceHandlerOptions {
   userRepository: UserRepository;
   financeCategoryRepository: FinanceCategoryRepository;
   financeTransactionRepository: FinanceTransactionRepository;
+  financeBudgetRepository: FinanceBudgetRepository;
+  budgetAlertNotifier: BudgetAlertNotifier;
 }
 
 /**
@@ -39,7 +48,7 @@ export interface FinanceHandlerOptions {
  * central `onError` turns into 400.
  */
 function mapFinanceError(err: unknown, c: Context): Response {
-  if (err instanceof FinanceCategoryNotFound || err instanceof FinanceTransactionNotFound) {
+  if (err instanceof FinanceCategoryNotFound || err instanceof FinanceTransactionNotFound || err instanceof FinanceBudgetNotFound) {
     return c.json({ error: "not_found" }, 404);
   }
   if (err instanceof FinanceCategoryArchived || err instanceof FinanceCategoryTypeMismatch || err instanceof InvalidFinanceInputError) {
@@ -79,6 +88,26 @@ function categoryAmountToJson(amount: CategoryAmount) {
   return { category_id: amount.categoryId, type: amount.type, currency: amount.currency, amount: amount.amount };
 }
 
+function budgetToJson(budget: FinanceBudget) {
+  return { id: budget.id, category_id: budget.categoryId, amount: budget.amount };
+}
+
+function budgetProgressToJson(progress: BudgetProgress) {
+  return { id: progress.id, category_id: progress.categoryId, amount: progress.amount, spent: progress.spent, remaining: progress.remaining, percent: progress.percent };
+}
+
+/** `category_id` on a budget PUT: absent/`null` -> the overall budget, a string -> that category; anything else -> 400. */
+function budgetCategoryId(body: Record<string, unknown>): string | null {
+  const value = body.category_id;
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  throw new BadRequestError("category_id must be a string or null");
+}
+
+function budgetAlertDeps(options: FinanceHandlerOptions) {
+  return { budgetRepository: options.financeBudgetRepository, categoryRepository: options.financeCategoryRepository, notifier: options.budgetAlertNotifier };
+}
+
 /** Optional `note` field, present-key three-state: absent -> undefined, `null` -> null, string -> string; anything else -> 400. */
 function optionalNote(body: Record<string, unknown>): string | null | undefined {
   if (!("note" in body)) return undefined;
@@ -106,15 +135,20 @@ export function createCreateTransactionHandler(options: FinanceHandlerOptions) {
     const body = await c.req.json<Record<string, unknown>>();
 
     try {
-      const transaction = await createTransaction(options.financeCategoryRepository, options.financeTransactionRepository, {
-        userId,
-        type: requireString(body.type, "type") as "expense" | "income",
-        amount: requireFiniteNumber(body.amount, "amount"),
-        currency: typeof body.currency === "string" ? body.currency : DEFAULT_CURRENCY,
-        categoryId: requireString(body.category_id, "category_id"),
-        date: requireDay(body.date, "date"),
-        note: optionalNote(body),
-      });
+      const transaction = await createTransaction(
+        options.financeCategoryRepository,
+        options.financeTransactionRepository,
+        {
+          userId,
+          type: requireString(body.type, "type") as "expense" | "income",
+          amount: requireFiniteNumber(body.amount, "amount"),
+          currency: typeof body.currency === "string" ? body.currency : DEFAULT_CURRENCY,
+          categoryId: requireString(body.category_id, "category_id"),
+          date: requireDay(body.date, "date"),
+          note: optionalNote(body),
+        },
+        budgetAlertDeps(options),
+      );
       return c.json(transactionToJson(transaction));
     } catch (err) {
       return mapFinanceError(err, c);
@@ -129,14 +163,21 @@ export function createUpdateTransactionHandler(options: FinanceHandlerOptions) {
     const body = await c.req.json<Record<string, unknown>>();
 
     try {
-      const transaction = await updateTransaction(options.financeCategoryRepository, options.financeTransactionRepository, userId, c.req.param("id") ?? "", {
-        type: requireString(body.type, "type") as "expense" | "income",
-        amount: requireFiniteNumber(body.amount, "amount"),
-        currency: requireString(body.currency, "currency"),
-        categoryId: requireString(body.category_id, "category_id"),
-        date: requireDay(body.date, "date"),
-        note: optionalNote(body),
-      });
+      const transaction = await updateTransaction(
+        options.financeCategoryRepository,
+        options.financeTransactionRepository,
+        userId,
+        c.req.param("id") ?? "",
+        {
+          type: requireString(body.type, "type") as "expense" | "income",
+          amount: requireFiniteNumber(body.amount, "amount"),
+          currency: requireString(body.currency, "currency"),
+          categoryId: requireString(body.category_id, "category_id"),
+          date: requireDay(body.date, "date"),
+          note: optionalNote(body),
+        },
+        budgetAlertDeps(options),
+      );
       return c.json(transactionToJson(transaction));
     } catch (err) {
       return mapFinanceError(err, c);
@@ -218,5 +259,51 @@ export function createGetSummaryHandler(options: FinanceHandlerOptions) {
       totals: summary.totals.map(totalToJson),
       by_category: summary.byCategory.map(categoryAmountToJson),
     });
+  };
+}
+
+/** Protected `GET /api/finance/budgets?month=YYYY-MM`: every budget with that month's spent/remaining/percent. */
+export function createGetBudgetsHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const month = requireMonth(c.req.query("month"));
+    try {
+      const budgets = await listBudgetsWithProgress(options.financeBudgetRepository, userId, month);
+      return c.json({ month, budgets: budgets.map(budgetProgressToJson) });
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `PUT /api/finance/budgets`: upsert one budget (`category_id` null = overall, else that category). */
+export function createUpsertBudgetHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const budget = await upsertBudget(options.financeCategoryRepository, options.financeBudgetRepository, {
+        userId,
+        categoryId: budgetCategoryId(body),
+        amount: requireFiniteNumber(body.amount, "amount"),
+      });
+      return c.json(budgetToJson(budget));
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `DELETE /api/finance/budgets/:id`: delete an owned budget (its alerts cascade). */
+export function createDeleteBudgetHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    try {
+      await deleteBudget(options.financeBudgetRepository, userId, c.req.param("id") ?? "");
+      return c.json({ deleted: true });
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
   };
 }

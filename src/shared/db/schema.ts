@@ -383,6 +383,50 @@ export const financeTransaction = pgTable(
   (t) => [index("finance_transaction_user_day_idx").on(t.userId, t.day)],
 );
 
+// finance_budget: per-user recurring monthly budget (add-finance-budgets
+// design.md), TWD only. `category_id` null = the user's overall budget (at
+// most one); non-null = a per-category budget (at most one per category, and
+// only for expense categories). The two partial unique indexes enforce both
+// "at most one" rules without a nullable column breaking a plain unique
+// constraint (NULLs don't collide under standard Postgres uniqueness).
+export const financeBudget = pgTable(
+  "finance_budget",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    categoryId: uuid("category_id").references(() => financeCategory.id),
+    amount: integer("amount").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("finance_budget_user_category_idx").on(t.userId, t.categoryId).where(sql`category_id is not null`),
+    uniqueIndex("finance_budget_user_overall_idx").on(t.userId).where(sql`category_id is null`),
+  ],
+);
+
+// finance_budget_alert: dedup record for one (budget, month, threshold) —
+// inserted via onConflictDoNothing so a push is only ever sent when the
+// insert wins, including under concurrent writes (design.md).
+export const financeBudgetAlert = pgTable(
+  "finance_budget_alert",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    budgetId: uuid("budget_id")
+      .notNull()
+      .references(() => financeBudget.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    threshold: integer("threshold").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.budgetId, t.month, t.threshold)],
+);
+
 // care_occurrence: nag + send state for one slot, unique per slot so a
 // repeated/look-back tick never double-fires (D4/D5 in design.md).
 // last_notified_at now means "at least one push in that round actually

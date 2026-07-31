@@ -1,3 +1,4 @@
+import type { BudgetAlertMessage, BudgetAlertNotifier } from "../../../src/contexts/finance/domain/budget-alert-notifier";
 import type { FinanceCategoryRepository } from "../../../src/contexts/finance/domain/finance-category-repository";
 import type {
   CreateFinanceCategoryInput,
@@ -7,6 +8,8 @@ import type {
 } from "../../../src/contexts/finance/domain/finance-category";
 import type { FinanceTransactionRepository } from "../../../src/contexts/finance/domain/finance-transaction-repository";
 import type { CreateFinanceTransactionInput, FinanceTransaction, ReplaceFinanceTransactionInput } from "../../../src/contexts/finance/domain/finance-transaction";
+import type { FinanceBudget, UpsertFinanceBudgetInput } from "../../../src/contexts/finance/domain/finance-budget";
+import type { BudgetWithSpent, FinanceBudgetRepository, TryRecordAlertInput } from "../../../src/contexts/finance/domain/finance-budget-repository";
 import type { MonthlySummaryRaw } from "../../../src/contexts/finance/domain/monthly-summary";
 
 /**
@@ -133,5 +136,83 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
     });
 
     return { totals, byCategory };
+  }
+}
+
+/**
+ * In-memory fake; `spentFor` mirrors the real adapter's SQL scoping (TWD
+ * expense only, `date` within `month`, category-scoped or all-categories for
+ * the overall budget) by reading straight from an injected transactions fake
+ * — the real repository does this join in SQL instead.
+ */
+export class InMemoryFinanceBudgetRepository implements FinanceBudgetRepository {
+  budgets: FinanceBudget[] = [];
+  alerts: TryRecordAlertInput[] = [];
+  private nextId = 1;
+
+  constructor(private readonly transactions: InMemoryFinanceTransactionRepository) {}
+
+  async upsert(input: UpsertFinanceBudgetInput): Promise<FinanceBudget> {
+    const existing = this.budgets.find((b) => b.userId === input.userId && b.categoryId === input.categoryId);
+    if (existing) {
+      existing.amount = input.amount;
+      return existing;
+    }
+    const budget: FinanceBudget = { id: `budget-${this.nextId++}`, userId: input.userId, categoryId: input.categoryId, amount: input.amount };
+    this.budgets.push(budget);
+    return budget;
+  }
+
+  async findByUserAndCategory(userId: string, categoryId: string | null): Promise<FinanceBudget | null> {
+    return this.budgets.find((b) => b.userId === userId && b.categoryId === categoryId) ?? null;
+  }
+
+  async delete(userId: string, id: string): Promise<boolean> {
+    const idx = this.budgets.findIndex((b) => b.id === id && b.userId === userId);
+    if (idx === -1) return false;
+    const [removed] = this.budgets.splice(idx, 1);
+    // Mirrors the real FK cascade: drop this budget's alerts too.
+    this.alerts = this.alerts.filter((a) => a.budgetId !== removed.id);
+    return true;
+  }
+
+  private spentFor(userId: string, categoryId: string | null, month: string): number {
+    return this.transactions.transactions
+      .filter(
+        (t) =>
+          t.userId === userId &&
+          t.type === "expense" &&
+          t.currency === "TWD" &&
+          t.date.startsWith(month) &&
+          (categoryId === null || t.categoryId === categoryId),
+      )
+      .reduce((sum, t) => sum + t.amount, 0);
+  }
+
+  async listWithSpent(userId: string, month: string): Promise<BudgetWithSpent[]> {
+    return this.budgets.filter((b) => b.userId === userId).map((budget) => ({ budget, spent: this.spentFor(userId, budget.categoryId, month) }));
+  }
+
+  async getSpent(userId: string, categoryId: string | null, month: string): Promise<number> {
+    return this.spentFor(userId, categoryId, month);
+  }
+
+  async tryRecordAlert(input: TryRecordAlertInput): Promise<boolean> {
+    const exists = this.alerts.some((a) => a.budgetId === input.budgetId && a.month === input.month && a.threshold === input.threshold);
+    if (exists) return false;
+    this.alerts.push({ ...input });
+    return true;
+  }
+}
+
+/** In-memory fake notifier; records every message and optionally runs a hook (e.g. to simulate a push failure). */
+export class FakeBudgetAlertNotifier implements BudgetAlertNotifier {
+  messages: { userId: string; message: BudgetAlertMessage }[] = [];
+
+  constructor(private readonly onNotify?: (userId: string, message: BudgetAlertMessage) => Promise<void> | void) {}
+
+  async notify(userId: string, message: BudgetAlertMessage): Promise<void> {
+    this.messages.push({ userId, message });
+    if (this.onNotify) await this.onNotify(userId, message);
   }
 }

@@ -12,3 +12,6 @@ export class FinanceTransactionNotFound extends Error {}
 
 /** Generic validation failure (amount, currency, category type enum, duplicate category name) (route maps this to 400). */
 export class InvalidFinanceInputError extends Error {}
+
+/** A budget doesn't exist, or belongs to another user (route maps this to 404). */
+export class FinanceBudgetNotFound extends Error {}
