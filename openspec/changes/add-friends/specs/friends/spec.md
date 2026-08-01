@@ -53,6 +53,13 @@ consumed invite. Users SHALL only list or revoke their own invites.
 - **THEN** they are told they are already friends rather than seeing an
   error, and no further invite is consumed
 
+#### Scenario: Two people accepting at once
+
+- **WHEN** two users accept the same invite at the same moment
+- **THEN** exactly one friendship exists and the invite is consumed once;
+  the other attempt is told the invite is already used, and no partially
+  applied state remains (an invite is never consumed without its friendship)
+
 #### Scenario: Invites belong to their creator
 
 - **WHEN** a user lists or revokes invites
@@ -75,7 +82,8 @@ name.
 #### Scenario: No email in any friend-facing response
 
 - **WHEN** a user lists friends, or previews an invite
-- **THEN** the response contains display names and no email addresses
+- **THEN** the response contains display names and no email addresses, and
+  no internal user identifiers beyond what the caller needs to act
 
 #### Scenario: Missing display name falls back to a prefix
 
