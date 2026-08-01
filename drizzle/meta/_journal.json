@@ -155,6 +155,13 @@
       "when": 1785496886529,
       "tag": "0021_hot_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785591147637,
+      "tag": "0022_confused_chamber",
+      "breakpoints": true
     }
   ]
 }

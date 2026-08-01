@@ -22,6 +22,8 @@ import { DrizzleCareItemRepository } from "./contexts/notifications/adapters/dri
 import { DrizzleCareLogRepository } from "./contexts/notifications/adapters/drizzle-care-log-repository";
 import { DrizzleCareOccurrenceRepository } from "./contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import { WebPushSender } from "./contexts/notifications/adapters/web-push-sender";
+import { DrizzleFriendInviteRepository } from "./contexts/social/adapters/drizzle-friend-invite-repository";
+import { DrizzleFriendshipRepository } from "./contexts/social/adapters/drizzle-friendship-repository";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
 import { createDbClient, type Db } from "./shared/db/client";
@@ -83,6 +85,8 @@ function buildDeps(env: Env) {
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),
     financeNetWorthRepository: new DrizzleNetWorthRepository(getDb),
+    friendshipRepository: new DrizzleFriendshipRepository(getDb),
+    friendInviteRepository: new DrizzleFriendInviteRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -116,6 +120,8 @@ export default {
       financeBudgetRepository: deps.financeBudgetRepository,
       financeNetWorthRepository: deps.financeNetWorthRepository,
       budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
+      friendshipRepository: deps.friendshipRepository,
+      friendInviteRepository: deps.friendInviteRepository,
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {

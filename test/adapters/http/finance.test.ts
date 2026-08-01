@@ -21,6 +21,7 @@ import {
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
+import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -225,6 +226,8 @@ function buildApp() {
     financeNetWorthRepository,
     budgetAlertNotifier,
     vapidPublicKey: "",
+    friendshipRepository: stubFriendshipRepository,
+    friendInviteRepository: stubFriendInviteRepository,
     ping: async () => {},
   });
   return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, financeNetWorthRepository, budgetAlertNotifier };

@@ -27,6 +27,7 @@ import type {
 import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../src/contexts/notifications/domain/care-log";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
+import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -409,6 +410,8 @@ function buildApp() {
       notify: notImplemented,
     },
     vapidPublicKey: "",
+    friendshipRepository: stubFriendshipRepository,
+    friendInviteRepository: stubFriendInviteRepository,
     ping: async () => {},
   });
   return { app, careItemRepository, careLogRepository };
