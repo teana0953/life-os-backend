@@ -7,7 +7,7 @@
 - 新 context `src/contexts/social/`(不放 finance 底下——好友是跨域概念)。
 - 兩張表:`friendship`(**正規化**為 `user_a_id < user_b_id` 單列 + unique,不會有 A→B/B→A 兩筆)與 `friend_invite`(**存 token 雜湊不存明文**、7 天過期、一次性、可撤銷)。
 - `/api/friends/*`:好友列表/解除、邀請建立(回明文 token 一次)/列出/撤銷/預覽/接受。
-- 接受邀請在**單一交易**內完成(檢查 → 標記 accepted → 建立 friendship),兩人同時點同一連結只有一個成功。
+- 接受邀請的原子性由**單一 data-modifying CTE 語句**承擔(neon-http driver 不支援交易,直接 throw)——claim 邀請與建立 friendship 在同一條 SQL 內完成,兩人同時點同一連結只有一個成功,且邀請絕不會在沒建立 friendship 的情況下被消耗。
 
 使用者裁定的三個決策:雙向確認(需對方接受)、邀請連結一次性 + 7 天過期、好友列表**只露名稱不露 email**。
 

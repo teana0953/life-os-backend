@@ -17,8 +17,8 @@
 
 ## 3. Adapters + HTTP
 
-- [ ] 3.1 Drizzle 實作:正規化排序寫入、accept 的交易(`accepted_at IS NULL` 條件更新 + friendship unique 兜底)。
-- [ ] 3.2 `routes/friends.ts`:七個 endpoint;typed error → HTTP 映射(NotFound→404 不洩漏存在性、其餘→400 且**過期/已用/已撤銷訊息可區分**)。**預覽需登入**。**token 走 request body 不進 URL path**(bearer credential 會進 Workers 存取記錄與 Referer);`DELETE /friends/:id` 的「不是好友」與「user 不存在」一律 404。
+- [ ] 3.1 Drizzle 實作:正規化排序寫入(小寫 canonical 字串序);**accept 用 design.md「併發」節那條 data-modifying CTE 單一語句**(`db.execute(sql\`…\`)`)——**不可拆成「條件更新 + 另一條 insert」兩段**,那正是被否決的做法(insert 失敗時邀請已消耗、無法 rollback)。**不可用 `db.transaction`**(neon-http 直接 throw)。
+- [ ] 3.2 `routes/friends.ts`:七個 endpoint(**預覽也用 POST + body**,GET+query 一樣會進存取記錄與 Referer,沒把 token 移出記錄);typed error → HTTP 映射(NotFound→404 不洩漏存在性、其餘→400 且**過期/已用/已撤銷訊息可區分**)。**預覽需登入**。**token 走 request body 不進 URL path**(bearer credential 會進 Workers 存取記錄與 Referer);`DELETE /friends/:id` 的「不是好友」與「user 不存在」一律 404。
 - [ ] 3.3 `app.ts` 掛 `/api/friends/*`、`index.ts` 組線。
 - [ ] 3.4 route 測試:全 endpoint 401/400/404/happy;**授權專項**——B 看不到 A 的邀請、撤銷不了 A 的邀請、拿別人的 token 預覽的行為。
 

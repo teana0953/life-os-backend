@@ -42,7 +42,7 @@ DELETE /api/friends/:friendUserId       # 解除好友(雙向,任一方可解)
 POST   /api/friends/invites             # 建立邀請 → { token, expires_at }
 GET    /api/friends/invites             # 我發出、仍有效的邀請
 DELETE /api/friends/invites/:id         # 撤銷
-GET    /api/friends/invites/preview     # 預覽(誰邀請我);**token 走 query 或 body,不進 path**
+POST   /api/friends/invites/preview     # 預覽(誰邀請我);**token 走 request body**
 POST   /api/friends/invites/accept      # 接受;**token 走 request body**
 ```
 
@@ -57,7 +57,7 @@ POST   /api/friends/invites/accept      # 接受;**token 走 request body**
 - **邀請建立無數量上限**——這是有意識的取捨(單人自用 app,濫發只影響自己);若日後開放註冊規模變大需重審。
 - 已解除好友後,舊的未使用邀請仍可用來重新建立關係——符合直覺,不特別處理。
 - 預覽**需要登入**(避免未登入者掃 token;且前端流程本來就是先登入再重播 deep link)
-- **token 不放 URL path**:它是 bearer credential,放 path 會進 Workers 存取記錄與 `Referer` 標頭。accept 一律走 request body;預覽同理(若前端實作上必須用 query,需在該處記下取捨)。前端的邀請**連結**本身仍帶 token(那是使用者手上的憑證),但打 API 時改放 body。
+- **token 不放 URL path**:它是 bearer credential,放 path 會進 Workers 存取記錄與 `Referer` 標頭。accept 一律走 request body;預覽同理(若前端實作上必須用 query,需在該處記下取捨)。前端的邀請**連結**本身仍帶 token(那是使用者手上的憑證),但打 API 時改放 body。**預覽也用 POST + body**——GET + query 一樣會進存取記錄與 `Referer`,沒達到目的。
 
 ### 併發:**不能用交易,必須用單一 CTE 語句**
 
@@ -89,7 +89,14 @@ RETURNING *;
 
 ### 先後順序(初版未定義)
 
-`claimed` 為空時有四種原因(不存在/過期/已用/已撤銷),需第二次查詢區分後回對應 error。「已是好友」的 idempotent 分支**必須在 claim 之前**判斷——先查 friendship 是否已存在,存在就直接回既有關係、**不執行上面那條語句**(否則會消耗一張邀請)。若 claim 成功但 `ON CONFLICT DO NOTHING` 沒插入(競態下另一條路徑剛建立),視為成功並回既有關係。
+完整順序:
+1. **先查 friendship 是否已存在**(需先由 token_hash 讀出 invite 取得 inviter_user_id)→ 已是好友則 idempotent 回既有關係,**不執行 CTE、不消耗邀請**。
+2. 自己邀自己 → 400。
+3. 執行 CTE claim。
+
+注意步驟 1 隱含一次**邀請預讀**(用 token_hash 查 invite),它與 CTE 是兩次獨立查詢——這不影響原子性(預讀只用來走 idempotent 分支與自我邀請檢查,真正的 claim 仍由 CTE 一次完成),但實作要清楚這是兩次往返。
+
+`claimed` 為空時有四種原因(不存在/過期/已用/已撤銷),**由步驟 1 預讀到的那筆 invite 判斷**(不存在→NotFound;有 `revoked_at`→Revoked;有 `accepted_at`→AlreadyUsed;`expires_at` 已過→Expired);預讀當下有效但 CTE 空手而回,代表併發下被搶走 → 回 AlreadyUsed。「已是好友」的 idempotent 分支**必須在 claim 之前**判斷——先查 friendship 是否已存在,存在就直接回既有關係、**不執行上面那條語句**(否則會消耗一張邀請)。若 claim 成功但 `ON CONFLICT DO NOTHING` 沒插入(競態下另一條路徑剛建立),視為成功並回既有關係。
 
 ## 資訊揭露原則(貫穿本 sub-project)
 
@@ -104,7 +111,7 @@ RETURNING *;
 新 context `src/contexts/social/`(**不放 finance 底下**——好友是跨域概念,之後群組分帳會用,但健康域未來也可能用):
 - `domain/`:`Friendship`、`FriendInvite` 實體;`FriendshipRepository`、`FriendInviteRepository` port;typed errors(`InviteNotFound`/`InviteExpired`/`InviteAlreadyUsed`/`InviteRevoked`/`CannotFriendSelf`/`AlreadyFriends`)
 - `application/`:`listFriends`、`removeFriend`、`createInvite`、`listMyInvites`、`revokeInvite`、`previewInvite`、`acceptInvite`
-- `adapters/`:Drizzle 實作(含正規化排序、交易內接受)
+- `adapters/`:Drizzle 實作(正規化排序;accept 用單一 CTE 語句,**非交易、非兩段式**)
 - HTTP:`routes/friends.ts`;`app.ts` 掛、`index.ts` 組線
 
 ## 範圍外
@@ -119,7 +126,7 @@ RETURNING *;
 - 正規化:A 邀 B 與 B 邀 A 產生同一列;查詢兩欄皆命中
 - 一次性:同一 token 接受兩次,第二次 400;**且第一次的 friendship 仍在**
 - 過期/撤銷/自己邀自己/已是好友 各自的行為
-- 併發:模擬兩個 accept 同時進來,只有一個建立 friendship(fake repository 模擬 conflict)
+- 併發:模擬兩個 accept 同時進來,只有一個建立 friendship(fake repository 模擬 conflict)。**注意這只驗 application 層的分支邏輯**——真正的原子性由那條 CTE 承擔,fake 測不到;故 tasks 2.3b 要求逐字 review 該語句並貼進 PR。
 - 資訊揭露:回應 payload **不含 email**(明確斷言),displayName 為 null 時回前綴
 - user 隔離:B 看不到 A 的邀請列表、撤銷不了 A 的邀請
 
