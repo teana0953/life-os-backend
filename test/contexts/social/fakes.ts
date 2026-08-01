@@ -37,7 +37,6 @@ interface StoredFriendship {
 
 export class InMemoryFriendshipRepository implements FriendshipRepository {
   rows: StoredFriendship[] = [];
-  private nextId = 1;
 
   constructor(private readonly users: FakeUserDirectory) {}
 
@@ -45,7 +44,7 @@ export class InMemoryFriendshipRepository implements FriendshipRepository {
   insertIgnoringConflict(userId: string, otherUserId: string): void {
     const { userAId, userBId } = normalizePair(userId, otherUserId);
     if (this.rows.some((row) => row.userAId === userAId && row.userBId === userBId)) return;
-    this.rows.push({ id: `friendship-${this.nextId++}`, userAId, userBId, createdAt: new Date() });
+    this.rows.push({ id: crypto.randomUUID(), userAId, userBId, createdAt: new Date() });
   }
 
   async listFriends(userId: string): Promise<FriendUserRecord[]> {
@@ -98,7 +97,6 @@ export class InMemoryFriendInviteRepository implements FriendInviteRepository {
   now = new Date();
   /** Hook to interleave a competing accept, reproducing "pre-read was valid but the claim lost the race". */
   onBeforeClaim?: () => void | Promise<void>;
-  private nextId = 1;
 
   constructor(
     private readonly users: FakeUserDirectory,
@@ -107,7 +105,7 @@ export class InMemoryFriendInviteRepository implements FriendInviteRepository {
 
   async create(input: CreateFriendInviteInput): Promise<FriendInvite> {
     const row: StoredInvite = {
-      id: `invite-${this.nextId++}`,
+      id: crypto.randomUUID(),
       inviterUserId: input.inviterUserId,
       tokenHash: input.tokenHash,
       expiresAt: input.expiresAt,
