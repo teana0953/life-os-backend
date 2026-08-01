@@ -1,11 +1,3 @@
-export interface Friendship {
-  id: string;
-  /** Normalized pair: always the lexicographically smaller of the two ids. */
-  userAId: string;
-  userBId: string;
-  createdAt: Date;
-}
-
 /**
  * Orders a pair for storage. The comparison basis is pinned to the **lowercase
  * canonical UUID string** (`8-4-4-4-12`): Postgres' `uuid` type compares byte

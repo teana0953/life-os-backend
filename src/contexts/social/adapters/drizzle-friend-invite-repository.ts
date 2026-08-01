@@ -105,9 +105,15 @@ export class DrizzleFriendInviteRepository implements FriendInviteRepository {
    * - `inserted` writes the pair in normalized order (`LEAST`/`GREATEST` on
    *   uuid gives the same ordering as the table's CHECK). Being a
    *   data-modifying CTE it always runs to completion even though the final
-   *   SELECT does not reference it. `ON CONFLICT DO NOTHING` covers the race
-   *   where the pair was created by another path in between — the claim still
-   *   counts as won, because the friendship exists either way.
+   *   SELECT does not reference it. `ON CONFLICT (user_a_id, user_b_id) DO
+   *   NOTHING` covers the race where the pair was created by another path in
+   *   between — the claim still counts as won, because the friendship exists
+   *   either way. The conflict target is named on purpose: a bare `ON CONFLICT
+   *   DO NOTHING` swallows *any* future unique violation on `friendship`, which
+   *   would consume the invite while silently creating no friendship — exactly
+   *   the guarantee this statement exists to keep. Naming the pair means only
+   *   the already-friends race is absorbed; anything else still errors, and the
+   *   claim's UPDATE is rolled back with it.
    * - The final SELECT reads `claimed`, so a row comes back exactly when the
    *   claim won, whether or not the insert added anything.
    */
@@ -126,7 +132,7 @@ export class DrizzleFriendInviteRepository implements FriendInviteRepository {
         SELECT LEAST(inviter_user_id, ${input.acceptingUserId}::uuid),
                GREATEST(inviter_user_id, ${input.acceptingUserId}::uuid)
           FROM claimed
-        ON CONFLICT DO NOTHING
+        ON CONFLICT (user_a_id, user_b_id) DO NOTHING
         RETURNING id
       )
       SELECT inviter_user_id FROM claimed

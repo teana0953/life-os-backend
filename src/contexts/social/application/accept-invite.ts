@@ -58,11 +58,10 @@ export async function acceptInvite(
   if (!claim.claimed) throw reasonUnusable(found.invite, now);
 
   // The claim won, so the pair exists — either inserted by it, or already
-  // there because a concurrent path created it and `ON CONFLICT DO NOTHING`
-  // skipped the insert. Both are success.
-  const friend = await repositories.friendships.findFriend(input.acceptingUserId, claim.inviterUserId);
-  if (!friend) throw new Error("friendship missing after a successful invite claim");
-  return { friend: toFriend(friend), alreadyFriends: false };
+  // there because a concurrent path created it and the insert's `ON CONFLICT`
+  // skipped it. Both are success, and the new friend is the inviter already
+  // read in step 1, so there is nothing left to query.
+  return { friend: toFriend(found.inviter), alreadyFriends: false };
 }
 
 /** Why an invite could not be claimed, decided from the pre-read row — no second query. */

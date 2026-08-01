@@ -1,4 +1,5 @@
 import { InviteNotFound } from "../domain/errors";
+import { isInviteUsable } from "../domain/friend-invite";
 import type { FriendInviteRepository } from "../domain/friend-invite-repository";
 import type { FriendshipRepository } from "../domain/friendship-repository";
 import { hashInviteToken } from "../domain/invite-token";
@@ -43,8 +44,6 @@ export async function previewInvite(
   const existing = await repositories.friendships.findFriend(input.userId, found.invite.inviterUserId);
   if (existing) return { inviterDisplayName: inviter.displayName, alreadyFriends: true };
 
-  if (found.invite.acceptedAt !== null || found.invite.revokedAt !== null || found.invite.expiresAt.getTime() <= now.getTime()) {
-    throw reasonUnusable(found.invite, now);
-  }
+  if (!isInviteUsable(found.invite, now)) throw reasonUnusable(found.invite, now);
   return { inviterDisplayName: inviter.displayName, alreadyFriends: false };
 }
