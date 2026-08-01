@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, date, index, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -502,4 +502,53 @@ export const careOccurrence = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
+);
+
+// friendship: one row per pair of friends (add-friends/design.md). The pair is
+// normalized so `user_a_id < user_b_id` (compared as lowercase canonical UUID
+// strings, the only form where Postgres' uuid byte order and JS string order
+// agree), which the unique index turns into "a pair can only exist once,
+// whichever direction the invite went". The CHECK is the DB-level backstop so
+// normalization never rests on application discipline alone. `listFriends`
+// matches both columns, so the `user_b_id` half needs its own index (the
+// unique index only covers a leading `user_a_id`).
+export const friendship = pgTable(
+  "friendship",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userAId: uuid("user_a_id")
+      .notNull()
+      .references(() => users.id),
+    userBId: uuid("user_b_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.userAId, t.userBId),
+    index("friendship_user_b_idx").on(t.userBId),
+    check("friendship_normalized_pair", sql`user_a_id < user_b_id`),
+  ],
+);
+
+// friend_invite: a single-use, 7-day invite link. Only the token's hash is
+// stored (a DB leak is not an invite-link leak); the hash is a deterministic,
+// unsalted SHA-256 precisely so `WHERE token_hash = H(token)` and the unique
+// index work — the token itself is >=32 random bytes, so no KDF is needed.
+// "Used" is `accepted_at IS NOT NULL`, which the accept CTE claims atomically.
+export const friendInvite = pgTable(
+  "friend_invite",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    inviterUserId: uuid("inviter_user_id")
+      .notNull()
+      .references(() => users.id),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    acceptedByUserId: uuid("accepted_by_user_id").references(() => users.id),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("friend_invite_inviter_idx").on(t.inviterUserId)],
 );

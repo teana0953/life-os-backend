@@ -4,7 +4,7 @@
 
 ## 1. Schema 與 migration
 
-- [ ] 1.1 `friendship`:`user_a_id`/`user_b_id` 正規化為 **UUID 小寫 canonical 字串序** a<b、unique `(user_a_id,user_b_id)`、**`CHECK (user_a_id < user_b_id)` 兜底**、**另建 `(user_b_id)` 索引**(listFriends 的 OR 那半)。`friend_invite`:`token_hash` unique、`expires_at`、`accepted_at`/`accepted_by_user_id`(**FK → users.id**)、`revoked_at`、index `(inviter_user_id)`。`npm run db:generate`。
+- [x] 1.1 `friendship`:`user_a_id`/`user_b_id` 正規化為 **UUID 小寫 canonical 字串序** a<b、unique `(user_a_id,user_b_id)`、**`CHECK (user_a_id < user_b_id)` 兜底**、**另建 `(user_b_id)` 索引**(listFriends 的 OR 那半)。`friend_invite`:`token_hash` unique、`expires_at`、`accepted_at`/`accepted_by_user_id`(**FK → users.id**)、`revoked_at`、index `(inviter_user_id)`。`npm run db:generate`。
 
 ## 2. Domain + application(授權邏輯,測試必須覆蓋)
 
