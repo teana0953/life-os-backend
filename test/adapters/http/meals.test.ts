@@ -30,6 +30,7 @@ import type { ExerciseRepository } from "../../../src/contexts/health/domain/exe
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
+import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 
 const PROJECT_ID = "life-os-test";
 const ISSUER = `https://securetoken.google.com/${PROJECT_ID}`;
@@ -614,6 +615,8 @@ function buildApp() {
       },
     },
     vapidPublicKey: "",
+    friendshipRepository: stubFriendshipRepository,
+    friendInviteRepository: stubFriendInviteRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

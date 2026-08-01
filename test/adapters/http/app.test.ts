@@ -14,6 +14,7 @@ import type { ExerciseRepository } from "../../../src/contexts/health/domain/exe
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
+import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 
 // This suite only exercises /health and /api/me; the health-context routes have their own test file.
 function notImplemented(): never {
@@ -274,6 +275,8 @@ function buildApp(
       notify: notImplemented,
     },
     vapidPublicKey: "",
+    friendshipRepository: stubFriendshipRepository,
+    friendInviteRepository: stubFriendInviteRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });

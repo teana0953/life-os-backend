@@ -18,6 +18,8 @@ import type { MealRepository } from "../../contexts/health/domain/meal-repositor
 import type { MenstrualRepository } from "../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
+import type { FriendInviteRepository } from "../../contexts/social/domain/friend-invite-repository";
+import type { FriendshipRepository } from "../../contexts/social/domain/friendship-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
@@ -113,6 +115,15 @@ import {
   createUpsertBudgetHandler,
   createUpsertNetWorthSnapshotHandler,
 } from "./routes/finance";
+import {
+  createAcceptInviteHandler,
+  createCreateInviteHandler,
+  createListFriendsHandler,
+  createListMyInvitesHandler,
+  createPreviewInviteHandler,
+  createRemoveFriendHandler,
+  createRevokeInviteHandler,
+} from "./routes/friends";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -156,6 +167,8 @@ export interface CreateAppOptions {
   financeBudgetRepository: FinanceBudgetRepository;
   financeNetWorthRepository: NetWorthRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
+  friendshipRepository: FriendshipRepository;
+  friendInviteRepository: FriendInviteRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -386,6 +399,22 @@ export function createApp(options: CreateAppOptions) {
   app.put("/api/finance/networth/snapshots", authMiddleware, createUpsertNetWorthSnapshotHandler(financeOptions));
   app.get("/api/finance/networth/trend", authMiddleware, createGetNetWorthTrendHandler(financeOptions));
   app.get("/api/finance/networth", authMiddleware, createGetNetWorthHandler(financeOptions));
+
+  // Friends: the first data any user can see about another (add-friends).
+  // The invite routes are registered before `/api/friends/:friendUserId` so
+  // "invites" is never taken for a user id.
+  const friendsOptions = {
+    userRepository: options.userRepository,
+    friendshipRepository: options.friendshipRepository,
+    friendInviteRepository: options.friendInviteRepository,
+  };
+  app.post("/api/friends/invites/preview", authMiddleware, createPreviewInviteHandler(friendsOptions));
+  app.post("/api/friends/invites/accept", authMiddleware, createAcceptInviteHandler(friendsOptions));
+  app.get("/api/friends/invites", authMiddleware, createListMyInvitesHandler(friendsOptions));
+  app.post("/api/friends/invites", authMiddleware, createCreateInviteHandler(friendsOptions));
+  app.delete("/api/friends/invites/:id", authMiddleware, createRevokeInviteHandler(friendsOptions));
+  app.get("/api/friends", authMiddleware, createListFriendsHandler(friendsOptions));
+  app.delete("/api/friends/:friendUserId", authMiddleware, createRemoveFriendHandler(friendsOptions));
 
   return app;
 }
