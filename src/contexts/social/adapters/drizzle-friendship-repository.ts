@@ -1,15 +1,16 @@
 import { and, eq, or, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { friendship, users } from "../../../shared/db/schema";
-import type { FriendUserRecord } from "../domain/friend-user";
+import { type Friend, friendDisplayName } from "../domain/friend-user";
 import { normalizePair } from "../domain/friendship";
 import type { FriendshipRepository } from "../domain/friendship-repository";
 
 /**
  * The only `users` columns this context ever reads. Selecting the list
- * explicitly (never `select *`) is what keeps an email from riding along into
- * a response by accident — the outward `Friend` type then has nowhere to put
- * one (add-friends/design.md "資訊揭露原則").
+ * explicitly (never `select *`) keeps an email from riding along by accident,
+ * and `toFriend` turns the row into the outward `Friend` before it leaves the
+ * adapter — which has nowhere to put an address (add-friends/design.md
+ * "資訊揭露原則").
  */
 const friendUserColumns = {
   userId: users.id,
@@ -17,16 +18,23 @@ const friendUserColumns = {
   email: users.email,
 };
 
+type FriendUserRow = { userId: string; displayName: string | null; email: string };
+
+/** The one place an address is read, and it does not survive the call. */
+function toFriend(row: FriendUserRow): Friend {
+  return { userId: row.userId, displayName: friendDisplayName(row.displayName, row.email) };
+}
+
 /** Driven adapter: implements FriendshipRepository via Drizzle + Neon. */
 export class DrizzleFriendshipRepository implements FriendshipRepository {
   constructor(private readonly getDb: () => Db) {}
 
-  async listFriends(userId: string): Promise<FriendUserRecord[]> {
+  async listFriends(userId: string): Promise<Friend[]> {
     const me = userId.toLowerCase();
     // A pair is stored once in normalized order, so the caller can be on
     // either side: match both columns and join in whichever id is *not* the
     // caller's.
-    return this.getDb()
+    const rows = await this.getDb()
       .select(friendUserColumns)
       .from(friendship)
       .innerJoin(
@@ -34,9 +42,10 @@ export class DrizzleFriendshipRepository implements FriendshipRepository {
         sql`${users.id} = CASE WHEN ${friendship.userAId} = ${me}::uuid THEN ${friendship.userBId} ELSE ${friendship.userAId} END`,
       )
       .where(or(eq(friendship.userAId, me), eq(friendship.userBId, me)));
+    return rows.map(toFriend);
   }
 
-  async findFriend(userId: string, otherUserId: string): Promise<FriendUserRecord | null> {
+  async findFriend(userId: string, otherUserId: string): Promise<Friend | null> {
     const { userAId, userBId } = normalizePair(userId, otherUserId);
     const [row] = await this.getDb()
       .select(friendUserColumns)
@@ -44,7 +53,7 @@ export class DrizzleFriendshipRepository implements FriendshipRepository {
       .innerJoin(users, eq(users.id, otherUserId.toLowerCase()))
       .where(and(eq(friendship.userAId, userAId), eq(friendship.userBId, userBId)))
       .limit(1);
-    return row ?? null;
+    return row ? toFriend(row) : null;
   }
 
   async delete(userId: string, otherUserId: string): Promise<boolean> {

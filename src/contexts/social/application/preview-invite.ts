@@ -4,7 +4,6 @@ import type { FriendInviteRepository } from "../domain/friend-invite-repository"
 import type { FriendshipRepository } from "../domain/friendship-repository";
 import { hashInviteToken } from "../domain/invite-token";
 import { reasonUnusable } from "./accept-invite";
-import { toFriend } from "./friend-view";
 
 export interface PreviewInviteRepositories {
   friendships: FriendshipRepository;
@@ -37,13 +36,11 @@ export async function previewInvite(
   const found = await repositories.invites.findByTokenHash(await hashInviteToken(input.token));
   if (!found) throw new InviteNotFound();
 
-  const inviter = toFriend(found.inviter);
-
   // Same ordering as accept: someone who is already a friend is told so rather
   // than shown "already used" for the link they themselves used.
   const existing = await repositories.friendships.findFriend(input.userId, found.invite.inviterUserId);
-  if (existing) return { inviterDisplayName: inviter.displayName, alreadyFriends: true };
+  if (existing) return { inviterDisplayName: found.inviter.displayName, alreadyFriends: true };
 
   if (!isInviteUsable(found.invite, now)) throw reasonUnusable(found.invite, now);
-  return { inviterDisplayName: inviter.displayName, alreadyFriends: false };
+  return { inviterDisplayName: found.inviter.displayName, alreadyFriends: false };
 }

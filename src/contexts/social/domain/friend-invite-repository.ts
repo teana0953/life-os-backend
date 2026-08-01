@@ -1,5 +1,5 @@
 import type { FriendInvite } from "./friend-invite";
-import type { FriendUserRecord } from "./friend-user";
+import type { Friend } from "./friend-user";
 
 export interface CreateFriendInviteInput {
   inviterUserId: string;
@@ -7,10 +7,10 @@ export interface CreateFriendInviteInput {
   expiresAt: Date;
 }
 
-/** An invite plus its inviter's name record — one join, only the columns a display name needs. */
+/** An invite plus its inviter — one join, and the name is already resolved so no address crosses the port. */
 export interface FriendInviteWithInviter {
   invite: FriendInvite;
-  inviter: FriendUserRecord;
+  inviter: Friend;
 }
 
 export interface ClaimInviteInput {
@@ -29,7 +29,7 @@ export type ClaimInviteResult = { claimed: false } | { claimed: true; inviterUse
 
 export interface FriendInviteRepository {
   create(input: CreateFriendInviteInput): Promise<FriendInvite>;
-  /** Lookup by the deterministic token hash; also returns the inviter's name record for preview/accept. */
+  /** Lookup by the deterministic token hash; also returns the inviter for preview/accept. */
   findByTokenHash(tokenHash: string): Promise<FriendInviteWithInviter | null>;
   /** The inviter's own still-usable invites (not accepted, not revoked, not expired). */
   listUsableByInviter(inviterUserId: string, now: Date): Promise<FriendInvite[]>;

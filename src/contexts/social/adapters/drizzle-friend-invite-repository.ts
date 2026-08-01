@@ -2,6 +2,7 @@ import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { friendInvite, users } from "../../../shared/db/schema";
 import type { FriendInvite } from "../domain/friend-invite";
+import { friendDisplayName } from "../domain/friend-user";
 import type {
   ClaimInviteInput,
   ClaimInviteResult,
@@ -39,7 +40,8 @@ export class DrizzleFriendInviteRepository implements FriendInviteRepository {
 
   async findByTokenHash(tokenHash: string): Promise<FriendInviteWithInviter | null> {
     // Only the inviter columns a display name can be derived from — never the
-    // whole user row (add-friends/design.md "資訊揭露原則").
+    // whole user row. The address is resolved into a name right here, so it
+    // stops at this adapter (add-friends/design.md "資訊揭露原則").
     const [row] = await this.getDb()
       .select({
         invite: friendInvite,
@@ -53,7 +55,10 @@ export class DrizzleFriendInviteRepository implements FriendInviteRepository {
     if (!row) return null;
     return {
       invite: toDomain(row.invite),
-      inviter: { userId: row.invite.inviterUserId, displayName: row.inviterDisplayName, email: row.inviterEmail },
+      inviter: {
+        userId: row.invite.inviterUserId,
+        displayName: friendDisplayName(row.inviterDisplayName, row.inviterEmail),
+      },
     };
   }
 

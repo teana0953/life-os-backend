@@ -4,7 +4,6 @@ import type { FriendInviteRepository } from "../domain/friend-invite-repository"
 import type { Friend } from "../domain/friend-user";
 import type { FriendshipRepository } from "../domain/friendship-repository";
 import { hashInviteToken } from "../domain/invite-token";
-import { toFriend } from "./friend-view";
 
 export interface AcceptInviteRepositories {
   friendships: FriendshipRepository;
@@ -50,7 +49,7 @@ export async function acceptInvite(
   const inviterUserId = found.invite.inviterUserId;
 
   const existing = await repositories.friendships.findFriend(input.acceptingUserId, inviterUserId);
-  if (existing) return { friend: toFriend(existing), alreadyFriends: true };
+  if (existing) return { friend: existing, alreadyFriends: true };
 
   if (inviterUserId.toLowerCase() === input.acceptingUserId.toLowerCase()) throw new CannotFriendSelf();
 
@@ -61,7 +60,7 @@ export async function acceptInvite(
   // there because a concurrent path created it and the insert's `ON CONFLICT`
   // skipped it. Both are success, and the new friend is the inviter already
   // read in step 1, so there is nothing left to query.
-  return { friend: toFriend(found.inviter), alreadyFriends: false };
+  return { friend: found.inviter, alreadyFriends: false };
 }
 
 /** Why an invite could not be claimed, decided from the pre-read row — no second query. */

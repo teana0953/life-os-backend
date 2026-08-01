@@ -7,24 +7,32 @@ import type {
   FriendInviteRepository,
   FriendInviteWithInviter,
 } from "../../../src/contexts/social/domain/friend-invite-repository";
-import type { FriendUserRecord } from "../../../src/contexts/social/domain/friend-user";
+import { type Friend, friendDisplayName } from "../../../src/contexts/social/domain/friend-user";
 import { normalizePair } from "../../../src/contexts/social/domain/friendship";
 import type { FriendshipRepository } from "../../../src/contexts/social/domain/friendship-repository";
 
-/** The `users` columns the real adapters join in — nothing else exists here, mirroring the "no `select *`" rule. */
-export class FakeUserDirectory {
-  private records = new Map<string, FriendUserRecord>();
+interface FakeUserRow {
+  userId: string;
+  displayName: string | null;
+  email: string;
+}
 
-  add(userId: string, fields: { displayName?: string | null; email: string }): FriendUserRecord {
-    const record: FriendUserRecord = { userId, displayName: fields.displayName ?? null, email: fields.email };
-    this.records.set(userId, record);
-    return record;
+/**
+ * The `users` columns the real adapters join in — nothing else exists here,
+ * mirroring the "no `select *`" rule. Like the real adapters, it resolves the
+ * name inside the fake repository, so no email ever crosses the port.
+ */
+export class FakeUserDirectory {
+  private rows = new Map<string, FakeUserRow>();
+
+  add(userId: string, fields: { displayName?: string | null; email: string }): void {
+    this.rows.set(userId, { userId, displayName: fields.displayName ?? null, email: fields.email });
   }
 
-  get(userId: string): FriendUserRecord {
-    const record = this.records.get(userId);
-    if (!record) throw new Error(`test fake: no user record for ${userId}`);
-    return record;
+  get(userId: string): Friend {
+    const row = this.rows.get(userId);
+    if (!row) throw new Error(`test fake: no user record for ${userId}`);
+    return { userId: row.userId, displayName: friendDisplayName(row.displayName, row.email) };
   }
 }
 
@@ -47,14 +55,14 @@ export class InMemoryFriendshipRepository implements FriendshipRepository {
     this.rows.push({ id: crypto.randomUUID(), userAId, userBId, createdAt: new Date() });
   }
 
-  async listFriends(userId: string): Promise<FriendUserRecord[]> {
+  async listFriends(userId: string): Promise<Friend[]> {
     const me = userId.toLowerCase();
     return this.rows
       .filter((row) => row.userAId === me || row.userBId === me)
       .map((row) => this.users.get(row.userAId === me ? row.userBId : row.userAId));
   }
 
-  async findFriend(userId: string, otherUserId: string): Promise<FriendUserRecord | null> {
+  async findFriend(userId: string, otherUserId: string): Promise<Friend | null> {
     const { userAId, userBId } = normalizePair(userId, otherUserId);
     const row = this.rows.find((r) => r.userAId === userAId && r.userBId === userBId);
     return row ? this.users.get(otherUserId.toLowerCase()) : null;
