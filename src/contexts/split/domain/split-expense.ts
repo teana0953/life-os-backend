@@ -25,6 +25,13 @@ export interface SplitExpense {
   /** `null` = a groupless/one-off split between the people named in `shares`. */
   groupId: string | null;
   payerUserId: string;
+  /**
+   * The payer's name, for the same reason the shares carry theirs — and it
+   * cannot be derived from them: a payer who merely fronted the money holds
+   * no share at all, so a co-participant reading the expense would have
+   * nothing to resolve them with.
+   */
+  payerDisplayName: string;
   createdByUserId: string;
   /** The total, in the currency's minor units. Always equals the sum of `shares[].amount`. */
   amount: number;

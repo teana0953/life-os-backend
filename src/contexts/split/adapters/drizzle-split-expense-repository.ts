@@ -22,6 +22,7 @@ function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<
     id: row.id,
     groupId: row.groupId,
     payerUserId: row.payerUserId,
+    payerDisplayName: names.get(row.payerUserId) ?? row.payerUserId,
     createdByUserId: row.createdByUserId,
     amount: row.amount,
     currency: row.currency,
@@ -102,34 +103,33 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
     const shareInsert = db.insert(splitShare).values(sharesToRows(input.id, input.shares));
     await db.batch([expenseInsert, shareInsert]);
 
+    const names = await this.namesFor([input.payerUserId, ...input.shares.map((share) => share.userId)]);
     return {
       id: input.id,
       groupId: input.groupId,
       payerUserId: input.payerUserId,
+      payerDisplayName: names.get(input.payerUserId) ?? input.payerUserId,
       createdByUserId: input.createdByUserId,
       amount: input.amount,
       currency: input.currency,
       description: input.description,
       day: input.day,
       splitMode: input.splitMode,
-      shares: await this.withNames(input.shares),
+      shares: input.shares.map((share) => ({ ...share, displayName: names.get(share.userId) ?? share.userId })),
       createdAt: now,
       updatedAt: now,
     };
   }
 
-  /** Attaches display names to freshly written shares, so create/update answer the same shape a read does. */
-  private async withNames(shares: SplitShareInput[]): Promise<SplitShare[]> {
-    const names = await this.namesFor(shares.map((share) => share.userId));
-    return shares.map((share) => ({ ...share, displayName: names.get(share.userId) ?? share.userId }));
-  }
+
 
   async findById(id: string): Promise<SplitExpense | null> {
     const db = this.getDb();
     const [row] = await db.select().from(splitExpense).where(eq(splitExpense.id, id)).limit(1);
     if (!row) return null;
     const shares = await db.select().from(splitShare).where(eq(splitShare.expenseId, id));
-    return toExpense(row, shares, await this.namesFor(shares.map((share) => share.userId)));
+    // The payer is included deliberately: they need not hold a share.
+    return toExpense(row, shares, await this.namesFor([row.payerUserId, ...shares.map((share) => share.userId)]));
   }
 
   /**
@@ -206,7 +206,7 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
       list.push(share);
       sharesByExpense.set(share.expenseId, list);
     }
-    const names = await this.namesFor(shares.map((share) => share.userId));
+    const names = await this.namesFor([...rows.map((row) => row.payerUserId), ...shares.map((share) => share.userId)]);
     return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? [], names));
   }
 

@@ -126,7 +126,13 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
 
   async create(input: CreateSplitExpenseInput): Promise<SplitExpense> {
     const now = new Date();
-    const expense: SplitExpense = { ...input, shares: this.withNames(input.shares), createdAt: now, updatedAt: now };
+    const expense: SplitExpense = {
+      ...input,
+      payerDisplayName: this.users ? this.users.get(input.payerUserId) : input.payerUserId,
+      shares: this.withNames(input.shares),
+      createdAt: now,
+      updatedAt: now,
+    };
     this.rows.push(expense);
     return expense;
   }
@@ -139,6 +145,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;
     row.payerUserId = fields.payerUserId;
+    row.payerDisplayName = this.users ? this.users.get(fields.payerUserId) : fields.payerUserId;
     row.amount = fields.amount;
     row.currency = fields.currency;
     row.description = fields.description;
