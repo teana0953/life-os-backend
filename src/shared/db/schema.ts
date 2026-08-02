@@ -531,6 +531,97 @@ export const friendship = pgTable(
   ],
 );
 
+// expense_group: a named group for splitting expenses among more than two
+// people over time (add-split-bills/design.md). Not deleted, only archived —
+// its expenses are other members' financial history.
+export const expenseGroup = pgTable("expense_group", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  createdByUserId: uuid("created_by_user_id")
+    .notNull()
+    .references(() => users.id),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// expense_group_member: who belongs to a group. Leaving is not supported yet
+// (design.md) — membership only ever grows. The `user_id` index is what "my
+// groups" (listForUser) relies on; without it that query is a seq scan.
+export const expenseGroupMember = pgTable(
+  "expense_group_member",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => expenseGroup.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique().on(t.groupId, t.userId), index("expense_group_member_user_idx").on(t.userId)],
+);
+
+// split_expense: one split bill. `group_id` null = a groupless/one-off split
+// between the people named in its shares. `amount` is the currency's minor
+// unit, same convention as finance_transaction. `split_mode` records how the
+// caller originally entered it (equal/exact) purely so an edit can default
+// back to that input mode — the shares actually owed are always the
+// `split_share` rows, never recomputed on read (design.md). The CHECK is the
+// DB-level backstop for "amount > 0", the same role `friendship`'s CHECK
+// plays for its normalized-pair invariant.
+export const splitExpense = pgTable(
+  "split_expense",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id").references(() => expenseGroup.id),
+    payerUserId: uuid("payer_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdByUserId: uuid("created_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    amount: integer("amount").notNull(),
+    currency: text("currency").notNull(),
+    description: text("description").notNull(),
+    day: date("day").notNull(),
+    splitMode: text("split_mode").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("split_expense_group_idx").on(t.groupId),
+    index("split_expense_payer_idx").on(t.payerUserId),
+    check("split_expense_amount_positive", sql`amount > 0`),
+  ],
+);
+
+// split_share: one participant's owed amount on a split_expense. Cascades on
+// the expense's deletion. `sum(amount) = split_expense.amount` is an
+// invariant application must guarantee (it spans rows, so no CHECK can
+// express it) — see design.md for the single-batch write that keeps it from
+// ever landing half-written. The `user_id` index is the main entry point for
+// balance queries.
+export const splitShare = pgTable(
+  "split_share",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    expenseId: uuid("expense_id")
+      .notNull()
+      .references(() => splitExpense.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    amount: integer("amount").notNull(),
+  },
+  (t) => [
+    unique().on(t.expenseId, t.userId),
+    index("split_share_user_idx").on(t.userId),
+    check("split_share_amount_non_negative", sql`amount >= 0`),
+  ],
+);
+
 // friend_invite: a single-use, 7-day invite link. Only the token's hash is
 // stored (a DB leak is not an invite-link leak); the hash is a deterministic,
 // unsalted SHA-256 precisely so `WHERE token_hash = H(token)` and the unique

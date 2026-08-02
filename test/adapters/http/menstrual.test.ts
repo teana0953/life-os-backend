@@ -20,6 +20,7 @@ import type {
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
+import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -296,6 +297,10 @@ function buildApp() {
     vapidPublicKey: "",
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,
+    expenseGroupRepository: stubExpenseGroupRepository,
+    splitExpenseRepository: stubSplitExpenseRepository,
+    splitBalanceRepository: stubSplitBalanceRepository,
+    splitFriendChecker: stubSplitFriendChecker,
     ping: async () => {},
   });
   return { app, menstrualRepository };

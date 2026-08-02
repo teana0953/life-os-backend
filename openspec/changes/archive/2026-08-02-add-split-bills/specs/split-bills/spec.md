@@ -91,16 +91,35 @@ the splitting algorithm can never alter a historical expense.
 
 ### Requirement: You cannot record an expense you are not part of
 
-The caller SHALL be a participant of any expense they create — the payer or
-the holder of a share. The payer SHALL be validated like any other named
-user, not accepted as an opaque field, because the payer determines which
-direction the money is owed.
+The caller SHALL have a stake in any expense they create: they SHALL be the
+payer, or hold a share greater than zero. Merely appearing among the shares
+for an amount of `0` SHALL NOT count, since it leaves the caller owing and
+owed nothing. A zero share for another participant SHALL remain legal — a
+person who genuinely owes nothing on a shared bill is a real case, and it
+cannot fabricate anything while the caller's own stake is required. The payer
+SHALL be validated like any other named user, not accepted as an opaque
+field, because the payer determines which direction the money is owed.
 
 #### Scenario: A debt between two other people cannot be fabricated
 
 - **WHEN** a user submits an expense naming someone else as payer and a third
   person as the only share holder, with themselves nowhere in it
 - **THEN** the request is rejected with `400` and no expense is created
+
+#### Scenario: A zero share for the caller is not a stake
+
+- **WHEN** a user submits an expense naming someone else as payer, a third
+  person owing the whole amount, and themselves holding a share of `0`
+- **THEN** the request is rejected with `400` and no expense is created — the
+  stored result would be a debt between two other people with the caller
+  economically absent
+
+#### Scenario: A zero share for another participant is allowed
+
+- **WHEN** an expense in which the caller holds a share names another
+  participant with a share of `0`
+- **THEN** the expense is created — that participant simply owes nothing for
+  this bill
 
 #### Scenario: The payer must be someone the caller knows
 
@@ -164,7 +183,8 @@ the split stops owing immediately.
 #### Scenario: Editing cannot remove the editor from the expense
 
 - **WHEN** the creator edits an expense so that they are neither the payer
-  nor a share holder
+  nor the holder of a share greater than zero — whether by dropping their
+  share or by setting it to `0`
 - **THEN** the request is rejected with `400` — otherwise a user could
   create a legitimate expense and then edit it into a debt between two other
   people, which they could not have created directly
@@ -210,7 +230,9 @@ SHALL answer `404`.
 ### Requirement: Groups collect members who are already friends
 
 A group SHALL be created with its creator as the first member. A member MAY
-add another user only if that user is already their friend. Group details and
+add another user only if that user is already their friend. Adding someone
+who is already a member SHALL be rejected with `400` rather than surfacing
+the unique-constraint violation as a server error. Group details and
 membership SHALL be visible only to members; anyone else receives `404`.
 
 #### Scenario: The creator is a member
@@ -227,6 +249,12 @@ membership SHALL be visible only to members; anyone else receives `404`.
 
 - **WHEN** a member tries to add a user who is not their friend
 - **THEN** the request is rejected with `400`
+
+#### Scenario: Adding an existing member is a bad request
+
+- **WHEN** a member adds a user who is already a member of that group
+- **THEN** the request is rejected with `400`, not `500`, and the membership
+  is unchanged
 
 #### Scenario: A non-member cannot read the group
 
@@ -320,7 +348,10 @@ before the write so both parts of the batch can reference it.
 ### Requirement: Listing expenses is scoped and unambiguous
 
 Listing SHALL return only expenses the caller participates in, filtered in
-the database rather than after loading. `with=<userId>` SHALL mean the
+the database rather than after loading. Participation SHALL mean the same
+thing in every listing: the payer, a share holder, or — for a grouped
+expense — a member of that group, so an unfiltered listing and a `group_id`
+listing never disagree about what the caller can see. `with=<userId>` SHALL mean the
 groupless expenses in which both the caller and that user participate, so
 group expenses never appear in a one-to-one list. Supplying both `group_id`
 and `with` SHALL be rejected as ambiguous.
@@ -331,6 +362,13 @@ and `with` SHALL be rejected as ambiguous.
 - **THEN** it is not included in the listing — participation is enforced
   above the query as well as inside it, so a mistake in the query alone
   cannot leak other users' expenses
+
+#### Scenario: An unfiltered list includes group expenses seen through membership
+
+- **WHEN** a group member who holds no share in one of the group's expenses
+  lists their expenses with no filter
+- **THEN** that expense is returned, the same as it would be under
+  `group_id=<that group>`
 
 #### Scenario: A one-to-one list excludes group expenses
 
@@ -361,15 +399,36 @@ request body SHALL answer `400`. Neither SHALL surface as a server error.
 
 ### Requirement: Split input is validated
 
-Amounts SHALL be integers in the currency's minor units, currencies SHALL be
-three uppercase letters, and days SHALL be `YYYY-MM-DD`. Anything else SHALL
-be rejected with `400`.
+Amounts SHALL be integers in the currency's minor units, supplied as JSON
+numbers, currencies SHALL be three uppercase letters, and days SHALL be
+`YYYY-MM-DD`. Anything else SHALL be rejected with `400`, including a numeric
+string, which SHALL NOT be coerced into a money value.
+
+#### Scenario: A numeric string amount is rejected, not coerced
+
+- **WHEN** an expense or a share is submitted with an amount of `"100"`
+  rather than `100`
+- **THEN** the request is rejected with `400`
 
 #### Scenario: A malformed currency is rejected
 
 - **WHEN** an expense is submitted with a currency that is not three
   uppercase letters
 - **THEN** the request is rejected with `400`
+
+#### Scenario: An amount too large for storage is a bad request
+
+- **WHEN** an expense is submitted with an amount above what the amount
+  column can hold
+- **THEN** the request is rejected with `400`, not reported as a server error
+
+#### Scenario: An equal split too small to go round is rejected clearly
+
+- **WHEN** an equal split's amount is smaller than the number of
+  participants, so someone would receive nothing
+- **THEN** the request is rejected with `400` and the message says the amount
+  is too small — not that the caller is not a participant — and it is
+  rejected identically whoever submits it
 
 #### Scenario: A malformed day is rejected
 

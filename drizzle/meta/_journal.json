@@ -162,6 +162,13 @@
       "when": 1785591147637,
       "tag": "0022_confused_chamber",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785657975131,
+      "tag": "0023_steep_trish_tilby",
+      "breakpoints": true
     }
   ]
 }
