@@ -24,6 +24,10 @@ import { DrizzleCareOccurrenceRepository } from "./contexts/notifications/adapte
 import { WebPushSender } from "./contexts/notifications/adapters/web-push-sender";
 import { DrizzleFriendInviteRepository } from "./contexts/social/adapters/drizzle-friend-invite-repository";
 import { DrizzleFriendshipRepository } from "./contexts/social/adapters/drizzle-friendship-repository";
+import { DrizzleBalanceRepository } from "./contexts/split/adapters/drizzle-balance-repository";
+import { DrizzleExpenseGroupRepository } from "./contexts/split/adapters/drizzle-expense-group-repository";
+import { DrizzleFriendChecker } from "./contexts/split/adapters/drizzle-friend-checker";
+import { DrizzleSplitExpenseRepository } from "./contexts/split/adapters/drizzle-split-expense-repository";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
 import { createDbClient, type Db } from "./shared/db/client";
@@ -87,6 +91,10 @@ function buildDeps(env: Env) {
     financeNetWorthRepository: new DrizzleNetWorthRepository(getDb),
     friendshipRepository: new DrizzleFriendshipRepository(getDb),
     friendInviteRepository: new DrizzleFriendInviteRepository(getDb),
+    expenseGroupRepository: new DrizzleExpenseGroupRepository(getDb),
+    splitExpenseRepository: new DrizzleSplitExpenseRepository(getDb),
+    splitBalanceRepository: new DrizzleBalanceRepository(getDb),
+    splitFriendChecker: new DrizzleFriendChecker(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -122,6 +130,10 @@ export default {
       budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
       friendshipRepository: deps.friendshipRepository,
       friendInviteRepository: deps.friendInviteRepository,
+      expenseGroupRepository: deps.expenseGroupRepository,
+      splitExpenseRepository: deps.splitExpenseRepository,
+      splitBalanceRepository: deps.splitBalanceRepository,
+      splitFriendChecker: deps.splitFriendChecker,
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {

@@ -20,6 +20,10 @@ import type { VitalsRepository } from "../../contexts/health/domain/vitals-repos
 import type { WaterRepository } from "../../contexts/health/domain/water-repository";
 import type { FriendInviteRepository } from "../../contexts/social/domain/friend-invite-repository";
 import type { FriendshipRepository } from "../../contexts/social/domain/friendship-repository";
+import type { BalanceRepository } from "../../contexts/split/domain/balance-repository";
+import type { ExpenseGroupRepository } from "../../contexts/split/domain/expense-group-repository";
+import type { FriendChecker } from "../../contexts/split/domain/friend-checker";
+import type { SplitExpenseRepository } from "../../contexts/split/domain/split-expense-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
@@ -124,6 +128,20 @@ import {
   createRemoveFriendHandler,
   createRevokeInviteHandler,
 } from "./routes/friends";
+import {
+  createAddGroupMemberHandler,
+  createArchiveGroupHandler,
+  createCreateExpenseHandler,
+  createCreateGroupHandler,
+  createDeleteExpenseHandler,
+  createGetBalancesHandler,
+  createGetExpenseHandler,
+  createGetGroupBalancesHandler,
+  createGetGroupHandler,
+  createListExpensesHandler,
+  createListMyGroupsHandler,
+  createUpdateExpenseHandler,
+} from "./routes/split";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -169,6 +187,10 @@ export interface CreateAppOptions {
   budgetAlertNotifier: BudgetAlertNotifier;
   friendshipRepository: FriendshipRepository;
   friendInviteRepository: FriendInviteRepository;
+  expenseGroupRepository: ExpenseGroupRepository;
+  splitExpenseRepository: SplitExpenseRepository;
+  splitBalanceRepository: BalanceRepository;
+  splitFriendChecker: FriendChecker;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -415,6 +437,33 @@ export function createApp(options: CreateAppOptions) {
   app.delete("/api/friends/invites/:id", authMiddleware, createRevokeInviteHandler(friendsOptions));
   app.get("/api/friends", authMiddleware, createListFriendsHandler(friendsOptions));
   app.delete("/api/friends/:friendUserId", authMiddleware, createRemoveFriendHandler(friendsOptions));
+
+  // Split bills (add-split-bills): the first feature that writes directly
+  // into another user's balance. `/api/split/groups/:id/members` and
+  // `/api/split/groups/:id/balances` are registered before the plain
+  // `/api/split/groups/:id`, mirroring the friends routes' precedent, so a
+  // sub-path segment is never mistaken for the `:id` param.
+  const splitOptions = {
+    userRepository: options.userRepository,
+    expenseGroupRepository: options.expenseGroupRepository,
+    splitExpenseRepository: options.splitExpenseRepository,
+    balanceRepository: options.splitBalanceRepository,
+    friendChecker: options.splitFriendChecker,
+  };
+  app.get("/api/split/groups", authMiddleware, createListMyGroupsHandler(splitOptions));
+  app.post("/api/split/groups", authMiddleware, createCreateGroupHandler(splitOptions));
+  app.post("/api/split/groups/:id/members", authMiddleware, createAddGroupMemberHandler(splitOptions));
+  app.get("/api/split/groups/:id/balances", authMiddleware, createGetGroupBalancesHandler(splitOptions));
+  app.get("/api/split/groups/:id", authMiddleware, createGetGroupHandler(splitOptions));
+  app.delete("/api/split/groups/:id", authMiddleware, createArchiveGroupHandler(splitOptions));
+
+  app.get("/api/split/expenses", authMiddleware, createListExpensesHandler(splitOptions));
+  app.post("/api/split/expenses", authMiddleware, createCreateExpenseHandler(splitOptions));
+  app.get("/api/split/expenses/:id", authMiddleware, createGetExpenseHandler(splitOptions));
+  app.patch("/api/split/expenses/:id", authMiddleware, createUpdateExpenseHandler(splitOptions));
+  app.delete("/api/split/expenses/:id", authMiddleware, createDeleteExpenseHandler(splitOptions));
+
+  app.get("/api/split/balances", authMiddleware, createGetBalancesHandler(splitOptions));
 
   return app;
 }

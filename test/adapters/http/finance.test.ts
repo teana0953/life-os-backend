@@ -22,6 +22,7 @@ import {
 } from "../../contexts/finance/fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
+import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -228,6 +229,10 @@ function buildApp() {
     vapidPublicKey: "",
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,
+    expenseGroupRepository: stubExpenseGroupRepository,
+    splitExpenseRepository: stubSplitExpenseRepository,
+    splitBalanceRepository: stubSplitBalanceRepository,
+    splitFriendChecker: stubSplitFriendChecker,
     ping: async () => {},
   });
   return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, financeNetWorthRepository, budgetAlertNotifier };

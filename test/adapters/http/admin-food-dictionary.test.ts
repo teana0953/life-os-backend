@@ -21,6 +21,7 @@ import type { WaterRepository } from "../../../src/contexts/health/domain/water-
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
+import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -311,6 +312,10 @@ function buildApp(options: { userRepository: UserRepository; foodDictionaryRepos
     },
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,
+    expenseGroupRepository: stubExpenseGroupRepository,
+    splitExpenseRepository: stubSplitExpenseRepository,
+    splitBalanceRepository: stubSplitBalanceRepository,
+    splitFriendChecker: stubSplitFriendChecker,
     ping: async () => {},
   });
 }
