@@ -4,7 +4,7 @@ import { DuplicateParticipant, GroupArchived, GroupNotFound, InvalidSplitInput, 
 import type { ExpenseGroupRepository } from "../domain/expense-group-repository";
 import type { FriendChecker } from "../domain/friend-checker";
 import { equalSplit, validateExactSplit } from "../domain/split-calculator";
-import type { SplitMode, SplitShare } from "../domain/split-expense";
+import type { SplitMode, SplitShareInput } from "../domain/split-expense";
 import type { SplitInput } from "./expense-input";
 
 export interface ValidateExpenseFieldsDeps {
@@ -33,7 +33,7 @@ export interface ValidatedExpenseFields {
   description: string;
   day: string;
   splitMode: SplitMode;
-  shares: SplitShare[];
+  shares: SplitShareInput[];
 }
 
 /**
@@ -129,7 +129,7 @@ export async function validateExpenseFields(deps: ValidateExpenseFieldsDeps, inp
   };
 }
 
-function computeShares(amount: number, split: SplitInput): SplitShare[] {
+function computeShares(amount: number, split: SplitInput): SplitShareInput[] {
   if (split.mode === "equal") {
     const userIds = split.participantUserIds;
     if (userIds.length === 0) throw new InvalidSplitInput("participantUserIds must not be empty");

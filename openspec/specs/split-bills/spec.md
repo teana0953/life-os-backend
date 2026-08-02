@@ -7,15 +7,25 @@ TBD - created by archiving change add-split-bills. Update Purpose after archive.
 
 A split expense SHALL record the amount in the currency's minor units, the
 currency, a payer, a description, a day, and one share row per participant
-holding the amount that participant owes. The shares SHALL always sum exactly
-to the expense amount. An expense MAY belong to a group or to none — a
-groupless expense is a direct split between the people named in its shares.
+holding the amount that participant owes. Each share SHALL be returned with
+its participant's display name: a share holder can read the whole expense,
+including co-participants who are neither their friend nor a member of any
+group they share — the friendship rule is checked against the writer only —
+so nothing else could resolve those names. The shares SHALL always sum
+exactly to the expense amount. An expense MAY belong to a group or to none —
+a groupless expense is a direct split between the people named in its shares.
 
 #### Scenario: An expense stores a share per participant
 
 - **WHEN** a user records a 900 TWD expense split between three people
 - **THEN** the expense holds one share per participant and those shares sum
   to exactly 900
+
+#### Scenario: A co-participant the reader does not know is still named
+
+- **WHEN** A records a three-way split between A, B and C, where B and C are
+  each A's friend but not each other's, and B then reads the expense
+- **THEN** C's share carries C's display name
 
 #### Scenario: An expense without a group is allowed
 

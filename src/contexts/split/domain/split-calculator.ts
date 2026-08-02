@@ -1,5 +1,5 @@
 import { InvalidSplitInput, SharesDoNotSumToAmount } from "./errors";
-import type { SplitShare } from "./split-expense";
+import type { SplitShareInput } from "./split-expense";
 
 /** String order on the lowercase canonical UUID form — the only form where Postgres' `uuid` byte order and JS string order agree (mirrors `friendship`'s `normalizePair`). */
 function compareCanonical(a: string, b: string): number {
@@ -18,7 +18,7 @@ function compareCanonical(a: string, b: string): number {
  * always produce the same split, however many times it is recomputed
  * (design.md).
  */
-export function equalSplit(amount: number, userIds: string[]): SplitShare[] {
+export function equalSplit(amount: number, userIds: string[]): SplitShareInput[] {
   const n = userIds.length;
   const base = Math.floor(amount / n);
   const remainder = amount % n;
@@ -32,7 +32,7 @@ export function equalSplit(amount: number, userIds: string[]): SplitShare[] {
  * adjusts a share to make the total work — a short or long split is
  * rejected outright (design.md).
  */
-export function validateExactSplit(amount: number, shares: SplitShare[]): void {
+export function validateExactSplit(amount: number, shares: SplitShareInput[]): void {
   for (const share of shares) {
     if (!Number.isInteger(share.amount) || share.amount < 0) {
       throw new InvalidSplitInput(`share amount must be a non-negative integer: ${share.amount}`);

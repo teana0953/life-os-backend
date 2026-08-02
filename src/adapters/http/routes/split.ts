@@ -118,7 +118,7 @@ function expenseToJson(expense: SplitExpense) {
     description: expense.description,
     day: expense.day,
     split_mode: expense.splitMode,
-    shares: expense.shares.map((share) => ({ user_id: share.userId, amount: share.amount })),
+    shares: expense.shares.map((share) => ({ user_id: share.userId, display_name: share.displayName, amount: share.amount })),
     created_at: expense.createdAt.toISOString(),
     updated_at: expense.updatedAt.toISOString(),
   };
