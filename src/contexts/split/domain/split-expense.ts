@@ -1,7 +1,21 @@
-export interface SplitShare {
+/** A share as written: identity plus what is owed. Names are a read concern. */
+export interface SplitShareInput {
   userId: string;
   /** What this participant owes, in the currency's minor units. Non-negative. */
   amount: number;
+}
+
+/**
+ * A share as read. Carries the participant's name because nothing else can
+ * supply it: a share holder can see the whole expense, including
+ * co-participants who are neither their friend nor a member of any group they
+ * belong to — the friendship rule is checked against the *writer* only
+ * (`validate-expense-fields.ts`), while `participation.ts` makes every share
+ * holder a viewer. Without this a real person renders as a placeholder in the
+ * commonest case there is: a three-way one-off split.
+ */
+export interface SplitShare extends SplitShareInput {
+  displayName: string;
 }
 
 export type SplitMode = "equal" | "exact";
@@ -36,7 +50,7 @@ export interface CreateSplitExpenseInput {
   description: string;
   day: string;
   splitMode: SplitMode;
-  shares: SplitShare[];
+  shares: SplitShareInput[];
 }
 
 /** Every mutable field of an expense, replaced atomically. `group_id` and `created_by_user_id` are not here — they are immutable (design.md). */
@@ -47,5 +61,5 @@ export interface UpdateSplitExpenseFields {
   description: string;
   day: string;
   splitMode: SplitMode;
-  shares: SplitShare[];
+  shares: SplitShareInput[];
 }

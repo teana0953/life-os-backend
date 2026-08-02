@@ -128,7 +128,7 @@ describe("listExpenses", () => {
       description: "not yours",
       day: "2026-08-01",
       splitMode: "equal",
-      shares: [{ userId: C, amount: 100 }],
+      shares: [{ userId: C, amount: 100, displayName: "Carol" }],
       createdAt: NOW,
       updatedAt: NOW,
     };

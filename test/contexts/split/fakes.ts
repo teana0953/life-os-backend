@@ -3,7 +3,7 @@ import type { BalanceRepository } from "../../../src/contexts/split/domain/balan
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "../../../src/contexts/split/domain/expense-group";
 import type { ExpenseGroupRepository } from "../../../src/contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../../src/contexts/split/domain/friend-checker";
-import type { CreateSplitExpenseInput, SplitExpense, UpdateSplitExpenseFields } from "../../../src/contexts/split/domain/split-expense";
+import type { CreateSplitExpenseInput, SplitExpense, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../../../src/contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
 
 /** Test-only directory of display names, standing in for the `users` join a real adapter would do. */
@@ -107,12 +107,26 @@ export class InMemoryFriendChecker implements FriendChecker {
 export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
   rows: SplitExpense[] = [];
 
-  /** Needs the group repository to mirror the adapter's group-membership clause in the unfiltered listing. */
-  constructor(private readonly groups: InMemoryExpenseGroupRepository) {}
+  /**
+   * Needs the group repository to mirror the adapter's group-membership clause
+   * in the unfiltered listing, and optionally the directory to attach the
+   * display names the adapter resolves with a `users` join.
+   */
+  constructor(
+    private readonly groups: InMemoryExpenseGroupRepository,
+    private readonly users?: TestUserDirectory,
+  ) {}
+
+  private withNames(shares: SplitShareInput[]): SplitShare[] {
+    return shares.map((share) => ({
+      ...share,
+      displayName: this.users ? this.users.get(share.userId) : share.userId,
+    }));
+  }
 
   async create(input: CreateSplitExpenseInput): Promise<SplitExpense> {
     const now = new Date();
-    const expense: SplitExpense = { ...input, createdAt: now, updatedAt: now };
+    const expense: SplitExpense = { ...input, shares: this.withNames(input.shares), createdAt: now, updatedAt: now };
     this.rows.push(expense);
     return expense;
   }
@@ -130,7 +144,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
     row.description = fields.description;
     row.day = fields.day;
     row.splitMode = fields.splitMode;
-    row.shares = fields.shares;
+    row.shares = this.withNames(fields.shares);
     row.updatedAt = now;
     return row;
   }

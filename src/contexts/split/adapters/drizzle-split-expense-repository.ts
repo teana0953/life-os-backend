@@ -1,17 +1,23 @@
 import { and, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
-import { expenseGroupMember, splitExpense, splitShare } from "../../../shared/db/schema";
-import type { CreateSplitExpenseInput, SplitExpense, SplitMode, SplitShare, UpdateSplitExpenseFields } from "../domain/split-expense";
+import { expenseGroupMember, splitExpense, splitShare, users } from "../../../shared/db/schema";
+import type { CreateSplitExpenseInput, SplitExpense, SplitMode, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../domain/split-expense";
+import { splitDisplayName } from "../domain/display-name";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../domain/split-expense-repository";
 
 type SplitExpenseRow = typeof splitExpense.$inferSelect;
 type SplitShareRow = typeof splitShare.$inferSelect;
 
-function toShare(row: SplitShareRow): SplitShare {
-  return { userId: row.userId, amount: row.amount };
+/**
+ * Names come from a `users` join, not from the writer's friend list: a share
+ * holder can see co-participants who are neither their friend nor in any
+ * group they belong to, so nothing else on the client can resolve them.
+ */
+function toShare(row: SplitShareRow, name: string): SplitShare {
+  return { userId: row.userId, amount: row.amount, displayName: name };
 }
 
-function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[]): SplitExpense {
+function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<string, string>): SplitExpense {
   return {
     id: row.id,
     groupId: row.groupId,
@@ -22,13 +28,13 @@ function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[]): SplitExpen
     description: row.description,
     day: row.day,
     splitMode: row.splitMode as SplitMode,
-    shares: shareRows.map(toShare),
+    shares: shareRows.map((share) => toShare(share, names.get(share.userId) ?? share.userId)),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
-function sharesToRows(expenseId: string, shares: SplitShare[]) {
+function sharesToRows(expenseId: string, shares: SplitShareInput[]) {
   return shares.map((share) => ({ expenseId, userId: share.userId, amount: share.amount }));
 }
 
@@ -106,10 +112,16 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
       description: input.description,
       day: input.day,
       splitMode: input.splitMode,
-      shares: input.shares,
+      shares: await this.withNames(input.shares),
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  /** Attaches display names to freshly written shares, so create/update answer the same shape a read does. */
+  private async withNames(shares: SplitShareInput[]): Promise<SplitShare[]> {
+    const names = await this.namesFor(shares.map((share) => share.userId));
+    return shares.map((share) => ({ ...share, displayName: names.get(share.userId) ?? share.userId }));
   }
 
   async findById(id: string): Promise<SplitExpense | null> {
@@ -117,7 +129,7 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
     const [row] = await db.select().from(splitExpense).where(eq(splitExpense.id, id)).limit(1);
     if (!row) return null;
     const shares = await db.select().from(splitShare).where(eq(splitShare.expenseId, id));
-    return toExpense(row, shares);
+    return toExpense(row, shares, await this.namesFor(shares.map((share) => share.userId)));
   }
 
   /**
@@ -194,6 +206,21 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
       list.push(share);
       sharesByExpense.set(share.expenseId, list);
     }
-    return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? []));
+    const names = await this.namesFor(shares.map((share) => share.userId));
+    return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? [], names));
+  }
+
+  /**
+   * One lookup for every distinct participant across the whole result, rather
+   * than a join that would duplicate the expense row per share.
+   */
+  private async namesFor(userIds: string[]): Promise<Map<string, string>> {
+    const distinct = [...new Set(userIds)];
+    if (distinct.length === 0) return new Map();
+    const rows = await this.getDb()
+      .select({ id: users.id, displayName: users.displayName, email: users.email })
+      .from(users)
+      .where(inArray(users.id, distinct));
+    return new Map(rows.map((row) => [row.id, splitDisplayName(row.displayName, row.email)]));
   }
 }

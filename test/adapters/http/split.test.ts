@@ -110,7 +110,7 @@ beforeEach(() => {
   const directory = new TestUserDirectory();
   userRepository = new InMemoryUserRepository(directory);
   groups = new InMemoryExpenseGroupRepository(directory);
-  expenses = new InMemorySplitExpenseRepository(groups);
+  expenses = new InMemorySplitExpenseRepository(groups, directory);
   friends = new InMemoryFriendChecker();
   balances = new InMemoryBalanceRepository(expenses, groups, directory);
 
@@ -412,6 +412,33 @@ describe("groups", () => {
 });
 
 describe("expenses: creation and visibility", () => {
+  it("names every share holder, including a co-participant the reader does not know", async () => {
+    // The friendship rule is checked against the *writer* only, while every
+    // share holder can read the expense — so Bob sees Carol, who is neither
+    // his friend nor in any group with him. Nothing else on the client could
+    // resolve her name, and the three-way one-off split is the commonest
+    // case there is.
+    await makeFriends(ALICE, BOB);
+    await makeFriends(ALICE, CAROL);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+    const carolId = await idOf(CAROL);
+
+    const createRes = await createExpenseAs(ALICE, {
+      payerUserId: aliceId,
+      amount: 900,
+      split: { mode: "equal", participant_user_ids: [aliceId, bobId, carolId] },
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json<{ id: string }>();
+
+    const asBob = await app.request(`/api/split/expenses/${created.id}`, { headers: await authHeader(BOB) });
+    expect(asBob.status).toBe(200);
+    const body = await asBob.json<{ shares: Array<{ user_id: string; display_name: string }> }>();
+    expect(body.shares.map((share) => share.display_name).sort()).toEqual(["Alice", "Bob", "Carol"]);
+  });
+
+
   it("creates a groupless expense between friends, visible to the payer and share holders, 404 to a stranger", async () => {
     await makeFriends(ALICE, BOB);
     const aliceId = await idOf(ALICE);
