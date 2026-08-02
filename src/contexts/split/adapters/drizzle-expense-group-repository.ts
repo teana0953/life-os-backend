@@ -1,11 +1,13 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
-import { expenseGroup, expenseGroupMember } from "../../../shared/db/schema";
+import { expenseGroup, expenseGroupMember, users } from "../../../shared/db/schema";
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "../domain/expense-group";
 import type { ExpenseGroupRepository } from "../domain/expense-group-repository";
+import { splitDisplayName } from "../domain/display-name";
 
 type ExpenseGroupRow = typeof expenseGroup.$inferSelect;
 type GroupMemberRow = typeof expenseGroupMember.$inferSelect;
+type MemberUserRow = { displayName: string | null; email: string };
 
 function toGroup(row: ExpenseGroupRow): ExpenseGroup {
   return {
@@ -18,8 +20,13 @@ function toGroup(row: ExpenseGroupRow): ExpenseGroup {
   };
 }
 
-function toMember(row: GroupMemberRow): GroupMember {
-  return { groupId: row.groupId, userId: row.userId, joinedAt: row.joinedAt };
+function toMember(row: GroupMemberRow, user: MemberUserRow): GroupMember {
+  return {
+    groupId: row.groupId,
+    userId: row.userId,
+    displayName: splitDisplayName(user.displayName, user.email),
+    joinedAt: row.joinedAt,
+  };
 }
 
 /** Driven adapter: implements ExpenseGroupRepository via Drizzle + Neon. */
@@ -75,12 +82,32 @@ export class DrizzleExpenseGroupRepository implements ExpenseGroupRepository {
   async addMember(groupId: string, userId: string, now: Date): Promise<GroupMember> {
     const [row] = await this.getDb().insert(expenseGroupMember).values({ groupId, userId, joinedAt: now }).returning();
     if (!row) throw new Error("failed to add group member");
-    return toMember(row);
+    const [user] = await this.getDb()
+      .select({ displayName: users.displayName, email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!user) throw new Error("failed to resolve group member");
+    return toMember(row, user);
   }
 
   async listMembers(groupId: string): Promise<GroupMember[]> {
-    const rows = await this.getDb().select().from(expenseGroupMember).where(eq(expenseGroupMember.groupId, groupId));
-    return rows.map(toMember);
+    const rows = await this.getDb()
+      .select({ member: expenseGroupMember, displayName: users.displayName, email: users.email })
+      .from(expenseGroupMember)
+      .innerJoin(users, eq(users.id, expenseGroupMember.userId))
+      .where(eq(expenseGroupMember.groupId, groupId));
+    return rows.map((row) => toMember(row.member, { displayName: row.displayName, email: row.email }));
+  }
+
+  async listMembersForGroups(groupIds: string[]): Promise<GroupMember[]> {
+    if (groupIds.length === 0) return [];
+    const rows = await this.getDb()
+      .select({ member: expenseGroupMember, displayName: users.displayName, email: users.email })
+      .from(expenseGroupMember)
+      .innerJoin(users, eq(users.id, expenseGroupMember.userId))
+      .where(inArray(expenseGroupMember.groupId, groupIds));
+    return rows.map((row) => toMember(row.member, { displayName: row.displayName, email: row.email }));
   }
 
   async membersAmong(groupId: string, userIds: string[]): Promise<Set<string>> {

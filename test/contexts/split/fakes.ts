@@ -24,6 +24,15 @@ export class TestUserDirectory {
 export class InMemoryExpenseGroupRepository implements ExpenseGroupRepository {
   groups: ExpenseGroup[] = [];
   members: GroupMember[] = [];
+  /**
+   * Optional so the many tests that never render a name can keep constructing
+   * this bare; supplied, it resolves names the way the production join does.
+   */
+  constructor(private readonly users?: TestUserDirectory) {}
+
+  private nameFor(userId: string): string {
+    return this.users ? this.users.get(userId) : userId;
+  }
   /** How many times `membersAmong` was called — pins the "one lookup per group, not per row" rule in `listExpenses`. */
   membersAmongCalls = 0;
 
@@ -38,7 +47,7 @@ export class InMemoryExpenseGroupRepository implements ExpenseGroupRepository {
       updatedAt: now,
     };
     this.groups.push(group);
-    this.members.push({ groupId: group.id, userId: input.createdByUserId, joinedAt: now });
+    this.members.push({ groupId: group.id, userId: input.createdByUserId, displayName: this.nameFor(input.createdByUserId), joinedAt: now });
     return group;
   }
 
@@ -59,13 +68,18 @@ export class InMemoryExpenseGroupRepository implements ExpenseGroupRepository {
   }
 
   async addMember(groupId: string, userId: string, now: Date): Promise<GroupMember> {
-    const member: GroupMember = { groupId, userId, joinedAt: now };
+    const member: GroupMember = { groupId, userId, displayName: this.nameFor(userId), joinedAt: now };
     this.members.push(member);
     return member;
   }
 
   async listMembers(groupId: string): Promise<GroupMember[]> {
     return this.members.filter((m) => m.groupId === groupId);
+  }
+
+  async listMembersForGroups(groupIds: string[]): Promise<GroupMember[]> {
+    const wanted = new Set(groupIds);
+    return this.members.filter((m) => wanted.has(m.groupId));
   }
 
   async membersAmong(groupId: string, userIds: string[]): Promise<Set<string>> {

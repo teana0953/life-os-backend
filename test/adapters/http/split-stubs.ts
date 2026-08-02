@@ -15,6 +15,7 @@ export const stubExpenseGroupRepository: ExpenseGroupRepository = {
   archive: notImplemented,
   addMember: notImplemented,
   listMembers: notImplemented,
+  listMembersForGroups: notImplemented,
   membersAmong: notImplemented,
 };
 

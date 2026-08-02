@@ -104,7 +104,7 @@ function groupToJson(group: ExpenseGroup) {
 }
 
 function memberToJson(member: GroupMember) {
-  return { group_id: member.groupId, user_id: member.userId, joined_at: member.joinedAt.toISOString() };
+  return { group_id: member.groupId, user_id: member.userId, display_name: member.displayName, joined_at: member.joinedAt.toISOString() };
 }
 
 function expenseToJson(expense: SplitExpense) {
@@ -205,7 +205,9 @@ export function createListMyGroupsHandler(options: SplitHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const groups = await listMyGroups(options.expenseGroupRepository, userId);
-    return c.json({ groups: groups.map(groupToJson) });
+    return c.json({
+      groups: groups.map((entry) => ({ ...groupToJson(entry.group), members: entry.members.map(memberToJson) })),
+    });
   };
 }
 

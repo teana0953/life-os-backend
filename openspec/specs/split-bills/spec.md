@@ -233,10 +233,12 @@ SHALL answer `404`.
 ### Requirement: Groups collect members who are already friends
 
 A group SHALL be created with its creator as the first member. A member MAY
-add another user only if that user is already their friend. Adding someone
-who is already a member SHALL be rejected with `400` rather than surfacing
-the unique-constraint violation as a server error. Group details and
+add another user only if that user is already their friend. Group details and
 membership SHALL be visible only to members; anyone else receives `404`.
+Every member SHALL be returned with a display name, so a client never has to
+render a bare identifier — including a member whose balance nets to zero and
+who therefore appears in no balance listing. The group listing SHALL carry
+each group's members, resolved in a single lookup rather than one per group.
 
 #### Scenario: The creator is a member
 
@@ -263,6 +265,17 @@ membership SHALL be visible only to members; anyone else receives `404`.
 
 - **WHEN** a user who is not a member requests the group
 - **THEN** the response is `404`
+
+#### Scenario: Members carry their names
+
+- **WHEN** a member reads a group's details or lists their groups
+- **THEN** every member is returned with a display name, including one whose
+  balance is settled
+
+#### Scenario: Names cost one lookup, not one per group
+
+- **WHEN** a caller lists several groups
+- **THEN** the members of all of them are resolved in a single lookup
 
 ### Requirement: Archiving a group keeps its history readable
 
