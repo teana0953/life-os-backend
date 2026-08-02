@@ -8,12 +8,15 @@ TBD - created by archiving change add-split-bills. Update Purpose after archive.
 A split expense SHALL record the amount in the currency's minor units, the
 currency, a payer, a description, a day, and one share row per participant
 holding the amount that participant owes. Each share SHALL be returned with
-its participant's display name: a share holder can read the whole expense,
-including co-participants who are neither their friend nor a member of any
-group they share — the friendship rule is checked against the writer only —
-so nothing else could resolve those names. The shares SHALL always sum
-exactly to the expense amount. An expense MAY belong to a group or to none —
-a groupless expense is a direct split between the people named in its shares.
+its participant's display name, and the expense SHALL be returned with the
+payer's: a share holder can read the whole expense, including
+co-participants who are neither their friend nor a member of any group they
+share — the friendship rule is checked against the writer only — so nothing
+else could resolve those names. The payer's name SHALL NOT be derived from
+the shares, since a payer who merely fronted the money holds none. The
+shares SHALL always sum exactly to the expense amount. An expense MAY belong
+to a group or to none — a groupless expense is a direct split between the
+people named in its shares.
 
 #### Scenario: An expense stores a share per participant
 
@@ -26,6 +29,13 @@ a groupless expense is a direct split between the people named in its shares.
 - **WHEN** A records a three-way split between A, B and C, where B and C are
   each A's friend but not each other's, and B then reads the expense
 - **THEN** C's share carries C's display name
+
+#### Scenario: The payer is named even holding no share
+
+- **WHEN** A records an expense they paid for entirely on behalf of B and C,
+  taking no share themselves, and B reads it
+- **THEN** the expense carries A's display name as its payer, which appears
+  nowhere among the shares
 
 #### Scenario: An expense without a group is allowed
 

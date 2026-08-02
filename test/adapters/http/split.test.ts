@@ -412,6 +412,32 @@ describe("groups", () => {
 });
 
 describe("expenses: creation and visibility", () => {
+  it("names the payer even when they hold no share", async () => {
+    // A payer who merely fronted the money holds no share, so their name
+    // cannot be derived from the shares — and a co-participant reading the
+    // expense has no other source for it.
+    await makeFriends(ALICE, BOB);
+    await makeFriends(ALICE, CAROL);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+    const carolId = await idOf(CAROL);
+
+    const createRes = await createExpenseAs(ALICE, {
+      payerUserId: aliceId,
+      amount: 900,
+      split: { mode: "exact", shares: [{ user_id: bobId, amount: 450 }, { user_id: carolId, amount: 450 }] },
+    });
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json<{ payer_display_name: string; id: string }>();
+    expect(created.payer_display_name).toBe("Alice");
+
+    const asBob = await app.request(`/api/split/expenses/${created.id}`, { headers: await authHeader(BOB) });
+    const body = await asBob.json<{ payer_display_name: string; shares: Array<{ display_name: string }> }>();
+    expect(body.payer_display_name).toBe("Alice");
+    // Alice is not among the shares, so this is the only place her name appears.
+    expect(body.shares.map((s) => s.display_name).sort()).toEqual(["Bob", "Carol"]);
+  });
+
   it("names every share holder, including a co-participant the reader does not know", async () => {
     // The friendship rule is checked against the *writer* only, while every
     // share holder can read the expense — so Bob sees Carol, who is neither

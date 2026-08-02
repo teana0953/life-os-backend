@@ -122,6 +122,7 @@ describe("listExpenses", () => {
       id: "poisoned",
       groupId: null,
       payerUserId: B,
+      payerDisplayName: "Bob",
       createdByUserId: B,
       amount: 100,
       currency: "TWD",

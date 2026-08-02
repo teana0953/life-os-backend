@@ -112,6 +112,7 @@ function expenseToJson(expense: SplitExpense) {
     id: expense.id,
     group_id: expense.groupId,
     payer_user_id: expense.payerUserId,
+    payer_display_name: expense.payerDisplayName,
     created_by_user_id: expense.createdByUserId,
     amount: expense.amount,
     currency: expense.currency,
