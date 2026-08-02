@@ -39,7 +39,41 @@ describe("listMyGroups", () => {
 
     const listed = await listMyGroups(groups, A);
 
-    expect(listed.map((g) => g.id)).toEqual([mine.id]);
+    expect(listed.map((entry) => entry.group.id)).toEqual([mine.id]);
+  });
+
+  it("carries each group's members, so a listing can name every participant", async () => {
+    // A grouped expense's participants are always members of its group, so
+    // these names cover every grouped row the caller can see. Without them the
+    // only endpoint returning names is `balances`, which omits anyone netting
+    // to zero — a settled member would render as a bare uuid.
+    const group = await createGroup(groups, "Trip", A);
+    await addGroupMember({ groups, friends }, A, group.id, B, NOW);
+
+    const listed = await listMyGroups(groups, A);
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0].members.map((m) => m.userId).sort()).toEqual([A, B].sort());
+  });
+
+  it("resolves members for every group in one lookup, not one per group", async () => {
+    // One round trip plus one, not one per group — the listing screen would
+    // otherwise fan out across however many groups the user belongs to.
+    await createGroup(groups, "One", A);
+    await createGroup(groups, "Two", A);
+    let calls = 0;
+    const counting = {
+      ...groups,
+      listForUser: groups.listForUser.bind(groups),
+      listMembersForGroups: async (ids: string[]) => {
+        calls += 1;
+        return groups.listMembersForGroups(ids);
+      },
+    } as typeof groups;
+
+    await listMyGroups(counting, A);
+
+    expect(calls).toBe(1);
   });
 });
 

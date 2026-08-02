@@ -109,7 +109,7 @@ async function idOf(identity: Identity): Promise<string> {
 beforeEach(() => {
   const directory = new TestUserDirectory();
   userRepository = new InMemoryUserRepository(directory);
-  groups = new InMemoryExpenseGroupRepository();
+  groups = new InMemoryExpenseGroupRepository(directory);
   expenses = new InMemorySplitExpenseRepository(groups);
   friends = new InMemoryFriendChecker();
   balances = new InMemoryBalanceRepository(expenses, groups, directory);
@@ -324,6 +324,30 @@ describe("groups", () => {
     const asCarol = await app.request(`/api/split/groups/${group.id}`, { headers: await authHeader(CAROL) });
     expect(asCarol.status).toBe(404);
     expect(await asCarol.json()).toEqual({ error: "not_found" });
+  });
+
+  it("names every member, so a settled member is not a bare uuid on screen", async () => {
+    // `balances` is the only other endpoint carrying names and it omits anyone
+    // netting to zero, so without this a settled group member has no name the
+    // client can render.
+    const group = await createGroupAs(ALICE);
+    await makeFriends(ALICE, BOB);
+    const bobId = await idOf(BOB);
+    await app.request(`/api/split/groups/${group.id}/members`, {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({ user_id: bobId }),
+    });
+
+    const detail = await app.request(`/api/split/groups/${group.id}`, { headers: await authHeader(ALICE) });
+    const detailBody = await detail.json<{ members: Array<{ user_id: string; display_name: string }> }>();
+    expect(detailBody.members.map((m) => m.display_name).sort()).toEqual(["Alice", "Bob"]);
+
+    // And the listing carries them too, so rendering a grouped expense does
+    // not need one request per group.
+    const list = await app.request("/api/split/groups", { headers: await authHeader(ALICE) });
+    const listBody = await list.json<{ groups: Array<{ members: Array<{ display_name: string }> }> }>();
+    expect(listBody.groups[0].members.map((m) => m.display_name).sort()).toEqual(["Alice", "Bob"]);
   });
 
   it("lets a member add a friend, but not a stranger", async () => {

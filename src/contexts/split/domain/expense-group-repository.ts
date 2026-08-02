@@ -10,6 +10,15 @@ export interface ExpenseGroupRepository {
   archive(id: string, now: Date): Promise<boolean>;
   addMember(groupId: string, userId: string, now: Date): Promise<GroupMember>;
   listMembers(groupId: string): Promise<GroupMember[]>;
+
+  /**
+   * Members of several groups in one round trip. The listing screen needs a
+   * name for every participant it renders, and a participant of a group
+   * expense is always a member of that group — so one call here covers every
+   * grouped expense the caller can see, instead of one `listMembers` per
+   * group.
+   */
+  listMembersForGroups(groupIds: string[]): Promise<GroupMember[]>;
   /** Of `userIds`, the subset that are members of `groupId` — one query for a whole batch, not one per user. */
   membersAmong(groupId: string, userIds: string[]): Promise<Set<string>>;
 }
