@@ -3,7 +3,9 @@ import { addGroupMember } from "../../../contexts/split/application/add-group-me
 import { archiveGroup } from "../../../contexts/split/application/archive-group";
 import { createExpense } from "../../../contexts/split/application/create-expense";
 import { createGroup } from "../../../contexts/split/application/create-group";
+import { createSettlement } from "../../../contexts/split/application/create-settlement";
 import { deleteExpense } from "../../../contexts/split/application/delete-expense";
+import { deleteSettlement } from "../../../contexts/split/application/delete-settlement";
 import type { SplitInput } from "../../../contexts/split/application/expense-input";
 import { getBalances } from "../../../contexts/split/application/get-balances";
 import { getExpense } from "../../../contexts/split/application/get-expense";
@@ -11,11 +13,13 @@ import { getGroup } from "../../../contexts/split/application/get-group";
 import { getGroupBalances } from "../../../contexts/split/application/get-group-balances";
 import { listExpenses } from "../../../contexts/split/application/list-expenses";
 import { listMyGroups } from "../../../contexts/split/application/list-my-groups";
+import { listSettlements } from "../../../contexts/split/application/list-settlements";
 import { updateExpense } from "../../../contexts/split/application/update-expense";
 import type { Balance } from "../../../contexts/split/domain/balance";
 import type { BalanceRepository } from "../../../contexts/split/domain/balance-repository";
 import {
   AlreadyAGroupMember,
+  CannotSettleWithSelf,
   DuplicateParticipant,
   ExpenseNotFound,
   GroupArchived,
@@ -24,12 +28,15 @@ import {
   NotAGroupMember,
   NotAParticipant,
   NotFriends,
+  SettlementNotFound,
   SharesDoNotSumToAmount,
   SplitTooSmall,
 } from "../../../contexts/split/domain/errors";
 import type { ExpenseGroup, GroupMember } from "../../../contexts/split/domain/expense-group";
 import type { ExpenseGroupRepository } from "../../../contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../../contexts/split/domain/friend-checker";
+import type { Settlement } from "../../../contexts/split/domain/settlement";
+import type { ListSettlementsFilter, SettlementRepository } from "../../../contexts/split/domain/settlement-repository";
 import type { SplitExpense } from "../../../contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../contexts/split/domain/split-expense-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -43,6 +50,7 @@ export interface SplitHandlerOptions {
   splitExpenseRepository: SplitExpenseRepository;
   balanceRepository: BalanceRepository;
   friendChecker: FriendChecker;
+  settlementRepository: SettlementRepository;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -89,6 +97,8 @@ function mapSplitError(err: unknown, c: Context): Response {
   if (err instanceof DuplicateParticipant) return c.json({ error: "duplicate_participant" }, 400);
   if (err instanceof AlreadyAGroupMember) return c.json({ error: "already_a_group_member" }, 400);
   if (err instanceof InvalidSplitInput) return c.json({ error: "invalid_split_input", message: err.message }, 400);
+  if (err instanceof SettlementNotFound) return c.json({ error: "not_found" }, 404);
+  if (err instanceof CannotSettleWithSelf) return c.json({ error: "cannot_settle_with_self" }, 400);
   throw err;
 }
 
@@ -131,6 +141,31 @@ function balanceToJson(balance: Balance) {
     display_name: balance.displayName,
     balances: balance.balances.map((b) => ({ currency: b.currency, amount: b.amount })),
   };
+}
+
+function settlementToJson(settlement: Settlement) {
+  return {
+    id: settlement.id,
+    group_id: settlement.groupId,
+    from_user_id: settlement.fromUserId,
+    from_display_name: settlement.fromDisplayName,
+    to_user_id: settlement.toUserId,
+    to_display_name: settlement.toDisplayName,
+    amount: settlement.amount,
+    currency: settlement.currency,
+    day: settlement.day,
+    note: settlement.note,
+    created_by_user_id: settlement.createdByUserId,
+    created_at: settlement.createdAt.toISOString(),
+    updated_at: settlement.updatedAt.toISOString(),
+  };
+}
+
+/** `note` is optional and nullable: absent or `null` -> `null`, a non-string throws 400. */
+function optionalNoteField(body: Record<string, unknown>): string | null {
+  if (body.note === undefined || body.note === null) return null;
+  if (typeof body.note !== "string") throw new BadRequestError("note must be a string or null");
+  return body.note;
 }
 
 /**
@@ -396,6 +431,75 @@ export function createGetGroupBalancesHandler(options: SplitHandlerOptions) {
     try {
       const balances = await getGroupBalances({ balances: options.balanceRepository, groups: options.expenseGroupRepository }, userId, groupId);
       return c.json({ balances: balances.map(balanceToJson) });
+    } catch (err) {
+      return mapSplitError(err, c);
+    }
+  };
+}
+
+/** Protected `POST /api/split/settlements`: records a repayment. Same anti-fabrication posture as expense creation — the caller must be the payer or the payee. */
+export function createCreateSettlementHandler(options: SplitHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
+    const groupId = optionalUuidBodyField(body, "group_id");
+    const fromUserId = requireUuidBodyField(body, "from_user_id");
+    const toUserId = requireUuidBodyField(body, "to_user_id");
+    const amount = requireAmountNumber(body.amount, "amount");
+    const currency = requireString(body.currency, "currency");
+    const day = requireDay(body.day, "day");
+    const note = optionalNoteField(body);
+
+    try {
+      const settlement = await createSettlement(
+        { settlements: options.settlementRepository, groups: options.expenseGroupRepository, friends: options.friendChecker },
+        { callerUserId: userId, groupId, fromUserId, toUserId, amount, currency, day, note },
+      );
+      return c.json(settlementToJson(settlement), 201);
+    } catch (err) {
+      return mapSplitError(err, c);
+    }
+  };
+}
+
+/**
+ * Protected `GET /api/split/settlements?group_id=&with=`. Same filtering
+ * semantics and malformed-id handling as `GET /api/split/expenses`: a
+ * malformed `group_id` is 404 (it names a specific group), a malformed `with`
+ * is 400 (caller-supplied filtering input).
+ */
+export function createListSettlementsHandler(options: SplitHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+
+    const groupIdParam = c.req.query("group_id");
+    const withParam = c.req.query("with");
+    if (groupIdParam !== undefined && !UUID_RE.test(groupIdParam)) return c.json({ error: "not_found" }, 404);
+    if (withParam !== undefined && !UUID_RE.test(withParam)) throw new BadRequestError("with must be a uuid");
+
+    const filter: ListSettlementsFilter = {};
+    if (groupIdParam !== undefined) filter.groupId = groupIdParam;
+    if (withParam !== undefined) filter.withUserId = withParam;
+
+    try {
+      const settlements = await listSettlements({ settlements: options.settlementRepository, groups: options.expenseGroupRepository }, userId, filter);
+      return c.json({ settlements: settlements.map(settlementToJson) });
+    } catch (err) {
+      return mapSplitError(err, c);
+    }
+  };
+}
+
+/** Protected `DELETE /api/split/settlements/:id`: only the creator or the payer (`from_user_id`) may delete; every other caller gets 404 — never 403. */
+export function createDeleteSettlementHandler(options: SplitHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const settlementId = requireUuidParam(c, "id");
+    if (!settlementId) return c.json({ error: "not_found" }, 404);
+
+    try {
+      await deleteSettlement(options.settlementRepository, userId, settlementId);
+      return c.json({ deleted: true });
     } catch (err) {
       return mapSplitError(err, c);
     }

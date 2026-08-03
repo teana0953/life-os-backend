@@ -37,3 +37,9 @@ export class AlreadyAGroupMember extends Error {}
 
 /** Generic input validation failure — amount, currency, day, description, split mode, or an attempt to change an immutable field (route maps this to 400). */
 export class InvalidSplitInput extends Error {}
+
+/** A settlement doesn't exist, or the caller does not participate in it (route maps this to 404). */
+export class SettlementNotFound extends Error {}
+
+/** A settlement names the same user as both payer and payee — paying yourself is not a repayment (route maps this to 400). */
+export class CannotSettleWithSelf extends Error {}

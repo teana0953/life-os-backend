@@ -23,7 +23,9 @@ import type { FriendshipRepository } from "../../contexts/social/domain/friendsh
 import type { BalanceRepository } from "../../contexts/split/domain/balance-repository";
 import type { ExpenseGroupRepository } from "../../contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../contexts/split/domain/friend-checker";
+import type { SettlementRepository } from "../../contexts/split/domain/settlement-repository";
 import type { SplitExpenseRepository } from "../../contexts/split/domain/split-expense-repository";
+import type { SplitSpendingRepository } from "../../contexts/split/domain/split-spending-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
@@ -109,6 +111,7 @@ import {
   createGetBudgetsHandler,
   createGetNetWorthHandler,
   createGetNetWorthTrendHandler,
+  createGetSplitSpendingHandler,
   createGetSummaryHandler,
   createListCategoriesHandler,
   createListNetWorthAccountsHandler,
@@ -133,13 +136,16 @@ import {
   createArchiveGroupHandler,
   createCreateExpenseHandler,
   createCreateGroupHandler,
+  createCreateSettlementHandler,
   createDeleteExpenseHandler,
+  createDeleteSettlementHandler,
   createGetBalancesHandler,
   createGetExpenseHandler,
   createGetGroupBalancesHandler,
   createGetGroupHandler,
   createListExpensesHandler,
   createListMyGroupsHandler,
+  createListSettlementsHandler,
   createUpdateExpenseHandler,
 } from "./routes/split";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
@@ -191,6 +197,8 @@ export interface CreateAppOptions {
   splitExpenseRepository: SplitExpenseRepository;
   splitBalanceRepository: BalanceRepository;
   splitFriendChecker: FriendChecker;
+  splitSettlementRepository: SettlementRepository;
+  splitSpendingRepository: SplitSpendingRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -402,6 +410,7 @@ export function createApp(options: CreateAppOptions) {
     financeBudgetRepository: options.financeBudgetRepository,
     financeNetWorthRepository: options.financeNetWorthRepository,
     budgetAlertNotifier: options.budgetAlertNotifier,
+    splitSpendingRepository: options.splitSpendingRepository,
   };
   app.get("/api/finance/transactions", authMiddleware, createListTransactionsHandler(financeOptions));
   app.post("/api/finance/transactions", authMiddleware, createCreateTransactionHandler(financeOptions));
@@ -411,6 +420,7 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/finance/categories", authMiddleware, createCreateCategoryHandler(financeOptions));
   app.put("/api/finance/categories/:id", authMiddleware, createUpdateCategoryHandler(financeOptions));
   app.get("/api/finance/summary", authMiddleware, createGetSummaryHandler(financeOptions));
+  app.get("/api/finance/split-spending", authMiddleware, createGetSplitSpendingHandler(financeOptions));
   app.get("/api/finance/budgets", authMiddleware, createGetBudgetsHandler(financeOptions));
   app.put("/api/finance/budgets", authMiddleware, createUpsertBudgetHandler(financeOptions));
   app.delete("/api/finance/budgets/:id", authMiddleware, createDeleteBudgetHandler(financeOptions));
@@ -449,6 +459,7 @@ export function createApp(options: CreateAppOptions) {
     splitExpenseRepository: options.splitExpenseRepository,
     balanceRepository: options.splitBalanceRepository,
     friendChecker: options.splitFriendChecker,
+    settlementRepository: options.splitSettlementRepository,
   };
   app.get("/api/split/groups", authMiddleware, createListMyGroupsHandler(splitOptions));
   app.post("/api/split/groups", authMiddleware, createCreateGroupHandler(splitOptions));
@@ -464,6 +475,13 @@ export function createApp(options: CreateAppOptions) {
   app.delete("/api/split/expenses/:id", authMiddleware, createDeleteExpenseHandler(splitOptions));
 
   app.get("/api/split/balances", authMiddleware, createGetBalancesHandler(splitOptions));
+
+  // Settlements (add-settle-up): "/api/split/settlements" does not share a
+  // parameterized prefix with "/api/split/expenses/:id", so there is no
+  // ordering conflict of the kind the groups routes above guard against.
+  app.get("/api/split/settlements", authMiddleware, createListSettlementsHandler(splitOptions));
+  app.post("/api/split/settlements", authMiddleware, createCreateSettlementHandler(splitOptions));
+  app.delete("/api/split/settlements/:id", authMiddleware, createDeleteSettlementHandler(splitOptions));
 
   return app;
 }

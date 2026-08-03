@@ -43,6 +43,12 @@ import type { FinanceCategoryRepository } from "../../../contexts/finance/domain
 import type { FinanceTransaction } from "../../../contexts/finance/domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../../../contexts/finance/domain/finance-transaction-repository";
 import type { CategoryAmount, CurrencyTotal } from "../../../contexts/finance/domain/monthly-summary";
+// Split spending (add-settle-up): a read-time aggregation of the user's own
+// split-expense shares, surfaced alongside finance's own summary without
+// changing its response shape (design.md).
+import { getSplitSpending } from "../../../contexts/split/application/get-split-spending";
+import type { SplitSpendingAmount } from "../../../contexts/split/domain/split-spending";
+import type { SplitSpendingRepository } from "../../../contexts/split/domain/split-spending-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
@@ -55,6 +61,7 @@ export interface FinanceHandlerOptions {
   financeBudgetRepository: FinanceBudgetRepository;
   financeNetWorthRepository: NetWorthRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
+  splitSpendingRepository: SplitSpendingRepository;
 }
 
 /**
@@ -288,6 +295,27 @@ export function createGetSummaryHandler(options: FinanceHandlerOptions) {
       totals: summary.totals.map(totalToJson),
       by_category: summary.byCategory.map(categoryAmountToJson),
     });
+  };
+}
+
+function splitSpendingAmountToJson(amount: SplitSpendingAmount) {
+  return { currency: amount.currency, amount: amount.amount };
+}
+
+/**
+ * Protected `GET /api/finance/split-spending?month=YYYY-MM`: the caller's own
+ * split-expense shares that month, per currency — a read-time aggregation
+ * that is never folded into `/api/finance/summary` (design.md: that
+ * response's shape must not change, since clients already read it). A month
+ * with no split shares answers an empty `totals` array, not a zero row per
+ * currency.
+ */
+export function createGetSplitSpendingHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const month = requireMonth(c.req.query("month"));
+    const totals = await getSplitSpending(options.splitSpendingRepository, userId, month);
+    return c.json({ month, totals: totals.map(splitSpendingAmountToJson) });
   };
 }
 

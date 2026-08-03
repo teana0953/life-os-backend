@@ -31,7 +31,14 @@ import type { MenstrualRepository } from "../../../src/contexts/health/domain/me
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
-import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
+import {
+  stubExpenseGroupRepository,
+  stubSettlementRepository,
+  stubSplitBalanceRepository,
+  stubSplitExpenseRepository,
+  stubSplitFriendChecker,
+  stubSplitSpendingRepository,
+} from "./split-stubs";
 
 const PROJECT_ID = "life-os-test";
 const ISSUER = `https://securetoken.google.com/${PROJECT_ID}`;
@@ -622,6 +629,8 @@ function buildApp() {
     splitExpenseRepository: stubSplitExpenseRepository,
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
+    splitSettlementRepository: stubSettlementRepository,
+    splitSpendingRepository: stubSplitSpendingRepository,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

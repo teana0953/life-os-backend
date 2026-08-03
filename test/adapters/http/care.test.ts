@@ -28,7 +28,14 @@ import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } fr
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
-import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
+import {
+  stubExpenseGroupRepository,
+  stubSettlementRepository,
+  stubSplitBalanceRepository,
+  stubSplitExpenseRepository,
+  stubSplitFriendChecker,
+  stubSplitSpendingRepository,
+} from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -417,6 +424,8 @@ function buildApp() {
     splitExpenseRepository: stubSplitExpenseRepository,
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
+    splitSettlementRepository: stubSettlementRepository,
+    splitSpendingRepository: stubSplitSpendingRepository,
     ping: async () => {},
   });
   return { app, careItemRepository, careLogRepository };
