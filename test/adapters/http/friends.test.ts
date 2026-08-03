@@ -5,7 +5,14 @@ import { createApp } from "../../../src/adapters/http/app";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { FakeUserDirectory, InMemoryFriendInviteRepository, InMemoryFriendshipRepository } from "../../contexts/social/fakes";
-import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
+import {
+  stubExpenseGroupRepository,
+  stubSettlementRepository,
+  stubSplitBalanceRepository,
+  stubSplitExpenseRepository,
+  stubSplitFriendChecker,
+  stubSplitSpendingRepository,
+} from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -227,6 +234,8 @@ beforeEach(() => {
     splitExpenseRepository: stubSplitExpenseRepository,
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
+    splitSettlementRepository: stubSettlementRepository,
+    splitSpendingRepository: stubSplitSpendingRepository,
     ping: async () => {},
   });
 });

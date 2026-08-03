@@ -4,6 +4,8 @@ import { expenseGroupMember, splitExpense, splitShare, users } from "../../../sh
 import type { CreateSplitExpenseInput, SplitExpense, SplitMode, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../domain/split-expense";
 import { splitDisplayName } from "../domain/display-name";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../domain/split-expense-repository";
+import type { SplitSpendingAmount } from "../domain/split-spending";
+import type { SplitSpendingRepository } from "../domain/split-spending-repository";
 
 type SplitExpenseRow = typeof splitExpense.$inferSelect;
 type SplitShareRow = typeof splitShare.$inferSelect;
@@ -73,8 +75,8 @@ function memberOfExpenseGroup(db: Db, userId: string) {
   );
 }
 
-/** Driven adapter: implements SplitExpenseRepository via Drizzle + Neon. */
-export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
+/** Driven adapter: implements SplitExpenseRepository via Drizzle + Neon; also SplitSpendingRepository (see `splitSpendingForUser`) since both read `split_expense`/`split_share`. */
+export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, SplitSpendingRepository {
   constructor(private readonly getDb: () => Db) {}
 
   /**
@@ -208,6 +210,28 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository {
     }
     const names = await this.namesFor([...rows.map((row) => row.payerUserId), ...shares.map((share) => share.userId)]);
     return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? [], names));
+  }
+
+  /**
+   * `userId`'s own `split_share.amount` total per currency for expenses whose
+   * `day` falls in `month`, aggregated in SQL (`GROUP BY` currency) — never
+   * by loading shares into memory (design.md). Currency lives on
+   * `split_expense`, not `split_share`, hence the join. Deliberately counts
+   * the payer's own share (they really spent it) and never a settlement
+   * (settlements live in `split_settlement`, a separate table there is
+   * nothing to filter out of) — the opposite of `DrizzleBalanceRepository`,
+   * which excludes the payer's own share because it answers "who owes whom",
+   * not "what did I spend" (see `SplitSpendingRepository`).
+   */
+  async splitSpendingForUser(userId: string, month: string): Promise<SplitSpendingAmount[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select({ currency: splitExpense.currency, amount: sql<string>`SUM(${splitShare.amount})` })
+      .from(splitShare)
+      .innerJoin(splitExpense, eq(splitExpense.id, splitShare.expenseId))
+      .where(and(eq(splitShare.userId, userId), sql`to_char(${splitExpense.day}, 'YYYY-MM') = ${month}`))
+      .groupBy(splitExpense.currency);
+    return rows.map((row) => ({ currency: row.currency, amount: Number(row.amount) }));
   }
 
   /**

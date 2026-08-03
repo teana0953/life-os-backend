@@ -8,6 +8,7 @@ import {
   InMemoryBalanceRepository,
   InMemoryExpenseGroupRepository,
   InMemoryFriendChecker,
+  InMemorySettlementRepository,
   InMemorySplitExpenseRepository,
   TestUserDirectory,
 } from "../../contexts/split/fakes";
@@ -97,6 +98,7 @@ let groups: InMemoryExpenseGroupRepository;
 let expenses: InMemorySplitExpenseRepository;
 let friends: InMemoryFriendChecker;
 let balances: InMemoryBalanceRepository;
+let settlements: InMemorySettlementRepository;
 let app: ReturnType<typeof createApp>;
 
 /** Resolves `identity`'s internal uuid by calling a cheap authenticated endpoint. */
@@ -112,7 +114,8 @@ beforeEach(() => {
   groups = new InMemoryExpenseGroupRepository(directory);
   expenses = new InMemorySplitExpenseRepository(groups, directory);
   friends = new InMemoryFriendChecker();
-  balances = new InMemoryBalanceRepository(expenses, groups, directory);
+  settlements = new InMemorySettlementRepository(groups, directory);
+  balances = new InMemoryBalanceRepository(expenses, groups, directory, settlements);
 
   app = createApp({
     projectId: PROJECT_ID,
@@ -247,6 +250,8 @@ beforeEach(() => {
     splitExpenseRepository: expenses,
     splitBalanceRepository: balances,
     splitFriendChecker: friends,
+    splitSettlementRepository: settlements,
+    splitSpendingRepository: expenses,
     ping: async () => {},
   });
 });
@@ -303,6 +308,9 @@ describe("split routes: authentication", () => {
       ["PATCH", `/api/split/expenses/${zeroId}`],
       ["DELETE", `/api/split/expenses/${zeroId}`],
       ["GET", "/api/split/balances"],
+      ["GET", "/api/split/settlements"],
+      ["POST", "/api/split/settlements"],
+      ["DELETE", `/api/split/settlements/${zeroId}`],
     ];
     for (const [method, path] of calls) {
       const res = await app.request(path, { method });
@@ -644,5 +652,123 @@ describe("balances", () => {
 
     const carolRes = await app.request(`/api/split/groups/${group.id}/balances`, { headers: await authHeader(CAROL) });
     expect(carolRes.status).toBe(404);
+  });
+});
+
+describe("settlements", () => {
+  it("records a repayment naming both people, visible to the payer and payee, 404 to a stranger", async () => {
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await app.request("/api/split/settlements", {
+      method: "POST",
+      headers: await authHeader(BOB),
+      body: JSON.stringify({ group_id: null, from_user_id: bobId, to_user_id: aliceId, amount: 450, currency: "TWD", day: "2026-08-01", note: null }),
+    });
+    expect(created.status).toBe(201);
+    const settlement = await created.json<{ id: string; from_user_id: string; to_user_id: string; amount: number }>();
+    expect(settlement).toMatchObject({ from_user_id: bobId, to_user_id: aliceId, amount: 450 });
+
+    const asAlice = await app.request(`/api/split/settlements?with=${bobId}`, { headers: await authHeader(ALICE) });
+    expect(asAlice.status).toBe(200);
+    const aliceBody = await asAlice.json<{ settlements: Array<{ id: string }> }>();
+    expect(aliceBody.settlements.map((s) => s.id)).toEqual([settlement.id]);
+
+    const asCarol = await app.request("/api/split/settlements", { headers: await authHeader(CAROL) });
+    expect(await asCarol.json()).toEqual({ settlements: [] });
+  });
+
+  it("rejects a settlement fabricated between two other people (caller not in it)", async () => {
+    await makeFriends(ALICE, BOB);
+    await makeFriends(ALICE, CAROL);
+    const bobId = await idOf(BOB);
+    const carolId = await idOf(CAROL);
+
+    const res = await app.request("/api/split/settlements", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({ group_id: null, from_user_id: bobId, to_user_id: carolId, amount: 100, currency: "TWD", day: "2026-08-01", note: null }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "not_a_participant" });
+  });
+
+  it("rejects paying yourself with a typed 400", async () => {
+    const aliceId = await idOf(ALICE);
+    const res = await app.request("/api/split/settlements", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({ group_id: null, from_user_id: aliceId, to_user_id: aliceId, amount: 100, currency: "TWD", day: "2026-08-01", note: null }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "cannot_settle_with_self" });
+  });
+
+  it("lets the payer delete, 404s a payee who neither created it nor paid it, and answers 404 for a malformed id", async () => {
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await app.request("/api/split/settlements", {
+      method: "POST",
+      headers: await authHeader(BOB),
+      body: JSON.stringify({ group_id: null, from_user_id: bobId, to_user_id: aliceId, amount: 450, currency: "TWD", day: "2026-08-01", note: null }),
+    });
+    const settlement = await created.json<{ id: string }>();
+
+    const byPayee = await app.request(`/api/split/settlements/${settlement.id}`, { method: "DELETE", headers: await authHeader(ALICE) });
+    expect(byPayee.status).toBe(404);
+
+    const malformed = await app.request("/api/split/settlements/not-a-uuid", { method: "DELETE", headers: await authHeader(BOB) });
+    expect(malformed.status).toBe(404);
+
+    const byPayer = await app.request(`/api/split/settlements/${settlement.id}`, { method: "DELETE", headers: await authHeader(BOB) });
+    expect(byPayer.status).toBe(200);
+  });
+
+  it("a grouped settlement is visible to a fellow group member and moves both balance screens", async () => {
+    // `InMemoryBalanceRepository` is constructed with the settlement
+    // repository here, and folds settlements in through the same pure
+    // functions the real CTEs were transcribed from — so the route -> use
+    // case -> repository -> JSON path can be asserted end to end. That is the
+    // fake, not the SQL: design.md is explicit that nothing in this repo's CI
+    // can verify `DrizzleBalanceRepository`'s query (no Postgres path in
+    // either Vitest project), so the real proof is still exercising both
+    // balance screens on real accounts.
+    const group = await createGroupAs(ALICE);
+    await makeFriends(ALICE, BOB);
+    await makeFriends(ALICE, CAROL);
+    const bobId = await idOf(BOB);
+    const aliceId = await idOf(ALICE);
+    await app.request(`/api/split/groups/${group.id}/members`, { method: "POST", headers: await authHeader(ALICE), body: JSON.stringify({ user_id: bobId }) });
+    const carolId = await idOf(CAROL);
+    await app.request(`/api/split/groups/${group.id}/members`, { method: "POST", headers: await authHeader(ALICE), body: JSON.stringify({ user_id: carolId }) });
+
+    // Alice pays 900 for the group, split with Bob: Bob owes her 450.
+    await createExpenseAs(ALICE, { groupId: group.id, payerUserId: aliceId, amount: 900, split: { mode: "equal", participant_user_ids: [aliceId, bobId] } });
+
+    const created = await app.request("/api/split/settlements", {
+      method: "POST",
+      headers: await authHeader(BOB),
+      body: JSON.stringify({ group_id: group.id, from_user_id: bobId, to_user_id: aliceId, amount: 300, currency: "TWD", day: "2026-08-02", note: null }),
+    });
+    const settlement = await created.json<{ id: string }>();
+
+    // Carol is neither the payer nor the payee, only a fellow group member.
+    const asCarol = await app.request(`/api/split/settlements?group_id=${group.id}`, { headers: await authHeader(CAROL) });
+    expect(asCarol.status).toBe(200);
+    const carolBody = await asCarol.json<{ settlements: Array<{ id: string }> }>();
+    expect(carolBody.settlements.map((s) => s.id)).toEqual([settlement.id]);
+
+    // 450 owed, 300 repaid -> 150. Named and signed on both screens: the
+    // zero-sum alone would survive an inverted fold.
+    type BalancesBody = { balances: Array<{ user_id: string; balances: Array<{ currency: string; amount: number }> }> };
+    const personal = await (await app.request("/api/split/balances", { headers: await authHeader(ALICE) })).json<BalancesBody>();
+    expect(personal.balances.find((b) => b.user_id === bobId)?.balances).toEqual([{ currency: "TWD", amount: 150 }]);
+
+    const groupBalances = await (await app.request(`/api/split/groups/${group.id}/balances`, { headers: await authHeader(ALICE) })).json<BalancesBody>();
+    expect(groupBalances.balances.find((b) => b.user_id === aliceId)?.balances).toEqual([{ currency: "TWD", amount: 150 }]);
+    expect(groupBalances.balances.find((b) => b.user_id === bobId)?.balances).toEqual([{ currency: "TWD", amount: -150 }]);
   });
 });

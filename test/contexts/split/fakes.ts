@@ -3,8 +3,13 @@ import type { BalanceRepository } from "../../../src/contexts/split/domain/balan
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "../../../src/contexts/split/domain/expense-group";
 import type { ExpenseGroupRepository } from "../../../src/contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../../src/contexts/split/domain/friend-checker";
+import { groupSettlementDelta, personalSettlementDelta } from "../../../src/contexts/split/domain/settlement-balance";
+import type { CreateSettlementInput, Settlement } from "../../../src/contexts/split/domain/settlement";
+import type { ListSettlementsFilter, SettlementRepository } from "../../../src/contexts/split/domain/settlement-repository";
 import type { CreateSplitExpenseInput, SplitExpense, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../../../src/contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
+import type { SplitSpendingAmount } from "../../../src/contexts/split/domain/split-spending";
+import type { SplitSpendingRepository } from "../../../src/contexts/split/domain/split-spending-repository";
 
 /** Test-only directory of display names, standing in for the `users` join a real adapter would do. */
 export class TestUserDirectory {
@@ -104,7 +109,7 @@ export class InMemoryFriendChecker implements FriendChecker {
   }
 }
 
-export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
+export class InMemorySplitExpenseRepository implements SplitExpenseRepository, SplitSpendingRepository {
   rows: SplitExpense[] = [];
 
   /**
@@ -183,6 +188,86 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
       return participates || (row.groupId !== null && memberGroupIds.has(row.groupId));
     });
   }
+
+  /**
+   * Mirrors the real adapter's join + GROUP BY: sums `split_share.amount` for
+   * `userId`'s own rows on expenses whose `day` falls in `month`, per
+   * currency (currency lives on the expense, not the share). The payer's own
+   * share counts — this is deliberately not the same filter `balancesForUser`
+   * applies, see `SplitSpendingRepository.splitSpendingForUser`.
+   */
+  async splitSpendingForUser(userId: string, month: string): Promise<SplitSpendingAmount[]> {
+    const totals = new Map<string, number>();
+    for (const row of this.rows) {
+      if (!row.day.startsWith(month)) continue;
+      for (const share of row.shares) {
+        if (share.userId !== userId) continue;
+        totals.set(row.currency, (totals.get(row.currency) ?? 0) + share.amount);
+      }
+    }
+    return [...totals.entries()].map(([currency, amount]) => ({ currency, amount }));
+  }
+}
+
+export class InMemorySettlementRepository implements SettlementRepository {
+  rows: Settlement[] = [];
+
+  /**
+   * Needs the group repository to mirror the adapter's group-membership
+   * clause in the unfiltered listing — a settlement visible only through
+   * group membership (neither party is the caller) still belongs there, the
+   * same way `InMemorySplitExpenseRepository.listForUser` handles it.
+   */
+  constructor(
+    private readonly groups?: InMemoryExpenseGroupRepository,
+    private readonly users?: TestUserDirectory,
+  ) {}
+
+  private nameFor(userId: string): string {
+    return this.users ? this.users.get(userId) : userId;
+  }
+
+  async create(input: CreateSettlementInput): Promise<Settlement> {
+    const now = new Date();
+    const settlement: Settlement = {
+      ...input,
+      fromDisplayName: this.nameFor(input.fromUserId),
+      toDisplayName: this.nameFor(input.toUserId),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.rows.push(settlement);
+    return settlement;
+  }
+
+  async findById(id: string): Promise<Settlement | null> {
+    return this.rows.find((row) => row.id === id) ?? null;
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const index = this.rows.findIndex((row) => row.id === id);
+    if (index === -1) return false;
+    this.rows.splice(index, 1);
+    return true;
+  }
+
+  /**
+   * Mirrors the real adapter's participation-scoped SQL WHERE, the same way
+   * `InMemorySplitExpenseRepository.listForUser` does for expenses.
+   */
+  async listForUser(userId: string, filter: ListSettlementsFilter): Promise<Settlement[]> {
+    const memberGroupIds = this.groups ? new Set((await this.groups.listForUser(userId)).map((group) => group.id)) : new Set<string>();
+    return this.rows.filter((row) => {
+      if (filter.groupId !== undefined) return row.groupId === filter.groupId;
+      const participates = row.fromUserId === userId || row.toUserId === userId;
+      if (filter.withUserId !== undefined) {
+        const other = filter.withUserId;
+        const otherParticipates = row.fromUserId === other || row.toUserId === other;
+        return row.groupId === null && participates && otherParticipates;
+      }
+      return participates || (row.groupId !== null && memberGroupIds.has(row.groupId));
+    });
+  }
 }
 
 /**
@@ -192,10 +277,20 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository {
  * aggregate in the database, never load every share into memory).
  */
 export class InMemoryBalanceRepository implements BalanceRepository {
+  /**
+   * [settlements] is optional only so the many tests predating settle-up keep
+   * constructing this with three arguments. Supplied, the fake folds
+   * settlements in through the *same* pure functions the real CTEs are
+   * transcribed from — which does not prove the SQL (nothing in CI can), but
+   * does prove the route -> use case -> repository -> JSON path actually
+   * carries a settlement into a reported balance. Without it that whole path
+   * was unexercised and only the pure functions were under test.
+   */
   constructor(
     private readonly expenses: InMemorySplitExpenseRepository,
     private readonly groups: InMemoryExpenseGroupRepository,
     private readonly users: TestUserDirectory,
+    private readonly settlements?: InMemorySettlementRepository,
   ) {}
 
   async balancesForUser(userId: string): Promise<Balance[]> {
@@ -214,6 +309,16 @@ export class InMemoryBalanceRepository implements BalanceRepository {
         if (payer === me) addNet(share.userId, expense.currency, share.amount);
         else if (share.userId === me) addNet(payer, expense.currency, -share.amount);
       }
+    }
+
+    // Personal rows are keyed by the counterpart, but the delta is computed
+    // from *my* side — see `personalSettlementDelta`'s doc: passing the
+    // counterpart instead silently inverts it.
+    for (const settlement of this.settlements?.rows ?? []) {
+      const other =
+        settlement.fromUserId === me ? settlement.toUserId : settlement.toUserId === me ? settlement.fromUserId : null;
+      if (other === null) continue;
+      addNet(other, settlement.currency, personalSettlementDelta(settlement, me));
     }
 
     return toBalances(net, this.users);
@@ -239,6 +344,14 @@ export class InMemoryBalanceRepository implements BalanceRepository {
         addNet(payer, expense.currency, share.amount);
         addNet(share.userId, expense.currency, -share.amount);
       }
+    }
+
+    // Group rows are keyed by the member themselves, so the subject and the
+    // function's argument are the same person here — unlike the personal
+    // query above.
+    for (const settlement of (this.settlements?.rows ?? []).filter((row) => row.groupId === groupId)) {
+      addNet(settlement.fromUserId, settlement.currency, groupSettlementDelta(settlement, settlement.fromUserId));
+      addNet(settlement.toUserId, settlement.currency, groupSettlementDelta(settlement, settlement.toUserId));
     }
 
     return toBalances(net, this.users);

@@ -169,6 +169,13 @@
       "when": 1785657975131,
       "tag": "0023_steep_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785731550679,
+      "tag": "0024_slim_maestro",
+      "breakpoints": true
     }
   ]
 }

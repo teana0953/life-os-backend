@@ -21,8 +21,15 @@ import {
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
+import {
+  InMemoryExpenseGroupRepository,
+  InMemoryFriendChecker,
+  InMemorySettlementRepository,
+  InMemorySplitExpenseRepository,
+  TestUserDirectory,
+} from "../../contexts/split/fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
-import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
+import { stubSplitBalanceRepository } from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -138,13 +145,17 @@ beforeAll(async () => {
 
 class InMemoryUserRepository implements UserRepository {
   private usersByFirebaseUid = new Map<string, User>();
-  private nextId = 1;
+
+  /** Optional so the many tests that never touch split routes can keep constructing this bare. */
+  constructor(private readonly directory?: TestUserDirectory) {}
 
   async getOrCreate(input: GetOrCreateUserInput): Promise<User> {
     const existing = this.usersByFirebaseUid.get(input.firebaseUid);
     if (existing) return existing;
     const user: User = {
-      id: `user-${this.nextId++}`,
+      // A real lowercase canonical uuid, since split routes reject anything
+      // else as a 404/400 (mirroring `split.test.ts`'s user repository).
+      id: crypto.randomUUID(),
       firebaseUid: input.firebaseUid,
       email: input.email,
       displayName: input.displayName,
@@ -153,6 +164,7 @@ class InMemoryUserRepository implements UserRepository {
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
     this.usersByFirebaseUid.set(input.firebaseUid, user);
+    this.directory?.add(user.id, user.displayName ?? user.email);
     return user;
   }
 
@@ -179,10 +191,18 @@ function buildApp() {
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
   const financeNetWorthRepository = new InMemoryNetWorthRepository();
   const budgetAlertNotifier = new FakeBudgetAlertNotifier();
+  // Real (in-memory) split fakes, not stubs: the split-spending and
+  // budget-non-interference tests below need to actually create a split
+  // expense through `/api/split/expenses` and read it back.
+  const userDirectory = new TestUserDirectory();
+  const expenseGroupRepository = new InMemoryExpenseGroupRepository(userDirectory);
+  const splitExpenseRepository = new InMemorySplitExpenseRepository(expenseGroupRepository, userDirectory);
+  const splitFriendChecker = new InMemoryFriendChecker();
+  const splitSettlementRepository = new InMemorySettlementRepository(expenseGroupRepository, userDirectory);
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
-    userRepository: new InMemoryUserRepository(),
+    userRepository: new InMemoryUserRepository(userDirectory),
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
@@ -229,13 +249,26 @@ function buildApp() {
     vapidPublicKey: "",
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,
-    expenseGroupRepository: stubExpenseGroupRepository,
-    splitExpenseRepository: stubSplitExpenseRepository,
+    expenseGroupRepository,
+    splitExpenseRepository,
     splitBalanceRepository: stubSplitBalanceRepository,
-    splitFriendChecker: stubSplitFriendChecker,
+    splitFriendChecker,
+    splitSettlementRepository,
+    // `InMemorySplitExpenseRepository` also implements `SplitSpendingRepository`.
+    splitSpendingRepository: splitExpenseRepository,
     ping: async () => {},
   });
-  return { app, financeCategoryRepository, financeTransactionRepository, financeBudgetRepository, financeNetWorthRepository, budgetAlertNotifier };
+  return {
+    app,
+    financeCategoryRepository,
+    financeTransactionRepository,
+    financeBudgetRepository,
+    financeNetWorthRepository,
+    budgetAlertNotifier,
+    expenseGroupRepository,
+    splitExpenseRepository,
+    splitFriendChecker,
+  };
 }
 
 function authed(token: string, method = "GET", body?: unknown) {
@@ -255,6 +288,50 @@ async function seedCategory(app: ReturnType<typeof buildApp>["app"], token: stri
   return (await res.json()) as { id: string; name: string; type: string };
 }
 
+/** Resolves `token`'s internal user id by calling a cheap authenticated endpoint. */
+async function idOf(app: ReturnType<typeof buildApp>["app"], token: string): Promise<string> {
+  const res = await app.request("/api/me", authed(token));
+  const body = await res.json<{ id: string }>();
+  return body.id;
+}
+
+/**
+ * Creates a split expense between two tokens, splitting evenly — enough to
+ * give `payerToken` a real `split_share` in the month, for the split-spending
+ * and budget-non-interference tests below. Establishes the friendship the
+ * split creation rule requires.
+ */
+async function createSplitExpenseBetween(
+  ctx: ReturnType<typeof buildApp>,
+  payerToken: string,
+  otherToken: string,
+  amount: number,
+  currency: string,
+  day: string,
+): Promise<void> {
+  const payerId = await idOf(ctx.app, payerToken);
+  const otherId = await idOf(ctx.app, otherToken);
+  ctx.splitFriendChecker.addFriendship(payerId, otherId);
+  const res = await ctx.app.request("/api/split/expenses", {
+    method: "POST",
+    headers: authHeaderFor(payerToken),
+    body: JSON.stringify({
+      group_id: null,
+      payer_user_id: payerId,
+      amount,
+      currency,
+      description: "dinner",
+      day,
+      split: { mode: "equal", participant_user_ids: [payerId, otherId] },
+    }),
+  });
+  if (res.status !== 201) throw new Error(`failed to seed split expense: ${res.status} ${await res.text()}`);
+}
+
+function authHeaderFor(token: string): Record<string, string> {
+  return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
 describe("finance HTTP routes", () => {
   let ctx: ReturnType<typeof buildApp>;
 
@@ -272,6 +349,7 @@ describe("finance HTTP routes", () => {
     expect((await app.request("/api/finance/categories", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/api/finance/categories/some-id", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/api/finance/summary?month=2026-07")).status).toBe(401);
+    expect((await app.request("/api/finance/split-spending?month=2026-07")).status).toBe(401);
     expect((await app.request("/api/finance/budgets?month=2026-07")).status).toBe(401);
     expect((await app.request("/api/finance/budgets", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" })).status).toBe(401);
     expect((await app.request("/api/finance/budgets/some-id", { method: "DELETE" })).status).toBe(401);
@@ -559,6 +637,77 @@ describe("finance HTTP routes", () => {
       const res = await app.request("/api/finance/summary?month=2026-07", authed(token));
       expect(await res.json()).toEqual({ month: "2026-07", totals: [], by_category: [] });
     });
+
+    it("is unaffected by split expenses: totals and by_category are exactly what the user's own transactions produce", async () => {
+      // Pins /api/finance/summary's response shape and content against a
+      // regression where a split share leaks into it (design.md: summary's
+      // shape must not change, since clients already read it — split
+      // spending is reported via its own endpoint instead).
+      const token = await validToken();
+      const otherToken = await validToken("uid-other");
+      const foodCategory = await seedCategory(ctx.app, token, { name: "餐飲", type: "expense" });
+
+      await ctx.app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 300, category_id: foodCategory.id, date: "2026-07-05" }));
+      const withoutSplit = await (await ctx.app.request("/api/finance/summary?month=2026-07", authed(token))).json();
+
+      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-06");
+
+      const res = await ctx.app.request("/api/finance/summary?month=2026-07", authed(token));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(withoutSplit);
+    });
+  });
+
+  describe("split-spending", () => {
+    it("sums the caller's own split-expense shares per currency for the month, including as payer", async () => {
+      const token = await validToken();
+      const otherToken = await validToken("uid-other");
+      // The caller is the payer here, and their own share must count.
+      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-01");
+
+      const res = await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(token));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450 }] });
+    });
+
+    // Both halves run through one app instance, so a future change that fed
+    // settlements into the split-spending aggregate (or wired the settlement
+    // table into `splitSpendingRepository`) would fail here. It still does not
+    // prove the real SQL adapter — nothing in CI can.
+    it("a recorded settlement does not move the split-spending figure", async () => {
+      const token = await validToken();
+      const otherToken = await validToken("uid-other");
+      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-01");
+
+      const before = await (await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(token))).json();
+
+      const callerId = await idOf(ctx.app, token);
+      const otherId = await idOf(ctx.app, otherToken);
+      const settled = await ctx.app.request(
+        "/api/split/settlements",
+        authed(token, "POST", {
+          group_id: null,
+          from_user_id: callerId,
+          to_user_id: otherId,
+          amount: 450,
+          currency: "TWD",
+          day: "2026-07-05",
+          note: null,
+        }),
+      );
+      expect(settled.status).toBe(201);
+
+      const after = await (await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(token))).json();
+      expect(after).toEqual(before);
+      expect(after).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450 }] });
+    });
+
+    it("returns an empty array, not a zero row, for a month with no split shares", async () => {
+      const token = await validToken();
+      const res = await ctx.app.request("/api/finance/split-spending?month=2026-08", authed(token));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ month: "2026-08", totals: [] });
+    });
   });
 
   describe("budgets", () => {
@@ -652,6 +801,24 @@ describe("finance HTTP routes", () => {
 
       expect(budgetAlertNotifier.messages).toHaveLength(1);
       expect(budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月餐飲支出已達預算 8 成" });
+    });
+
+    it("a TWD split share in the month leaves every budget's spent unchanged and raises no alert (checkBudgetAlerts only fires from createTransaction)", async () => {
+      const { app, budgetAlertNotifier } = ctx;
+      const token = await validToken();
+      const otherToken = await validToken("uid-other");
+      const food = await seedCategory(app, token, { name: "餐飲" });
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 1000 }));
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: food.id, amount: 1000 }));
+
+      const before = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as { budgets: unknown[] };
+
+      // Large enough to cross the 80% alert threshold were it (wrongly) counted.
+      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-01");
+
+      const after = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as { budgets: unknown[] };
+      expect(after).toEqual(before);
+      expect(budgetAlertNotifier.messages).toHaveLength(0);
     });
   });
 

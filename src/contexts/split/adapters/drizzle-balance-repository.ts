@@ -3,6 +3,13 @@ import type { Db } from "../../../shared/db/client";
 import type { Balance, CurrencyBalance } from "../domain/balance";
 import type { BalanceRepository } from "../domain/balance-repository";
 import { splitDisplayName } from "../domain/display-name";
+// personalSettlementDelta / groupSettlementDelta are the single written
+// source of truth for the signs below (settlement-balance.ts) — every
+// settlement UNION ALL leg here must carry a comment naming which function it
+// transcribes. Nothing in CI executes this SQL (no Postgres path in either
+// Vitest project), so this transcription is honest but unverified here; the
+// only real proof is exercising both balance screens against two real
+// accounts before/after a settlement (design.md, tasks.md 4.4).
 
 type NetRow = {
   counterpart_id: string;
@@ -58,6 +65,22 @@ export class DrizzleBalanceRepository implements BalanceRepository {
           FROM split_share ss
           JOIN split_expense se ON se.id = ss.expense_id
          WHERE ss.user_id = ${me}::uuid AND se.payer_user_id != ${me}::uuid
+        -- personalSettlementDelta: row keyed by the counterpart (from_user_id
+        -- here); a settlement FROM the counterpart TO me pays off what they
+        -- owe, so it SUBTRACTS from "counterpart owes me". No group_id filter
+        -- — this balance nets grouped and groupless expenses alike, so its
+        -- settlement legs must too (design.md).
+        UNION ALL
+        SELECT s.from_user_id AS counterpart_id, s.currency AS currency, -s.amount AS signed_amount
+          FROM split_settlement s
+         WHERE s.to_user_id = ${me}::uuid
+        -- personalSettlementDelta: row keyed by the counterpart (to_user_id
+        -- here); a settlement FROM me TO the counterpart pays off what I owe
+        -- them, so it ADDS (moves the net away from "I owe them").
+        UNION ALL
+        SELECT s.to_user_id AS counterpart_id, s.currency AS currency, s.amount AS signed_amount
+          FROM split_settlement s
+         WHERE s.from_user_id = ${me}::uuid
       )
       SELECT net.counterpart_id AS counterpart_id, u.display_name AS display_name, u.email AS email, net.currency AS currency, SUM(net.signed_amount) AS net
         FROM net
@@ -86,6 +109,20 @@ export class DrizzleBalanceRepository implements BalanceRepository {
           FROM split_share ss
           JOIN split_expense se ON se.id = ss.expense_id
          WHERE se.group_id = ${groupId}::uuid AND ss.user_id != se.payer_user_id
+        -- groupSettlementDelta: row keyed by the member themselves — a member
+        -- who is the settlement's sender reduces what they owe the group, so
+        -- it ADDS (moves their own figure up, toward creditor). Only this
+        -- group's settlements count (unlike the personal query above).
+        UNION ALL
+        SELECT s.from_user_id AS counterpart_id, s.currency AS currency, s.amount AS signed_amount
+          FROM split_settlement s
+         WHERE s.group_id = ${groupId}::uuid
+        -- groupSettlementDelta: a member who is the settlement's recipient
+        -- reduces what they are owed, so it SUBTRACTS.
+        UNION ALL
+        SELECT s.to_user_id AS counterpart_id, s.currency AS currency, -s.amount AS signed_amount
+          FROM split_settlement s
+         WHERE s.group_id = ${groupId}::uuid
       )
       SELECT net.counterpart_id AS counterpart_id, u.display_name AS display_name, u.email AS email, net.currency AS currency, SUM(net.signed_amount) AS net
         FROM net

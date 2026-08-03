@@ -15,7 +15,14 @@ import type { MenstrualRepository } from "../../../src/contexts/health/domain/me
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
-import { stubExpenseGroupRepository, stubSplitBalanceRepository, stubSplitExpenseRepository, stubSplitFriendChecker } from "./split-stubs";
+import {
+  stubExpenseGroupRepository,
+  stubSettlementRepository,
+  stubSplitBalanceRepository,
+  stubSplitExpenseRepository,
+  stubSplitFriendChecker,
+  stubSplitSpendingRepository,
+} from "./split-stubs";
 
 // This suite only exercises /health and /api/me; the health-context routes have their own test file.
 function notImplemented(): never {
@@ -282,6 +289,8 @@ function buildApp(
     splitExpenseRepository: stubSplitExpenseRepository,
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
+    splitSettlementRepository: stubSettlementRepository,
+    splitSpendingRepository: stubSplitSpendingRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });

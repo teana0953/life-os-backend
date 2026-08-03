@@ -622,6 +622,43 @@ export const splitShare = pgTable(
   ],
 );
 
+// split_settlement: a repayment recorded as its own kind of record — who paid
+// whom, how much, in which currency, on which day, optionally within a group
+// (add-settle-up/design.md). Never a reversed expense. `group_id` nullable,
+// symmetric with split_expense: a repayment can happen inside a group or
+// one-off between friends. The CHECKs are the DB-level backstop: amount > 0
+// mirrors split_expense's, and from_user_id <> to_user_id blocks "paid
+// myself", which is not a repayment.
+export const splitSettlement = pgTable(
+  "split_settlement",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id").references(() => expenseGroup.id),
+    fromUserId: uuid("from_user_id")
+      .notNull()
+      .references(() => users.id),
+    toUserId: uuid("to_user_id")
+      .notNull()
+      .references(() => users.id),
+    amount: integer("amount").notNull(),
+    currency: text("currency").notNull(),
+    day: date("day").notNull(),
+    note: text("note"),
+    createdByUserId: uuid("created_by_user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("split_settlement_from_idx").on(t.fromUserId),
+    index("split_settlement_to_idx").on(t.toUserId),
+    index("split_settlement_group_idx").on(t.groupId),
+    check("split_settlement_amount_positive", sql`amount > 0`),
+    check("split_settlement_not_self", sql`from_user_id <> to_user_id`),
+  ],
+);
+
 // friend_invite: a single-use, 7-day invite link. Only the token's hash is
 // stored (a DB leak is not an invite-link leak); the hash is a deterministic,
 // unsalted SHA-256 precisely so `WHERE token_hash = H(token)` and the unique
