@@ -19,6 +19,7 @@ export const stubExpenseGroupRepository: ExpenseGroupRepository = {
   listMembers: notImplemented,
   listMembersForGroups: notImplemented,
   membersAmong: notImplemented,
+  shareAnyGroup: notImplemented,
 };
 
 export const stubSplitExpenseRepository: SplitExpenseRepository = {

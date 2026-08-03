@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "../../../shared/db/client";
 import { expenseGroup, expenseGroupMember, users } from "../../../shared/db/schema";
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "../domain/expense-group";
@@ -108,6 +109,22 @@ export class DrizzleExpenseGroupRepository implements ExpenseGroupRepository {
       .innerJoin(users, eq(users.id, expenseGroupMember.userId))
       .where(inArray(expenseGroupMember.groupId, groupIds));
     return rows.map((row) => toMember(row.member, { displayName: row.displayName, email: row.email }));
+  }
+
+  /**
+   * A self-join on membership: one row is enough, so `limit(1)` — this is a
+   * predicate, not a listing, and the pair may share many groups.
+   */
+  async shareAnyGroup(userId: string, otherUserId: string): Promise<boolean> {
+    const mine = alias(expenseGroupMember, "mine");
+    const theirs = alias(expenseGroupMember, "theirs");
+    const rows = await this.getDb()
+      .select({ groupId: mine.groupId })
+      .from(mine)
+      .innerJoin(theirs, eq(theirs.groupId, mine.groupId))
+      .where(and(eq(mine.userId, userId), eq(theirs.userId, otherUserId)))
+      .limit(1);
+    return rows.length > 0;
   }
 
   async membersAmong(groupId: string, userIds: string[]): Promise<Set<string>> {

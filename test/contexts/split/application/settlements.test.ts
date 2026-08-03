@@ -101,10 +101,27 @@ describe("createSettlement: caller must be payer or payee (anti-fabrication)", (
   });
 });
 
-describe("createSettlement: groupless settlements require friendship", () => {
-  it("rejects a counterpart who is not a friend", async () => {
+describe("createSettlement: a groupless settlement needs a friend or a shared group", () => {
+  it("rejects a counterpart who is neither", async () => {
     await expect(createSettlement(deps, groupless({ fromUserId: D, toUserId: A }))).rejects.toBeInstanceOf(NotFriends);
     expect(settlements.rows).toHaveLength(0);
+  });
+
+  it("accepts a group co-member who is not a friend", async () => {
+    // A debt can arise purely through a shared group between two people who
+    // never became friends. Requiring friendship to settle it would leave
+    // them holding a balance with no way to clear it — and the UI would have
+    // to hide an action on a debt that is real. Deliberately looser than
+    // `createExpense`'s groupless rule: you still cannot *create* a groupless
+    // expense with them, only settle one you already have.
+    const group = await createGroup(groups, "Trip", A);
+    await addGroupMember({ groups, friends }, A, group.id, B, NOW);
+    // D is nobody's friend; put them in the same group as A.
+    await groups.addMember(group.id, D, NOW);
+
+    await expect(createSettlement(deps, groupless({ fromUserId: D, toUserId: A }))).resolves.toBeDefined();
+    expect(settlements.rows).toHaveLength(1);
+    expect(settlements.rows[0].groupId).toBeNull();
   });
 });
 
