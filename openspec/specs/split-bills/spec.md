@@ -560,8 +560,12 @@ asserting the signed figure of a named person.
 ### Requirement: Settlements follow the same authorization rules as expenses
 
 Creating a settlement SHALL require the caller to be its payer or its payee,
-and the other party to be a friend of the caller or — within a group — a
-member of it; a grouped settlement SHALL involve only members of that group.
+and the other party to be a friend of the caller **or someone they share a
+group with** — deliberately looser than creating a groupless expense, which
+requires friendship, because a debt can arise purely through a shared group
+between two people who never became friends and refusing to settle it would
+leave that balance with no way to clear it. Within a group, the other party
+must be a member of it; a grouped settlement SHALL involve only members of that group.
 A settlement SHALL be visible only to its payer, its payee, or the members of
 its group, and SHALL be deletable only by the user who created it or the one
 who paid. Every other caller SHALL receive `404`, never `403`.
@@ -594,6 +598,13 @@ who paid. Every other caller SHALL receive `404`, never `403`.
 - **WHEN** a settlement is requested with a path id that is not a UUID, or
   submitted with a body id that is not a UUID
 - **THEN** the response is `404` or `400` respectively, never `500`
+
+#### Scenario: A group co-member who is not a friend can be settled with
+
+- **WHEN** two people share a group but are not friends, and one records a
+  person-to-person repayment to the other
+- **THEN** it is accepted — they still could not create a groupless expense
+  together, only settle a debt they already have
 
 ### Requirement: An archived group takes no new settlements but keeps them correctable
 

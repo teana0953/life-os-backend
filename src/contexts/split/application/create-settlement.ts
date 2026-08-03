@@ -52,9 +52,18 @@ export async function createSettlement(deps: CreateSettlementDeps, input: Create
     if (group.archivedAt !== null) throw new GroupArchived();
     if (!members.has(fromUserId) || !members.has(toUserId)) throw new NotAGroupMember();
   } else {
+    // A friend **or** someone a group is shared with. Deliberately looser
+    // than `createExpense`'s groupless rule, which requires friendship: a
+    // debt can arise purely through a shared group between two people who
+    // never became friends, and refusing to settle it would leave them
+    // holding a balance with no way to clear it — an action the UI would
+    // have to hide, on a debt that is real. You still cannot *create* a
+    // groupless expense with them; you can only settle one you already have.
     const other = callerUserId === fromUserId ? toUserId : fromUserId;
     const friends = await deps.friends.friendsAmong(callerUserId, [other]);
-    if (!friends.has(other)) throw new NotFriends();
+    if (!friends.has(other) && !(await deps.groups.shareAnyGroup(callerUserId, other))) {
+      throw new NotFriends();
+    }
   }
 
   return deps.settlements.create({

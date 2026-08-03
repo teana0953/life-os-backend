@@ -21,4 +21,14 @@ export interface ExpenseGroupRepository {
   listMembersForGroups(groupIds: string[]): Promise<GroupMember[]>;
   /** Of `userIds`, the subset that are members of `groupId` — one query for a whole batch, not one per user. */
   membersAmong(groupId: string, userIds: string[]): Promise<Set<string>>;
+
+  /**
+   * Whether the two users belong to at least one group together.
+   *
+   * Settling a person-to-person debt needs this: a debt can arise purely
+   * through a shared group, and the two people need never have become
+   * friends — so requiring friendship to settle it would leave them holding
+   * a balance with no way to clear it.
+   */
+  shareAnyGroup(userId: string, otherUserId: string): Promise<boolean>;
 }

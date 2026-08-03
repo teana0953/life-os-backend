@@ -87,6 +87,11 @@ export class InMemoryExpenseGroupRepository implements ExpenseGroupRepository {
     return this.members.filter((m) => wanted.has(m.groupId));
   }
 
+  async shareAnyGroup(userId: string, otherUserId: string): Promise<boolean> {
+    const mine = new Set(this.members.filter((m) => m.userId === userId).map((m) => m.groupId));
+    return this.members.some((m) => m.userId === otherUserId && mine.has(m.groupId));
+  }
+
   async membersAmong(groupId: string, userIds: string[]): Promise<Set<string>> {
     this.membersAmongCalls += 1;
     const groupMembers = new Set(this.members.filter((m) => m.groupId === groupId).map((m) => m.userId));
