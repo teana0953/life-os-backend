@@ -1,0 +1,160 @@
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import { migrate } from "drizzle-orm/pglite/migrator";
+import { sql } from "drizzle-orm";
+import * as schema from "../../src/shared/db/schema";
+import type { Db } from "../../src/shared/db/client";
+
+/**
+ * A real PostgreSQL engine (PGlite, WASM — no container, no external service)
+ * with this repo's own `drizzle/` migrations applied, handed to a repository as
+ * the `Db` it expects. Tests built on it execute the repositories' actual SQL,
+ * unlike the hand-written fake `Db` used elsewhere, whose `where()` discards
+ * its argument.
+ *
+ * WHAT THIS DOES NOT PROVE — read before assuming coverage:
+ *
+ * 1. **`drizzle-orm/pglite` has no `batch`.** The atomic write paths
+ *    (`DrizzleSplitExpenseRepository.create`/`update`,
+ *    `DrizzleExpenseGroupRepository.create`) go through `db.batch` and
+ *    therefore cannot be run here as-is. Tests seed data with plain inserts
+ *    and then exercise the read side. What is proven is *"the query is
+ *    written correctly"*, never *"a batch of writes is atomic"*.
+ *
+ * 2. **PGlite is not Neon.** Same SQL dialect, different deployment. Anything
+ *    at the connection layer — neon-http's lack of transactions, timeouts,
+ *    pooling, driver-level error shapes — is out of scope. What is proven is
+ *    **SQL semantics**, which is precisely the half that previously had no
+ *    evidence at all.
+ *
+ * 3. **Some tests prove *which rows*, not *what is in them*.** The
+ *    `listForUser` cases assert the set of expense ids and nothing else, so
+ *    that query's share fan-out, its `namesFor` lookup and its row mapping
+ *    are unproven here: returning every expense with empty shares, or with a
+ *    wrong `payerDisplayName`, keeps this suite green. The balance tests do
+ *    assert whole entries (see the comments in `balances.test.ts`), because
+ *    a broken `JOIN users` there is otherwise invisible.
+ *
+ * Isolation strategy (one strategy, used everywhere — do not mix in another):
+ * **one PGlite instance per test file** (`createTestDb()` in `beforeAll`,
+ * ~1s including migrations), and `resetDb()` before each case. `resetDb`
+ * truncates with `CASCADE` in a single statement so the foreign keys between
+ * `users` / `expense_group` / `expense_group_member` / `split_expense` /
+ * `split_share` / `split_settlement` cannot bite regardless of order.
+ *
+ * **Cases within a file must run sequentially** — Vitest's default, and a
+ * requirement of this strategy, not a preference. All cases in a file share
+ * the one instance, so a concurrent peer's `TRUNCATE ... CASCADE` in
+ * `beforeEach` deletes the rows another running case is asserting on. Do not
+ * enable `test.concurrent` or `sequence.concurrent` for the `db` project
+ * (verified: `--sequence.concurrent` fails 12 of 16). Wanting concurrency
+ * means moving to a PGlite instance per *case*, not loosening this. Shuffling
+ * file or case order is fine — the suite is order-independent.
+ */
+export type TestDb = {
+  /** The repositories' `Db` — pass straight into a `Drizzle*Repository`. */
+  db: Db;
+  /** Truncate every table these tests touch. Call in `beforeEach`. */
+  resetDb: () => Promise<void>;
+  close: () => Promise<void>;
+};
+
+/**
+ * The one and only cast in this suite. `drizzle-orm/pglite`'s instance type is
+ * nominally different from `drizzle-orm/neon-http`'s (`Db`), but the query
+ * builder surface the repositories use (`select`/`insert`/`update`/`delete`/
+ * `execute`) is identical. The single thing genuinely missing on the PGlite
+ * side is `batch` — see the note above. Keep this cast here; do not repeat it
+ * in test files.
+ */
+function asDb(pgliteDb: unknown): Db {
+  return pgliteDb as Db;
+}
+
+const TABLES = ["split_settlement", "split_share", "split_expense", "expense_group_member", "expense_group", "users"];
+
+/** Seed helpers. Plain inserts, deliberately not `db.batch` — see limit 1 above. */
+export async function insertUser(db: Db, id: string, email: string, displayName: string | null = null): Promise<string> {
+  await db.insert(schema.users).values({ id, firebaseUid: `fb-${id}`, email, displayName });
+  return id;
+}
+
+export async function insertGroup(db: Db, id: string, name: string, createdByUserId: string): Promise<string> {
+  await db.insert(schema.expenseGroup).values({ id, name, createdByUserId });
+  return id;
+}
+
+export async function insertMember(db: Db, groupId: string, userId: string): Promise<void> {
+  await db.insert(schema.expenseGroupMember).values({ groupId, userId });
+}
+
+export async function insertExpense(
+  db: Db,
+  input: {
+    id: string;
+    groupId?: string | null;
+    payerUserId: string;
+    amount: number;
+    currency?: string;
+    description?: string;
+    day?: string;
+    shares: { userId: string; amount: number }[];
+  },
+): Promise<string> {
+  await db.insert(schema.splitExpense).values({
+    id: input.id,
+    groupId: input.groupId ?? null,
+    payerUserId: input.payerUserId,
+    // Deliberately NOT the payer. `created_by_user_id` is who recorded the
+    // expense and `payer_user_id` is who spent the money — production keeps
+    // them apart (one person can record what another paid), but when the
+    // fixtures set them equal, swapping one column for the other in any
+    // query still returns a non-empty, wrong-person answer that every
+    // assertion accepts. Seven such mutations survived until this line.
+    createdByUserId: input.shares.find((share) => share.userId !== input.payerUserId)?.userId ?? input.payerUserId,
+    amount: input.amount,
+    currency: input.currency ?? "TWD",
+    description: input.description ?? "test expense",
+    day: input.day ?? "2026-03-10",
+    splitMode: "exact",
+  });
+  if (input.shares.length > 0) {
+    await db.insert(schema.splitShare).values(input.shares.map((share) => ({ expenseId: input.id, ...share })));
+  }
+  return input.id;
+}
+
+export async function insertSettlement(
+  db: Db,
+  input: { id: string; groupId?: string | null; fromUserId: string; toUserId: string; amount: number; currency?: string; day?: string },
+): Promise<string> {
+  await db.insert(schema.splitSettlement).values({
+    id: input.id,
+    groupId: input.groupId ?? null,
+    fromUserId: input.fromUserId,
+    toUserId: input.toUserId,
+    amount: input.amount,
+    currency: input.currency ?? "TWD",
+    day: input.day ?? "2026-03-11",
+    // Same reason as `insertExpense`: recorded by the recipient, not the
+    // payer, so the two columns cannot be confused for each other.
+    createdByUserId: input.toUserId,
+  });
+  return input.id;
+}
+
+export async function createTestDb(): Promise<TestDb> {
+  const client = new PGlite();
+  const pgliteDb = drizzle(client, { schema });
+  await migrate(pgliteDb, { migrationsFolder: "./drizzle" });
+  const db = asDb(pgliteDb);
+  return {
+    db,
+    resetDb: async () => {
+      await db.execute(sql.raw(`TRUNCATE ${TABLES.join(", ")} CASCADE`));
+    },
+    close: async () => {
+      await client.close();
+    },
+  };
+}

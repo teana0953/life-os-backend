@@ -6,10 +6,12 @@ import { splitDisplayName } from "../domain/display-name";
 // personalSettlementDelta / groupSettlementDelta are the single written
 // source of truth for the signs below (settlement-balance.ts) — every
 // settlement UNION ALL leg here must carry a comment naming which function it
-// transcribes. Nothing in CI executes this SQL (no Postgres path in either
-// Vitest project), so this transcription is honest but unverified here; the
-// only real proof is exercising both balance screens against two real
-// accounts before/after a settlement (design.md, tasks.md 4.4).
+// transcribes. This SQL **is** executed in CI: `test/db/balances.test.ts`
+// runs it against a real Postgres (PGlite) with this repo's migrations, and
+// every settlement leg's sign, currency column and group scope was shown to
+// redden a test when made wrong. Still unproven there: the write paths
+// (`db.batch` has no PGlite equivalent) and anything at the connection layer
+// — see `test/db/harness.ts` for the full boundary.
 
 type NetRow = {
   counterpart_id: string;
