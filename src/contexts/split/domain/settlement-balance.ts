@@ -10,12 +10,11 @@ export interface SettlementLike {
  * settlement contributes to each of the two balance queries. Part 2's
  * `DrizzleBalanceRepository` transcribes these signs into hand-written SQL
  * `UNION ALL` legs — the CTEs must carry a comment pointing back to whichever
- * function they copy. Read that as an honest limit, not a guarantee: these
- * tests prove the two functions below are correct against design.md's
- * worked examples, not that the hand-written SQL matches them — nothing in
- * CI can execute that SQL (no Postgres path in either Vitest project), so
- * the only real proof the CTEs got it right is exercising both balance
- * screens against two real accounts before/after a settlement (design.md).
+ * function they copy. These tests prove the two functions below are correct
+ * against design.md's worked examples; that the hand-written CTEs match them
+ * is proven separately by `test/db/balances.test.ts`, which executes that SQL
+ * against a real Postgres and was shown to fail when either query's
+ * settlement signs are swapped.
  *
  * The two balance queries key their rows by different people (personal: the
  * *counterpart*; group: the member *themselves*), and design.md is emphatic
