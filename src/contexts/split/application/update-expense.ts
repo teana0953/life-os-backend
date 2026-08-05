@@ -44,7 +44,7 @@ export async function updateExpense(deps: CreateExpenseDeps, callerUserId: strin
     },
   );
 
-  const updated = await deps.expenses.update(expenseId, validated, now);
+  const updated = await deps.expenses.update(expenseId, validated, now, caller);
   if (!updated) throw new ExpenseNotFound();
   return updated;
 }

@@ -176,6 +176,20 @@
       "when": 1785731550679,
       "tag": "0024_slim_maestro",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785899969446,
+      "tag": "0025_add-split-activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785904877531,
+      "tag": "0026_split-activity-direction",
+      "breakpoints": true
     }
   ]
 }

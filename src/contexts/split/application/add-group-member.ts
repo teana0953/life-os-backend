@@ -31,5 +31,5 @@ export async function addGroupMember(deps: AddGroupMemberDeps, callerUserId: str
   const friends = await deps.friends.friendsAmong(caller, [addedUserId]);
   if (!friends.has(addedUserId)) throw new NotFriends();
 
-  return deps.groups.addMember(groupId, addedUserId, now);
+  return deps.groups.addMember(groupId, addedUserId, now, caller);
 }

@@ -18,6 +18,7 @@ import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-s
 import {
   stubExpenseGroupRepository,
   stubSettlementRepository,
+  stubSplitActivityRepository,
   stubSplitBalanceRepository,
   stubSplitExpenseRepository,
   stubSplitFriendChecker,
@@ -290,6 +291,7 @@ function buildApp(
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
     splitSettlementRepository: stubSettlementRepository,
+    splitActivityRepository: stubSplitActivityRepository,
     splitSpendingRepository: stubSplitSpendingRepository,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,

@@ -2,6 +2,7 @@ import type { BalanceRepository } from "../../../src/contexts/split/domain/balan
 import type { ExpenseGroupRepository } from "../../../src/contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../../src/contexts/split/domain/friend-checker";
 import type { SettlementRepository } from "../../../src/contexts/split/domain/settlement-repository";
+import type { SplitActivityRepository } from "../../../src/contexts/split/domain/split-activity-repository";
 import type { SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
 import type { SplitSpendingRepository } from "../../../src/contexts/split/domain/split-spending-repository";
 
@@ -48,4 +49,8 @@ export const stubSettlementRepository: SettlementRepository = {
 
 export const stubSplitSpendingRepository: SplitSpendingRepository = {
   splitSpendingForUser: notImplemented,
+};
+
+export const stubSplitActivityRepository: SplitActivityRepository = {
+  listForUser: notImplemented,
 };

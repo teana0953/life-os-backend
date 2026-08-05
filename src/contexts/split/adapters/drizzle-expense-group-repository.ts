@@ -1,7 +1,7 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "../../../shared/db/client";
-import { expenseGroup, expenseGroupMember, users } from "../../../shared/db/schema";
+import { expenseGroup, expenseGroupMember, splitActivity, users } from "../../../shared/db/schema";
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "../domain/expense-group";
 import type { ExpenseGroupRepository } from "../domain/expense-group-repository";
 import { splitDisplayName } from "../domain/display-name";
@@ -53,7 +53,18 @@ export class DrizzleExpenseGroupRepository implements ExpenseGroupRepository {
       updatedAt: now,
     });
     const memberInsert = db.insert(expenseGroupMember).values({ groupId: id, userId: input.createdByUserId, joinedAt: now });
-    await db.batch([groupInsert, memberInsert]);
+    // Grouped, so no frozen audience: it is shown to the group's current
+    // members, which at this instant is the creator and later everyone added
+    // — deliberately, so a member who joins next month can still see the group
+    // being created (tasks 1b.4).
+    const activityInsert = db.insert(splitActivity).values({
+      type: "group_created",
+      actorUserId: input.createdByUserId,
+      groupId: id,
+      subjectId: id,
+      createdAt: now,
+    });
+    await db.batch([groupInsert, memberInsert, activityInsert]);
     return { id, name: input.name, createdByUserId: input.createdByUserId, archivedAt: null, createdAt: now, updatedAt: now };
   }
 
@@ -71,17 +82,72 @@ export class DrizzleExpenseGroupRepository implements ExpenseGroupRepository {
     return rows.map((row) => toGroup(row.group));
   }
 
-  async archive(id: string, now: Date): Promise<boolean> {
-    const updated = await this.getDb()
+  /**
+   * Archiving and its activity entry in one batch, both conditional on the
+   * group not being archived **already**.
+   *
+   * The row is indeed never deleted (that premise still holds, and is what
+   * makes `split_activity.group_id` safe as a foreign key) — but "the row is
+   * there" was never the condition that mattered here. `archived_at` is a
+   * one-way transition, so the reachable wrong state is the *second* archive:
+   * a plain `where id = ?` matches an already-archived group, and a
+   * double-tapped button makes the timeline say the group was archived twice.
+   *
+   * Both statements carry the `archived_at is null` predicate, so there is no
+   * read-then-write anywhere: a *sequential* second caller's UPDATE matches
+   * nothing, its `INSERT ... SELECT` selects nothing, and `false` comes back.
+   *
+   * **The predicate alone does not survive concurrency — `for update of g`
+   * does.** `db.batch` is one READ COMMITTED transaction and each statement in
+   * it takes its own snapshot, so two concurrent *first* archives would both
+   * see `archived_at is null` at their INSERT and both write an entry, while
+   * only one UPDATE matches: the timeline would say the group was archived
+   * twice, which is the state task 2.3c exists to prevent, and the loser would
+   * get `false` back on top of it. Locking the group row in the INSERT
+   * serialises the two: the second one re-checks after the first commits, sees
+   * `archived_at` set, selects nothing, and its UPDATE matches nothing too.
+   *
+   * **UNPROVEN BY THIS SUITE**: PGlite is a single connection, so no test here
+   * can overlap two of these transactions. Only the emitted SQL is asserted
+   * (split-activity-write.test.ts, "the emitted SQL takes a row lock"); the
+   * race is argued from Postgres' READ COMMITTED semantics, not demonstrated.
+   *
+   * **ORDER: the insert comes BEFORE the update**, for the same reason as the
+   * two deletes — after it, `archived_at` is already set inside this
+   * transaction, the SELECT matches nothing and the entry is silently never
+   * written.
+   */
+  async archive(id: string, now: Date, actorUserId: string): Promise<boolean> {
+    const db = this.getDb();
+    const activityInsert = db.execute(sql`
+      insert into ${splitActivity} (type, actor_user_id, group_id, subject_id, created_at)
+      select 'group_archived', ${actorUserId}::uuid, g.id, g.id, ${now.toISOString()}::timestamptz
+      from ${expenseGroup} g
+      where g.id = ${id}::uuid and g.archived_at is null
+      for update of g
+    `);
+    const groupUpdate = db
       .update(expenseGroup)
       .set({ archivedAt: now, updatedAt: now })
-      .where(eq(expenseGroup.id, id))
+      .where(and(eq(expenseGroup.id, id), isNull(expenseGroup.archivedAt)))
       .returning({ id: expenseGroup.id });
+    const [, updated] = await db.batch([activityInsert, groupUpdate]);
     return updated.length > 0;
   }
 
-  async addMember(groupId: string, userId: string, now: Date): Promise<GroupMember> {
-    const [row] = await this.getDb().insert(expenseGroupMember).values({ groupId, userId, joinedAt: now }).returning();
+  /** The membership row and its activity entry in one batch — `actorUserId` is who did the adding, `userId` who was added. */
+  async addMember(groupId: string, userId: string, now: Date, actorUserId: string): Promise<GroupMember> {
+    const db = this.getDb();
+    const memberInsert = db.insert(expenseGroupMember).values({ groupId, userId, joinedAt: now }).returning();
+    const activityInsert = db.insert(splitActivity).values({
+      type: "group_member_added",
+      actorUserId,
+      groupId,
+      subjectId: groupId,
+      counterpartUserId: userId,
+      createdAt: now,
+    });
+    const [[row]] = await db.batch([memberInsert, activityInsert]);
     if (!row) throw new Error("failed to add group member");
     const [user] = await this.getDb()
       .select({ displayName: users.displayName, email: users.email })
