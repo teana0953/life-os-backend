@@ -8,6 +8,7 @@ import { FakeUserDirectory, InMemoryFriendInviteRepository, InMemoryFriendshipRe
 import {
   stubExpenseGroupRepository,
   stubSettlementRepository,
+  stubSplitActivityRepository,
   stubSplitBalanceRepository,
   stubSplitExpenseRepository,
   stubSplitFriendChecker,
@@ -235,6 +236,7 @@ beforeEach(() => {
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker: stubSplitFriendChecker,
     splitSettlementRepository: stubSettlementRepository,
+    splitActivityRepository: stubSplitActivityRepository,
     splitSpendingRepository: stubSplitSpendingRepository,
     ping: async () => {},
   });

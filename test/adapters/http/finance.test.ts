@@ -29,7 +29,7 @@ import {
   TestUserDirectory,
 } from "../../contexts/split/fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
-import { stubSplitBalanceRepository } from "./split-stubs";
+import { stubSplitActivityRepository, stubSplitBalanceRepository } from "./split-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -254,6 +254,7 @@ function buildApp() {
     splitBalanceRepository: stubSplitBalanceRepository,
     splitFriendChecker,
     splitSettlementRepository,
+    splitActivityRepository: stubSplitActivityRepository,
     // `InMemorySplitExpenseRepository` also implements `SplitSpendingRepository`.
     splitSpendingRepository: splitExpenseRepository,
     ping: async () => {},

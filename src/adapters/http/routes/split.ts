@@ -11,6 +11,7 @@ import { getBalances } from "../../../contexts/split/application/get-balances";
 import { getExpense } from "../../../contexts/split/application/get-expense";
 import { getGroup } from "../../../contexts/split/application/get-group";
 import { getGroupBalances } from "../../../contexts/split/application/get-group-balances";
+import { listActivity } from "../../../contexts/split/application/list-activity";
 import { listExpenses } from "../../../contexts/split/application/list-expenses";
 import { listMyGroups } from "../../../contexts/split/application/list-my-groups";
 import { listSettlements } from "../../../contexts/split/application/list-settlements";
@@ -36,6 +37,8 @@ import type { ExpenseGroup, GroupMember } from "../../../contexts/split/domain/e
 import type { ExpenseGroupRepository } from "../../../contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../../contexts/split/domain/friend-checker";
 import type { Settlement } from "../../../contexts/split/domain/settlement";
+import type { SplitActivity } from "../../../contexts/split/domain/split-activity";
+import type { SplitActivityRepository } from "../../../contexts/split/domain/split-activity-repository";
 import type { ListSettlementsFilter, SettlementRepository } from "../../../contexts/split/domain/settlement-repository";
 import type { SplitExpense } from "../../../contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../contexts/split/domain/split-expense-repository";
@@ -51,6 +54,7 @@ export interface SplitHandlerOptions {
   balanceRepository: BalanceRepository;
   friendChecker: FriendChecker;
   settlementRepository: SettlementRepository;
+  splitActivityRepository: SplitActivityRepository;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -158,6 +162,36 @@ function settlementToJson(settlement: Settlement) {
     created_by_user_id: settlement.createdByUserId,
     created_at: settlement.createdAt.toISOString(),
     updated_at: settlement.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Everything a client needs to render the entry, including who did it — the
+ * reader compares `actor_user_id` against their own id to say "you" instead of
+ * a name (design.md D5), so no second call is needed to find out who they are.
+ * Fields that do not apply to an event type are `null` rather than absent, so
+ * the shape never changes between entries.
+ */
+function activityToJson(entry: SplitActivity) {
+  return {
+    id: entry.id,
+    type: entry.type,
+    actor_user_id: entry.actorUserId,
+    actor_display_name: entry.actorDisplayName,
+    group_id: entry.groupId,
+    group_name: entry.groupName,
+    subject_id: entry.subjectId,
+    counterpart_user_id: entry.counterpartUserId,
+    counterpart_display_name: entry.counterpartDisplayName,
+    amount: entry.amount,
+    previous_amount: entry.previousAmount,
+    // A settlement's direction, relative to the actor — the client turns the
+    // pair (`actor_is_payer`, whether the reader is the actor) into "you paid
+    // Ben" or "Ben paid you". `null` on every non-settlement type.
+    actor_is_payer: entry.actorIsPayer,
+    currency: entry.currency,
+    description: entry.description,
+    created_at: entry.createdAt.toISOString(),
   };
 }
 
@@ -406,6 +440,34 @@ export function createDeleteExpenseHandler(options: SplitHandlerOptions) {
     try {
       await deleteExpense(options.splitExpenseRepository, userId, expenseId);
       return c.json({ deleted: true });
+    } catch (err) {
+      return mapSplitError(err, c);
+    }
+  };
+}
+
+/**
+ * Protected `GET /api/split/activity?limit=&cursor=`: the caller's timeline,
+ * newest first. `cursor` is the opaque `next_cursor` of the previous page; a
+ * malformed one is caller-supplied filtering input, so 400 like `with=`.
+ */
+export function createListActivityHandler(options: SplitHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+
+    const limitParam = c.req.query("limit");
+    const cursorParam = c.req.query("cursor");
+    const input: { limit?: number; cursor?: string } = {};
+    if (limitParam !== undefined) {
+      const limit = Number(limitParam);
+      if (!Number.isInteger(limit) || limit <= 0) throw new BadRequestError("limit must be a positive integer");
+      input.limit = limit;
+    }
+    if (cursorParam !== undefined) input.cursor = cursorParam;
+
+    try {
+      const page = await listActivity(options.splitActivityRepository, userId, input);
+      return c.json({ activity: page.entries.map(activityToJson), next_cursor: page.nextCursor });
     } catch (err) {
       return mapSplitError(err, c);
     }

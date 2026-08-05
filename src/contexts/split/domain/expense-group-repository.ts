@@ -1,14 +1,21 @@
 import type { CreateExpenseGroupInput, ExpenseGroup, GroupMember } from "./expense-group";
 
 export interface ExpenseGroupRepository {
-  /** Creates the group. The creator becomes its first member as part of the same write (design.md: "建立者自動入組"). */
+  /** Creates the group, its first membership row (the creator) and its activity entry in one batch (design.md: "建立者自動入組"). */
   create(input: CreateExpenseGroupInput): Promise<ExpenseGroup>;
   findById(id: string): Promise<ExpenseGroup | null>;
   /** The groups `userId` is a member of. */
   listForUser(userId: string): Promise<ExpenseGroup[]>;
-  /** Sets `archived_at`. Returns whether a row was archived (false if the group does not exist). */
-  archive(id: string, now: Date): Promise<boolean>;
-  addMember(groupId: string, userId: string, now: Date): Promise<GroupMember>;
+  /**
+   * Sets `archived_at`, writing the activity entry in the same batch — hence
+   * `actorUserId`. Returns whether this call is what archived the group:
+   * `false` if it does not exist, and `false` if it was **already archived**,
+   * in which case nothing is written at all — archiving is one-way, and a
+   * second call must not add a second "archived" entry to the timeline.
+   */
+  archive(id: string, now: Date, actorUserId: string): Promise<boolean>;
+  /** Adds `userId`, writing the activity entry in the same batch. `actorUserId` is the member doing the adding, not the one added. */
+  addMember(groupId: string, userId: string, now: Date, actorUserId: string): Promise<GroupMember>;
   listMembers(groupId: string): Promise<GroupMember[]>;
 
   /**

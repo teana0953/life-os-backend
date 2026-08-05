@@ -659,6 +659,88 @@ export const splitSettlement = pgTable(
   ],
 );
 
+// split_activity: one entry in the split-bills timeline — who did what, when.
+// It exists for the two changes that today leave nothing behind: a deleted
+// expense and an edited amount (add-split-activity/design.md D1).
+//
+// **Every column here is a snapshot, and deliberately denormalized.** There is
+// no foreign key to `split_expense`/`split_settlement`, because those rows are
+// exactly the ones that disappear — `subject_id` is a bare uuid, and an entry
+// about a deleted expense keeps its own `amount`/`currency`/`description` so it
+// stays readable afterwards. `group_id` *does* get a foreign key: groups are
+// only ever archived, never deleted (`ExpenseGroupRepository` has no delete),
+// so that reference can never dangle — which is also why the group's name is
+// joined at read time rather than frozen here (D2: freeze what cascades away,
+// join what persists). Same for `actor_user_id`/`counterpart_user_id`.
+//
+// Structured columns rather than one `jsonb` blob (tasks 1.2): the schema's
+// existing jsonb precedent (`vitals.bp_readings`) is a *list* of repeated
+// sub-records that nothing filters on, whereas these are a fixed handful of
+// scalars — and one of them, `audience_user_ids`, has to be reachable from the
+// visibility WHERE clause, which is the whole point of the table.
+//
+// `audience_user_ids` is the frozen audience of a **groupless** entry, and it
+// is correctness, not an optimization: a groupless expense's participants live
+// in `split_share`, which cascades away with the expense, so after a deletion
+// there is no other way to know who the entry was for. A grouped entry stores
+// NULL and is shown to the group's *current* members instead, matching how
+// `listForUser` already decides group visibility. The CHECK pins that XOR: an
+// entry with neither is invisible to everyone (a silently lost change), one
+// with both has two disagreeing answers.
+export const splitActivity = pgTable(
+  "split_activity",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    type: text("type").notNull(),
+    actorUserId: uuid("actor_user_id")
+      .notNull()
+      .references(() => users.id),
+    groupId: uuid("group_id").references(() => expenseGroup.id),
+    /** The expense/settlement/group this describes. No FK on purpose — the row it names may be gone. */
+    subjectId: uuid("subject_id"),
+    /** The other person the event is about: a settlement's other party, or the member who was added. */
+    counterpartUserId: uuid("counterpart_user_id").references(() => users.id),
+    amount: integer("amount"),
+    /**
+     * Set by every `expense_updated` entry, whether or not the amount moved —
+     * an edit that says "modified" with no numbers says nothing (design.md
+     * D6), and the reader compares the two. It is NOT a "the amount changed"
+     * flag: `previous_amount = amount` is a normal, expected row.
+     */
+    previousAmount: integer("previous_amount"),
+    /**
+     * A repayment's direction: true = the actor paid the counterpart, false =
+     * the counterpart paid the actor. Without it "you paid Ben 500" and "Ben
+     * paid you 500" are the same row, and for a *deleted* settlement the
+     * subject row is gone, so nothing can recover it afterwards.
+     *
+     * Both parties render from this one row (D5 — the entry never says "you"):
+     * the actor reads it as written, the counterpart reads it inverted.
+     *
+     * The CHECK pins it to exactly the two settlement types: a settlement
+     * entry with no direction is meaningless, and a direction on a group
+     * event has nothing to be the direction *of*. NULL for the other six is
+     * therefore an absence, never "unknown" — the write paths (both of which
+     * establish the actor is one of the two parties) fail loudly rather than
+     * store a direction they had to guess.
+     */
+    actorIsPayer: boolean("actor_is_payer"),
+    currency: text("currency"),
+    description: text("description"),
+    audienceUserIds: uuid("audience_user_ids").array(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("split_activity_group_idx").on(t.groupId),
+    index("split_activity_created_idx").on(t.createdAt),
+    check("split_activity_audience_xor_group", sql`(group_id is null) <> (audience_user_ids is null)`),
+    check(
+      "split_activity_settlement_has_direction",
+      sql`(type in ('settlement_created', 'settlement_deleted')) = (actor_is_payer is not null)`,
+    ),
+  ],
+);
+
 // friend_invite: a single-use, 7-day invite link. Only the token's hash is
 // stored (a DB leak is not an invite-link leak); the hash is a deterministic,
 // unsalted SHA-256 precisely so `WHERE token_hash = H(token)` and the unique

@@ -28,6 +28,7 @@ import { DrizzleBalanceRepository } from "./contexts/split/adapters/drizzle-bala
 import { DrizzleExpenseGroupRepository } from "./contexts/split/adapters/drizzle-expense-group-repository";
 import { DrizzleFriendChecker } from "./contexts/split/adapters/drizzle-friend-checker";
 import { DrizzleSettlementRepository } from "./contexts/split/adapters/drizzle-settlement-repository";
+import { DrizzleSplitActivityRepository } from "./contexts/split/adapters/drizzle-split-activity-repository";
 import { DrizzleSplitExpenseRepository } from "./contexts/split/adapters/drizzle-split-expense-repository";
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
@@ -97,6 +98,7 @@ function buildDeps(env: Env) {
     splitBalanceRepository: new DrizzleBalanceRepository(getDb),
     splitFriendChecker: new DrizzleFriendChecker(getDb),
     splitSettlementRepository: new DrizzleSettlementRepository(getDb),
+    splitActivityRepository: new DrizzleSplitActivityRepository(getDb),
     pushSender,
     chaodaysClient,
   };
@@ -137,6 +139,7 @@ export default {
       splitBalanceRepository: deps.splitBalanceRepository,
       splitFriendChecker: deps.splitFriendChecker,
       splitSettlementRepository: deps.splitSettlementRepository,
+      splitActivityRepository: deps.splitActivityRepository,
       // DrizzleSplitExpenseRepository also implements SplitSpendingRepository
       // (both read split_expense/split_share) — reuse the same instance
       // rather than constructing a second repository for one query.

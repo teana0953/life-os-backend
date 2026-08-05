@@ -10,6 +10,8 @@ import type { CreateSplitExpenseInput, SplitExpense, SplitShare, SplitShareInput
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
 import type { SplitSpendingAmount } from "../../../src/contexts/split/domain/split-spending";
 import type { SplitSpendingRepository } from "../../../src/contexts/split/domain/split-spending-repository";
+import type { SplitActivity } from "../../../src/contexts/split/domain/split-activity";
+import type { ListActivityOptions, SplitActivityRepository } from "../../../src/contexts/split/domain/split-activity-repository";
 
 /** Test-only directory of display names, standing in for the `users` join a real adapter would do. */
 export class TestUserDirectory {
@@ -65,14 +67,15 @@ export class InMemoryExpenseGroupRepository implements ExpenseGroupRepository {
     return this.groups.filter((g) => memberGroupIds.has(g.id));
   }
 
-  async archive(id: string, now: Date): Promise<boolean> {
+  /** Mirrors the real `where archived_at is null`: a second archive changes nothing and reports false. */
+  async archive(id: string, now: Date, _actorUserId: string): Promise<boolean> {
     const group = this.groups.find((g) => g.id === id);
-    if (!group) return false;
+    if (!group || group.archivedAt !== null) return false;
     group.archivedAt = now;
     return true;
   }
 
-  async addMember(groupId: string, userId: string, now: Date): Promise<GroupMember> {
+  async addMember(groupId: string, userId: string, now: Date, _actorUserId: string): Promise<GroupMember> {
     const member: GroupMember = { groupId, userId, displayName: this.nameFor(userId), joinedAt: now };
     this.members.push(member);
     return member;
@@ -151,7 +154,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     return this.rows.find((row) => row.id === id) ?? null;
   }
 
-  async update(id: string, fields: UpdateSplitExpenseFields, now: Date): Promise<SplitExpense | null> {
+  async update(id: string, fields: UpdateSplitExpenseFields, now: Date, _actorUserId: string): Promise<SplitExpense | null> {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;
     row.payerUserId = fields.payerUserId;
@@ -166,7 +169,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     return row;
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, _actorUserId: string, _now: Date): Promise<boolean> {
     const index = this.rows.findIndex((row) => row.id === id);
     if (index === -1) return false;
     this.rows.splice(index, 1);
@@ -249,7 +252,7 @@ export class InMemorySettlementRepository implements SettlementRepository {
     return this.rows.find((row) => row.id === id) ?? null;
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, _actorUserId: string, _now: Date): Promise<boolean> {
     const index = this.rows.findIndex((row) => row.id === id);
     if (index === -1) return false;
     this.rows.splice(index, 1);
@@ -375,4 +378,39 @@ function toBalances(net: Map<string, Map<string, number>>, users: TestUserDirect
     result.push({ userId, displayName: users.get(userId), balances });
   }
   return result;
+}
+
+/**
+ * Stores whole `SplitActivity` entries and applies the same visibility split
+ * the real adapter's SQL does — a grouped entry against live membership, a
+ * groupless one against its frozen `audienceUserIds`.
+ *
+ * **This fake proves nothing about that SQL.** It is here so a route test can
+ * exercise handler -> use case -> repository -> JSON and the cursor paging;
+ * the predicate itself is proven only in `test/db/split-activity-visibility.test.ts`,
+ * against a real Postgres. Entries are seeded directly with `record` — the
+ * write fakes above do not produce them, because in production the activity row
+ * is written by the same SQL batch as the change, which no in-memory fake can
+ * stand in for.
+ */
+export class InMemorySplitActivityRepository implements SplitActivityRepository {
+  rows: (SplitActivity & { audienceUserIds: string[] | null })[] = [];
+
+  constructor(private readonly groups?: InMemoryExpenseGroupRepository) {}
+
+  record(entry: SplitActivity & { audienceUserIds: string[] | null }): void {
+    this.rows.push(entry);
+  }
+
+  async listForUser(userId: string, options: ListActivityOptions): Promise<SplitActivity[]> {
+    const memberGroupIds = this.groups ? new Set((await this.groups.listForUser(userId)).map((group) => group.id)) : new Set<string>();
+    const visible = this.rows
+      .filter((row) => (row.groupId === null ? (row.audienceUserIds ?? []).includes(userId) : memberGroupIds.has(row.groupId)))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+    const before = options.before;
+    const page = before
+      ? visible.filter((row) => row.createdAt.getTime() < before.createdAt.getTime() || (row.createdAt.getTime() === before.createdAt.getTime() && row.id < before.id))
+      : visible;
+    return page.slice(0, options.limit);
+  }
 }

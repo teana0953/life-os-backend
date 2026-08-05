@@ -24,6 +24,7 @@ import type { BalanceRepository } from "../../contexts/split/domain/balance-repo
 import type { ExpenseGroupRepository } from "../../contexts/split/domain/expense-group-repository";
 import type { FriendChecker } from "../../contexts/split/domain/friend-checker";
 import type { SettlementRepository } from "../../contexts/split/domain/settlement-repository";
+import type { SplitActivityRepository } from "../../contexts/split/domain/split-activity-repository";
 import type { SplitExpenseRepository } from "../../contexts/split/domain/split-expense-repository";
 import type { SplitSpendingRepository } from "../../contexts/split/domain/split-spending-repository";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
@@ -143,6 +144,7 @@ import {
   createGetExpenseHandler,
   createGetGroupBalancesHandler,
   createGetGroupHandler,
+  createListActivityHandler,
   createListExpensesHandler,
   createListMyGroupsHandler,
   createListSettlementsHandler,
@@ -198,6 +200,7 @@ export interface CreateAppOptions {
   splitBalanceRepository: BalanceRepository;
   splitFriendChecker: FriendChecker;
   splitSettlementRepository: SettlementRepository;
+  splitActivityRepository: SplitActivityRepository;
   splitSpendingRepository: SplitSpendingRepository;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
@@ -460,6 +463,7 @@ export function createApp(options: CreateAppOptions) {
     balanceRepository: options.splitBalanceRepository,
     friendChecker: options.splitFriendChecker,
     settlementRepository: options.splitSettlementRepository,
+    splitActivityRepository: options.splitActivityRepository,
   };
   app.get("/api/split/groups", authMiddleware, createListMyGroupsHandler(splitOptions));
   app.post("/api/split/groups", authMiddleware, createCreateGroupHandler(splitOptions));
@@ -475,6 +479,9 @@ export function createApp(options: CreateAppOptions) {
   app.delete("/api/split/expenses/:id", authMiddleware, createDeleteExpenseHandler(splitOptions));
 
   app.get("/api/split/balances", authMiddleware, createGetBalancesHandler(splitOptions));
+  // "/api/split/activity" shares no parameterized prefix with the routes
+  // above, so ordering does not matter here.
+  app.get("/api/split/activity", authMiddleware, createListActivityHandler(splitOptions));
 
   // Settlements (add-settle-up): "/api/split/settlements" does not share a
   // parameterized prefix with "/api/split/expenses/:id", so there is no

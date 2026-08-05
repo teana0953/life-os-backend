@@ -10,10 +10,16 @@ export interface ListSettlementsFilter {
 }
 
 export interface SettlementRepository {
+  /** Writes the settlement and its activity entry in one batch. The activity's actor is `createdByUserId`, already part of the input. */
   create(input: CreateSettlementInput): Promise<Settlement>;
   findById(id: string): Promise<Settlement | null>;
-  /** Returns whether a row was deleted. */
-  delete(id: string): Promise<boolean>;
+  /**
+   * Returns whether a row was deleted. `actorUserId` is who deleted it: the
+   * activity entry is written in the same batch, conditional on the delete
+   * matching a row. `now` is that entry's `created_at`: the caller's clock, the
+   * same one every other write path uses, never the database's.
+   */
+  delete(id: string, actorUserId: string, now: Date): Promise<boolean>;
   /**
    * `userId`'s settlements matching `filter`, scoped to participation in the
    * query. The use case re-checks participation on every row regardless —

@@ -2,6 +2,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
+import type { SplitActivity } from "../../../src/contexts/split/domain/split-activity";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import {
@@ -9,6 +10,7 @@ import {
   InMemoryExpenseGroupRepository,
   InMemoryFriendChecker,
   InMemorySettlementRepository,
+  InMemorySplitActivityRepository,
   InMemorySplitExpenseRepository,
   TestUserDirectory,
 } from "../../contexts/split/fakes";
@@ -99,6 +101,7 @@ let expenses: InMemorySplitExpenseRepository;
 let friends: InMemoryFriendChecker;
 let balances: InMemoryBalanceRepository;
 let settlements: InMemorySettlementRepository;
+let activity: InMemorySplitActivityRepository;
 let app: ReturnType<typeof createApp>;
 
 /** Resolves `identity`'s internal uuid by calling a cheap authenticated endpoint. */
@@ -115,6 +118,7 @@ beforeEach(() => {
   expenses = new InMemorySplitExpenseRepository(groups, directory);
   friends = new InMemoryFriendChecker();
   settlements = new InMemorySettlementRepository(groups, directory);
+  activity = new InMemorySplitActivityRepository(groups);
   balances = new InMemoryBalanceRepository(expenses, groups, directory, settlements);
 
   app = createApp({
@@ -251,6 +255,7 @@ beforeEach(() => {
     splitBalanceRepository: balances,
     splitFriendChecker: friends,
     splitSettlementRepository: settlements,
+    splitActivityRepository: activity,
     splitSpendingRepository: expenses,
     ping: async () => {},
   });
@@ -770,5 +775,121 @@ describe("settlements", () => {
     const groupBalances = await (await app.request(`/api/split/groups/${group.id}/balances`, { headers: await authHeader(ALICE) })).json<BalancesBody>();
     expect(groupBalances.balances.find((b) => b.user_id === aliceId)?.balances).toEqual([{ currency: "TWD", amount: 150 }]);
     expect(groupBalances.balances.find((b) => b.user_id === bobId)?.balances).toEqual([{ currency: "TWD", amount: -150 }]);
+  });
+});
+
+/**
+ * `GET /api/split/activity`. What is proven here is the route: auth, query
+ * parsing, paging and the JSON shape. **Not** who may see an entry — the fake
+ * repository mirrors that rule but does not execute the SQL that enforces it,
+ * which is proven in `test/db/split-activity-visibility.test.ts` against a real
+ * Postgres.
+ */
+describe("GET /api/split/activity", () => {
+  function seed(id: string, createdAt: string, audience: string[] | null, groupId: string | null = null, overrides: Partial<SplitActivity> = {}) {
+    activity.record({
+      id,
+      type: "expense_deleted",
+      actorUserId: audience?.[0] ?? "11111111-1111-1111-1111-111111111111",
+      actorDisplayName: "Alice",
+      groupId,
+      groupName: null,
+      subjectId: "e1111111-1111-1111-1111-111111111111",
+      counterpartUserId: null,
+      counterpartDisplayName: null,
+      amount: 300,
+      previousAmount: null,
+      actorIsPayer: null,
+      currency: "TWD",
+      description: "Dinner",
+      createdAt: new Date(createdAt),
+      audienceUserIds: audience,
+      ...overrides,
+    });
+  }
+
+  it("rejects an unauthenticated request", async () => {
+    const res = await app.request("/api/split/activity");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the caller's entries with everything needed to render them", async () => {
+    const aliceId = await idOf(ALICE);
+    seed("aaaaaaaa-0000-0000-0000-000000000001", "2026-04-01T10:00:00.000Z", [aliceId]);
+
+    const res = await app.request("/api/split/activity", { headers: await authHeader(ALICE) });
+    expect(res.status).toBe(200);
+    const body = await res.json<{ activity: Array<Record<string, unknown>>; next_cursor: string | null }>();
+    expect(body.activity).toHaveLength(1);
+    expect(body.activity[0]).toMatchObject({
+      type: "expense_deleted",
+      // The reader compares this against their own id to render "you" instead
+      // of a name, so no second request is needed to find out who they are.
+      actor_user_id: aliceId,
+      actor_display_name: "Alice",
+      amount: 300,
+      currency: "TWD",
+      description: "Dinner",
+      previous_amount: null,
+      group_id: null,
+    });
+    expect(body.next_cursor).toBeNull();
+  });
+
+  it("hands the client a repayment's direction, so it can say who paid whom", async () => {
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+    // Bob paid Alice, recorded by Alice: without a direction on the wire this
+    // entry is indistinguishable from Alice having paid Bob.
+    seed("aaaaaaaa-0000-0000-0000-000000000001", "2026-04-01T10:00:00.000Z", [aliceId, bobId], null, {
+      type: "settlement_created",
+      counterpartUserId: bobId,
+      counterpartDisplayName: "Bob",
+      actorIsPayer: false,
+    });
+
+    const res = await app.request("/api/split/activity", { headers: await authHeader(ALICE) });
+    const body = await res.json<{ activity: Array<Record<string, unknown>> }>();
+    expect(body.activity[0]).toMatchObject({ type: "settlement_created", counterpart_user_id: bobId, actor_is_payer: false });
+  });
+
+  it("omits an entry the caller is not in the audience of", async () => {
+    const bobId = await idOf(BOB);
+    await idOf(ALICE);
+    seed("aaaaaaaa-0000-0000-0000-000000000001", "2026-04-01T10:00:00.000Z", [bobId]);
+
+    const res = await app.request("/api/split/activity", { headers: await authHeader(ALICE) });
+    const body = await res.json<{ activity: unknown[] }>();
+    expect(body.activity).toEqual([]);
+  });
+
+  it("pages with the cursor it hands back", async () => {
+    const aliceId = await idOf(ALICE);
+    seed("aaaaaaaa-0000-0000-0000-000000000001", "2026-04-01T10:00:00.000Z", [aliceId]);
+    seed("aaaaaaaa-0000-0000-0000-000000000002", "2026-04-01T09:00:00.000Z", [aliceId]);
+
+    const first = await (await app.request("/api/split/activity?limit=1", { headers: await authHeader(ALICE) })).json<{
+      activity: Array<{ id: string }>;
+      next_cursor: string | null;
+    }>();
+    expect(first.activity.map((entry) => entry.id)).toEqual(["aaaaaaaa-0000-0000-0000-000000000001"]);
+    expect(first.next_cursor).not.toBeNull();
+
+    const second = await (
+      await app.request(`/api/split/activity?limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`, { headers: await authHeader(ALICE) })
+    ).json<{ activity: Array<{ id: string }> }>();
+    expect(second.activity.map((entry) => entry.id)).toEqual(["aaaaaaaa-0000-0000-0000-000000000002"]);
+  });
+
+  it("rejects a malformed limit or cursor rather than quietly starting from the top", async () => {
+    const headers = await authHeader(ALICE);
+    expect((await app.request("/api/split/activity?limit=0", { headers })).status).toBe(400);
+    expect((await app.request("/api/split/activity?limit=abc", { headers })).status).toBe(400);
+    expect((await app.request("/api/split/activity?cursor=nonsense", { headers })).status).toBe(400);
+    // Well-shaped but with a non-uuid id half: this one reaches the keyset
+    // comparison's `::uuid` cast and used to come back as `500 internal` — a
+    // client's mistake reported as a server fault, against this route's own
+    // documented promise of a 400.
+    expect((await app.request("/api/split/activity?cursor=2026-04-01T09:00:00.000Z%7Cnot-a-uuid", { headers })).status).toBe(400);
   });
 });

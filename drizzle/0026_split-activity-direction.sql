@@ -1,0 +1,2 @@
+ALTER TABLE "split_activity" ADD COLUMN "actor_is_payer" boolean;--> statement-breakpoint
+ALTER TABLE "split_activity" ADD CONSTRAINT "split_activity_settlement_has_direction" CHECK ((type in ('settlement_created', 'settlement_deleted')) = (actor_is_payer is not null));

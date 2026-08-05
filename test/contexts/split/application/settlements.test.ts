@@ -117,7 +117,7 @@ describe("createSettlement: a groupless settlement needs a friend or a shared gr
     const group = await createGroup(groups, "Trip", A);
     await addGroupMember({ groups, friends }, A, group.id, B, NOW);
     // D is nobody's friend; put them in the same group as A.
-    await groups.addMember(group.id, D, NOW);
+    await groups.addMember(group.id, D, NOW, A);
 
     await expect(createSettlement(deps, groupless({ fromUserId: D, toUserId: A }))).resolves.toBeDefined();
     expect(settlements.rows).toHaveLength(1);

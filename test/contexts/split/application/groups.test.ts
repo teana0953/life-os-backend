@@ -147,6 +147,19 @@ describe("archiveGroup", () => {
     expect((await groups.findById(group.id))?.archivedAt).toEqual(NOW);
   });
 
+  it("succeeds on an already-archived group, keeping the first archiving's instant", async () => {
+    // A double-tapped archive button. The group exists and ends up archived,
+    // so a `GroupNotFound` here would be a second untruth on top of the
+    // duplicate timeline entry the repository now refuses to write. That the
+    // second call *records* nothing is proven against a real Postgres in
+    // `test/db/split-activity-write.test.ts` — the fake cannot show it.
+    const group = await createGroup(groups, "Trip", A);
+    await archiveGroup(groups, A, group.id, NOW);
+
+    await expect(archiveGroup(groups, A, group.id, new Date("2026-04-02T10:00:00.000Z"))).resolves.toBeUndefined();
+    expect((await groups.findById(group.id))?.archivedAt).toEqual(NOW);
+  });
+
   it("refuses a member who is not the creator, and leaves the group unchanged", async () => {
     const group = await createGroup(groups, "Trip", A);
     await addGroupMember({ groups, friends }, A, group.id, B, NOW);

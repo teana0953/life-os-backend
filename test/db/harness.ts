@@ -1,7 +1,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import * as schema from "../../src/shared/db/schema";
 import type { Db } from "../../src/shared/db/client";
 
@@ -14,12 +14,11 @@ import type { Db } from "../../src/shared/db/client";
  *
  * WHAT THIS DOES NOT PROVE — read before assuming coverage:
  *
- * 1. **`drizzle-orm/pglite` has no `batch`.** The atomic write paths
- *    (`DrizzleSplitExpenseRepository.create`/`update`,
- *    `DrizzleExpenseGroupRepository.create`) go through `db.batch` and
- *    therefore cannot be run here as-is. Tests seed data with plain inserts
- *    and then exercise the read side. What is proven is *"the query is
- *    written correctly"*, never *"a batch of writes is atomic"*.
+ * 1. ~~**`drizzle-orm/pglite` has no `batch`.**~~ It does not, but that was
+ *    never the same claim as "atomicity cannot be tested here" — PGlite is a
+ *    single connection, so `withBatchShim` below supplies one. The atomic
+ *    write paths do run here now. See boundary 4 for what the shim is and is
+ *    not.
  *
  * 2. **PGlite is not Neon.** Same SQL dialect, different deployment. Anything
  *    at the connection layer — neon-http's lack of transactions, timeouts,
@@ -34,6 +33,19 @@ import type { Db } from "../../src/shared/db/client";
  *    wrong `payerDisplayName`, keeps this suite green. The balance tests do
  *    assert whole entries (see the comments in `balances.test.ts`), because
  *    a broken `JOIN users` there is otherwise invisible.
+ *
+ * 4. **The `batch` shim is not neon-http's `db.batch`.** Production sends the
+ *    whole array as one non-interactive HTTP round trip; the shim sends
+ *    `BEGIN`, then the statements one at a time over the local connection,
+ *    then `COMMIT` (`ROLLBACK` on any failure). What that proves is the
+ *    *semantics* the repositories rely on — all the statements land or none
+ *    do, and a later statement sees an earlier one's effect, which is what
+ *    makes a conditional `INSERT ... WHERE EXISTS` ordered *before* a `DELETE`
+ *    behave differently from one ordered after it. It proves nothing about
+ *    neon's wire protocol, its statement-count limits, or its error shapes.
+ *    The shim's own rollback is pinned by `harness-batch.test.ts`; without
+ *    that, every atomicity assertion built on it would pass with no
+ *    transaction at all.
  *
  * Isolation strategy (one strategy, used everywhere — do not mix in another):
  * **one PGlite instance per test file** (`createTestDb()` in `beforeAll`,
@@ -64,14 +76,44 @@ export type TestDb = {
  * nominally different from `drizzle-orm/neon-http`'s (`Db`), but the query
  * builder surface the repositories use (`select`/`insert`/`update`/`delete`/
  * `execute`) is identical. The single thing genuinely missing on the PGlite
- * side is `batch` — see the note above. Keep this cast here; do not repeat it
- * in test files.
+ * side is `batch`, which `withBatchShim` adds. Keep this cast here; do not
+ * repeat it in test files.
  */
 function asDb(pgliteDb: unknown): Db {
   return pgliteDb as Db;
 }
 
-const TABLES = ["split_settlement", "split_share", "split_expense", "expense_group_member", "expense_group", "users"];
+/**
+ * Gives the PGlite instance the `batch` its driver lacks: `BEGIN`, the
+ * statements in the order given, `COMMIT` — and `ROLLBACK` if any of them
+ * throws. PGlite is a single connection, so the statements really do share one
+ * transaction; nothing here is a simulation of atomicity, it *is* Postgres
+ * atomicity.
+ *
+ * It is not, however, neon-http's `db.batch` — see boundary 4 above. Awaiting
+ * a drizzle query builder is what executes it, so the pre-built statements the
+ * repositories hand over run here exactly as written, one after another.
+ *
+ * The `ROLLBACK` is not optional politeness: PGlite would otherwise stay in
+ * "current transaction is aborted" and fail every later statement in the file.
+ */
+function withBatchShim(pgliteDb: { execute: (query: SQL) => Promise<unknown> }): void {
+  const target = pgliteDb as { execute: (query: SQL) => Promise<unknown>; batch?: unknown };
+  target.batch = async (queries: PromiseLike<unknown>[]): Promise<unknown[]> => {
+    await target.execute(sql.raw("BEGIN"));
+    try {
+      const results: unknown[] = [];
+      for (const query of queries) results.push(await query);
+      await target.execute(sql.raw("COMMIT"));
+      return results;
+    } catch (err) {
+      await target.execute(sql.raw("ROLLBACK"));
+      throw err;
+    }
+  };
+}
+
+const TABLES = ["split_activity", "split_settlement", "split_share", "split_expense", "expense_group_member", "expense_group", "users"];
 
 /** Seed helpers. Plain inserts, deliberately not `db.batch` — see limit 1 above. */
 export async function insertUser(db: Db, id: string, email: string, displayName: string | null = null): Promise<string> {
@@ -147,6 +189,7 @@ export async function createTestDb(): Promise<TestDb> {
   const client = new PGlite();
   const pgliteDb = drizzle(client, { schema });
   await migrate(pgliteDb, { migrationsFolder: "./drizzle" });
+  withBatchShim(pgliteDb);
   const db = asDb(pgliteDb);
   return {
     db,

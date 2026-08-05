@@ -6,6 +6,10 @@ export async function archiveGroup(repository: ExpenseGroupRepository, callerUse
   const group = await repository.findById(groupId);
   if (!group) throw new GroupNotFound();
   if (group.createdByUserId !== callerUserId.toLowerCase()) throw new GroupNotFound();
-  const archived = await repository.archive(groupId, now);
-  if (!archived) throw new GroupNotFound();
+  // The result is deliberately ignored: `archive` returns false when the group
+  // was already archived, and the group *does* exist (checked above) and *is*
+  // archived when this returns, so the caller got what they asked for. A 404
+  // here would be a second untruth on top of the duplicate entry. What the
+  // false buys is in the repository: nothing is written the second time.
+  await repository.archive(groupId, now, callerUserId.toLowerCase());
 }
