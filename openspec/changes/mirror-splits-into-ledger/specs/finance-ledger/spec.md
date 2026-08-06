@@ -22,8 +22,9 @@ overwritten by later edits to the split.
 A split expense SHALL carry an optional category name. The mirrored
 transaction's category SHALL be the share holder's own **expense** category of
 that name, falling back to their 其他 expense category — for an unnamed
-category as well as an unmatched one — and seeding their default categories
-first if they have none. A
+category as well as an unmatched one — and re-seeding their defaults when that 其他
+category is missing — which happens when they have none at all and equally
+when they renamed it, since categories can be renamed and are never deleted. A
 mirrored transaction MAY land on an archived category, unlike a
 user-created one, because the mirror is not a choice and refusing it would
 drop a real expense.
@@ -107,11 +108,6 @@ This scenario is kept under its former name so the inversion is loud.
   as both an expense and an income category
 - **THEN** the mirrored transaction uses the expense one
 
-#### Scenario: Net worth does not move
-
-- **WHEN** a split expense is recorded
-- **THEN** the user's net worth and its trend are unchanged
-
 #### Scenario: Editing the split moves both mirrors
 
 - **WHEN** the payer changes the dinner's amount, date or participants
@@ -145,6 +141,12 @@ This scenario is kept under its former name so the inversion is loud.
   the same amount, date and currency it already has
 - **THEN** the update succeeds — resending unchanged values is how a
   full-replace update expresses "only the category changed"
+
+#### Scenario: A renamed 其他 does not break someone else's split
+
+- **WHEN** a share holder has renamed their 其他 expense category and a split
+  names a category they do not have
+- **THEN** the split is recorded and their mirror still resolves to a category
 
 #### Scenario: A share holder who has never opened the ledger still gets one
 

@@ -91,9 +91,16 @@ export interface SharesMirror {
 
 1. 參與者有**同名**、**`type = 'expense'`** 的分類 → 用它
 2. 沒有(或分帳沒指定分類名)→ 用他 `type = 'expense'` 的「其他」
-3. **一個分類都沒有** → 先 seed 預設分類,再回第 2 步
+3. **「其他」不在**(不管是他一個分類都沒有,還是他把「其他」改名了)→ `insertDefaultsIfMissing` 之後回第 2 步
+4. 還是不在 → 用他任何一個 `type = 'expense'` 的分類(`sortOrder` 最小的那個)
 
-**第 1、2 步都要限定 `type = 'expense'`。** `DEFAULT_CATEGORIES` 裡「其他」**同時存在於 expense 與 income**(`default-categories.ts:11,15`),唯一索引是 `(user_id, type, name)`。挑到 income 的那個,支出會被記在收入分類上,而 `getMonthlySummaryRaw` 按分類分組 —— 那會是一個看不出來的錯。
+**第 3 步的觸發條件是「其他不在」,不是「一個分類都沒有」。** 分類**可以改名**(`update-category.ts:21-26`,只有 `type` 不可變,而且永遠不會被硬刪)。分攤者把自己的「其他」改成別的名字之後,舊的條件不會觸發 —— 他分類多的是 —— 於是解不出 `category_id`,而那是 NOT NULL,**整個分帳寫入會失敗:付款人一次合法的建立,因為一個無關的參與者改過名字而炸掉。**
+
+`insertDefaultsIfMissing` 依 `(user_id, type, name)` 去重,所以改名之後它會**重新建出一個「其他」**,第 3 步因此真的能救回來。第 4 步是最後的保險。
+
+**第 1、2 步都要限定 `type = 'expense'`。**
+
+`DEFAULT_CATEGORIES` 裡「其他」**同時存在於 expense 與 income**(`default-categories.ts:11,15`),唯一索引是 `(user_id, type, name)`。挑到 income 的那個,支出會被記在收入分類上,而 `getMonthlySummaryRaw` 按分類分組 —— 那會是一個看不出來的錯。
 
 第 3 步不是防禦性程式碼:`ensureDefaultCategories` **只有** `listCategories` 一個呼叫點(`list-categories.ts:7`),而且只在使用者**一個分類都沒有**時才 seed。一個從沒開過記帳頁的朋友被拉進分帳,他的 `finance_category` 是空的。**分頁載入順序決定了資料能不能寫進去。**
 
@@ -101,7 +108,7 @@ export interface SharesMirror {
 
 `create-transaction.ts:28` 明確擋封存分類。鏡像刻意不套這條:一般建立是**使用者在選**,擋住是為了不讓封存的東西回到選單;鏡像**不是選擇**,擋住的代價是**一筆真的花掉的錢寫不進去**。
 
-刻意的不對稱,不是疏漏。若「其他」也被封存 —— 照樣用,這條鏈因此保證終止。
+刻意的不對稱,不是疏漏。若「其他」也被封存 —— 照樣用。
 
 ## D5:鏡像的身分鍵是 `(user_id, split_expense_id)`,寫法必須是 upsert
 
@@ -124,7 +131,7 @@ finance_transaction
 
 **batch 裡的語句順序:鏡像的 insert 必須排在 `expenseInsert` 之後。** FK `finance_transaction.split_expense_id → split_expense(id)` 是立即檢查的,排前面就是外鍵錯誤。這個 repo 別的地方對順序寫得很重(`:270`「**ORDER: the insert must come BEFORE the delete, and this is not a style choice**」),這裡也一樣。
 
-**刪除分帳靠 `on delete cascade`,不靠應用層記得。** `delete` 是單一 `db.delete(splitExpense)`(`:326`),資料庫保證比程式碼保證可靠。
+**刪除分帳靠 `on delete cascade`,不靠應用層記得。** `delete` 的 batch(`:303-327`)裡只有活動列的 insert 與 `db.delete(splitExpense)`,沒有鏡像的語句 —— 資料庫保證比程式碼保證可靠。
 
 ## D6:使用者改過分類之後,分帳更新不能蓋回去
 
@@ -212,3 +219,21 @@ split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓�
 ## D16:封存群組裡的分帳仍然可編輯,所以仍然會改寫別人的帳本
 
 `update-expense.ts:43` 傳 `checkArchived: false`,規格也明說封存群組裡的支出保持可修正。**這是對的,不改** —— 但它代表封存群組裡的一次編輯照樣會動到別人的 `finance_transaction`。沒寫下來的話會被當成漏洞。
+
+## D17:`split_expense_id` 與 `category_source` 永遠不可從 JSON 設定
+
+`updateTransaction:38` 是 `repository.update(userId, id, {...input, type, currency})`。若 `splitExpenseId` 進了 `ReplaceFinanceTransactionInput` 而 handler 沒填,`PUT` 會**把連結清成 null** —— 鏡像瞬間解鎖、唯一索引失去對象;若 handler 從 body 讀,客戶端就能自己掛上或拆掉連結。
+
+**兩個欄位都不從請求 body 讀,只由鏡像的寫入路徑設定。**
+
+## D18:`note` 的保留沒有機制,而規格答應了
+
+規格寫 `category_id` **與 `note`**「使用者改過之後不被分帳的後續編輯覆蓋」,但 `category_source` 只追蹤分類。
+
+**決定:`note` 不放進 upsert 的 SET 清單。** 鏡像建立時填一次(分帳的描述),之後只屬於使用者。這樣不需要第二個旗標,而且分帳的描述本來就會在分帳頁看得到。
+
+## D19:編輯分帳時,警示查不到「舊分類」
+
+`afterWrite(rows)` 只拿得到現在的鏡像列,而 finance-budgets 的要求寫「更新時,分類有變就新舊兩個都查」。
+
+實務上無害:舊分類的花費只會**變少**,而警示是往上跨門檻才觸發。**但規格那句「SHALL run this same check」比 port 做得到的還寬,要說出來**,不要留一個做不到的承諾。

@@ -51,7 +51,10 @@ Recording or editing a shared expense SHALL run this same check for every
 share holder whose mirrored transaction was written, on the same best-effort
 terms: a failing check or push SHALL NOT fail the split write. A share holder
 SHALL be notified about their own budget even though someone else's action
-crossed it.
+crossed it. Editing a shared expense SHALL check the categories the mirrors
+now carry; it SHALL NOT be required to check a category a mirror carried
+before the edit, because spending on the category it left can only fall, and
+this check only ever fires on the way up.
 
 #### Scenario: Crossing 80 percent notifies once
 
