@@ -2,7 +2,7 @@ import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { financeTransaction } from "../../../shared/db/schema";
 import type { FinanceCategoryType } from "../domain/finance-category";
-import type { CreateFinanceTransactionInput, FinanceCategorySource, FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
+import type { CreateFinanceTransactionInput, FinanceCategorySource, FinanceTransaction, UpdateFinanceTransactionFields } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import type { MonthlySummaryRaw } from "../domain/monthly-summary";
 
@@ -63,12 +63,14 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
     return rows.map(toDomain);
   }
 
-  async update(userId: string, id: string, input: ReplaceFinanceTransactionInput): Promise<FinanceTransaction | null> {
+  async update(userId: string, id: string, input: UpdateFinanceTransactionFields): Promise<FinanceTransaction | null> {
     const db = this.getDb();
     // `updatedAt` has `defaultNow()` but that only fires on insert; every
-    // update sets it explicitly. `splitExpenseId` and `categorySource` are
-    // absent from the SET list on purpose: a full-replace update must not be
-    // able to unlink a mirror from its split (design.md D17).
+    // update sets it explicitly. `splitExpenseId` is absent from the SET list
+    // on purpose: a full-replace update must not be able to unlink a mirror
+    // from its split (design.md D17). `categorySource` is written only when
+    // the use case asks for it — the owner just picked a category by hand —
+    // and never comes from a request body.
     const [row] = await db
       .update(financeTransaction)
       .set({
@@ -78,6 +80,7 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         categoryId: input.categoryId,
         day: input.date,
         note: input.note ?? null,
+        ...(input.categorySource !== undefined ? { categorySource: input.categorySource } : {}),
         updatedAt: new Date(),
       })
       .where(and(eq(financeTransaction.id, id), eq(financeTransaction.userId, userId)))

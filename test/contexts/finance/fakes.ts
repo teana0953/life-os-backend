@@ -7,7 +7,7 @@ import type {
   UpdateFinanceCategoryPatch,
 } from "../../../src/contexts/finance/domain/finance-category";
 import type { FinanceTransactionRepository } from "../../../src/contexts/finance/domain/finance-transaction-repository";
-import type { CreateFinanceTransactionInput, FinanceTransaction, ReplaceFinanceTransactionInput } from "../../../src/contexts/finance/domain/finance-transaction";
+import type { CreateFinanceTransactionInput, FinanceTransaction, UpdateFinanceTransactionFields } from "../../../src/contexts/finance/domain/finance-transaction";
 import type { FinanceBudget, UpsertFinanceBudgetInput } from "../../../src/contexts/finance/domain/finance-budget";
 import type { BudgetWithSpent, FinanceBudgetRepository, TryRecordAlertInput } from "../../../src/contexts/finance/domain/finance-budget-repository";
 import type { MonthlySummaryRaw } from "../../../src/contexts/finance/domain/monthly-summary";
@@ -97,7 +97,7 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
       .sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  async update(userId: string, id: string, input: ReplaceFinanceTransactionInput): Promise<FinanceTransaction | null> {
+  async update(userId: string, id: string, input: UpdateFinanceTransactionFields): Promise<FinanceTransaction | null> {
     const txn = this.transactions.find((t) => t.id === id && t.userId === userId);
     if (!txn) return null;
     txn.type = input.type;
@@ -106,8 +106,10 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
     txn.categoryId = input.categoryId;
     txn.date = input.date;
     txn.note = input.note ?? null;
-    // `splitExpenseId`/`categorySource` are deliberately not assigned: the
-    // real adapter leaves those columns out of its SET list too (D17).
+    // `splitExpenseId` is deliberately never assigned: the real adapter leaves
+    // that column out of its SET list too (D17). `categorySource` follows the
+    // adapter the other way — written only when the use case supplies it.
+    if (input.categorySource !== undefined) txn.categorySource = input.categorySource;
     return txn;
   }
 

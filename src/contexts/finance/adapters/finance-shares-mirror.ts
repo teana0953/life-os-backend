@@ -1,4 +1,6 @@
+import { checkBudgetAlerts } from "../application/check-budget-alerts";
 import type { BudgetAlertNotifier } from "../domain/budget-alert-notifier";
+import { isSupportedCurrency } from "../domain/currency";
 import { DEFAULT_CATEGORIES, FALLBACK_CATEGORY_NAME } from "../domain/default-categories";
 import type { FinanceBudgetRepository } from "../domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
@@ -27,9 +29,32 @@ export interface FinanceSharesMirrorDeps {
 export class FinanceSharesMirror implements SharesMirror {
   constructor(private readonly deps: FinanceSharesMirrorDeps) {}
 
+  /**
+   * Who gets a mirror, and what is in it.
+   *
+   * **A currency outside finance's whitelist produces none at all**, and the
+   * split is still written: a transaction cannot hold it, and widening the
+   * whitelist would hand clients a currency whose decimal places they render
+   * wrong — worse than not showing the money (design.md D10). Those amounts
+   * stay visible through `GET /api/finance/split-spending`, which marks them
+   * as not counted in the ledger.
+   *
+   * **A zero share produces none either.** Split allows one (owing nothing on
+   * a shared meal is a real situation), finance requires a positive amount,
+   * and `finance_transaction.amount` has no CHECK — so a zero written here
+   * would land in the ledger silently.
+   *
+   * Only the share holders are iterated, which is the whole rule for the
+   * payer too: fronting money for other people is lending, not spending, so a
+   * payer holding no share gets nothing, and one holding a share gets that
+   * share rather than the bill.
+   */
   async plan(input: MirrorPlanInput): Promise<ShareMirrorRow[]> {
+    if (!isSupportedCurrency(input.currency)) return [];
+
     const rows: ShareMirrorRow[] = [];
     for (const share of input.shares) {
+      if (share.amount <= 0) continue;
       rows.push({
         userId: share.userId,
         splitExpenseId: input.splitExpenseId,
@@ -46,11 +71,28 @@ export class FinanceSharesMirror implements SharesMirror {
   }
 
   /**
-   * TODO(mirror-splits-into-ledger §6): run each share holder's budget-alert
-   * check here. Deliberately inert in this pass — `budgets` and `notifier`
-   * are already wired so that adding it changes nothing but this method.
+   * Runs every share holder's budget-alert check, the same one
+   * `createTransaction` runs for a transaction they wrote themselves (#76).
+   * A holder is notified about their own budget even though somebody else's
+   * action crossed it — that is the point, not an accident (design.md D13).
+   *
+   * Errors are deliberately **not** caught here: the caller
+   * (`writeMirrorAftermath`) owns the best-effort contract for the whole
+   * step, so catching per row as well would give the rule two homes that
+   * could drift apart.
+   *
+   * Only the categories the mirrors carry *now* are checked. An edit that
+   * moved a mirror off a category cannot have raised that category's spend,
+   * and this check only ever fires on the way up (design.md D19).
    */
-  async afterWrite(_rows: ShareMirrorRow[]): Promise<void> {}
+  async afterWrite(rows: ShareMirrorRow[]): Promise<void> {
+    for (const row of rows) {
+      await checkBudgetAlerts(
+        { budgetRepository: this.deps.budgets, categoryRepository: this.deps.categories, notifier: this.deps.notifier },
+        { userId: row.userId, type: "expense", currency: row.currency, categoryId: row.categoryId, date: row.day },
+      );
+    }
+  }
 
   /**
    * `finance_transaction.category_id` is NOT NULL, so this has to terminate

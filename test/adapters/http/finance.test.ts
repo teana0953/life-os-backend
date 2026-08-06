@@ -336,8 +336,97 @@ async function createSplitExpenseBetween(
   return (await res.json<{ id: string }>()).id;
 }
 
+/**
+ * Edits an existing split through the payer's `PATCH`, resending every field
+ * the route requires. Kept beside the create helper so the two send the same
+ * shape and an edit can never quietly become a lighter write than a create.
+ */
+async function editSplitExpenseBetween(
+  ctx: ReturnType<typeof buildApp>,
+  splitId: string,
+  payerToken: string,
+  otherToken: string,
+  amount: number,
+  currency: string,
+  day: string,
+  categoryName: string | null = null,
+): Promise<void> {
+  const payerId = await idOf(ctx.app, payerToken);
+  const otherId = await idOf(ctx.app, otherToken);
+  const res = await ctx.app.request(`/api/split/expenses/${splitId}`, {
+    method: "PATCH",
+    headers: authHeaderFor(payerToken),
+    body: JSON.stringify({
+      payer_user_id: payerId,
+      amount,
+      currency,
+      description: "dinner",
+      day,
+      category_name: categoryName,
+      split: { mode: "equal", participant_user_ids: [payerId, otherId] },
+    }),
+  });
+  if (res.status !== 200) throw new Error(`failed to edit split expense: ${res.status} ${await res.text()}`);
+}
+
+/**
+ * A split with hand-picked share amounts. `createSplitExpenseBetween` cannot
+ * express these: it splits evenly between exactly two people, while a zero
+ * share needs three participants (an even split into a zero would have to be
+ * under 3, which validation rejects outright) and a payer who fronted the
+ * money holds no share at all.
+ */
+async function createExactSplit(
+  ctx: ReturnType<typeof buildApp>,
+  payerToken: string,
+  shares: { token: string; amount: number }[],
+  options: { amount: number; currency?: string; day: string; categoryName?: string | null },
+): Promise<string> {
+  const payerId = await idOf(ctx.app, payerToken);
+  const resolved = await Promise.all(shares.map(async (share) => ({ userId: await idOf(ctx.app, share.token), amount: share.amount })));
+  for (const share of resolved) ctx.splitFriendChecker.addFriendship(payerId, share.userId);
+  const res = await ctx.app.request("/api/split/expenses", {
+    method: "POST",
+    headers: authHeaderFor(payerToken),
+    body: JSON.stringify({
+      group_id: null,
+      payer_user_id: payerId,
+      amount: options.amount,
+      currency: options.currency ?? "TWD",
+      description: "dinner",
+      day: options.day,
+      category_name: options.categoryName ?? null,
+      split: { mode: "exact", shares: resolved.map((share) => ({ user_id: share.userId, amount: share.amount })) },
+    }),
+  });
+  if (res.status !== 201) throw new Error(`failed to seed split expense: ${res.status} ${await res.text()}`);
+  return (await res.json<{ id: string }>()).id;
+}
+
 function authHeaderFor(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+}
+
+interface TransactionJson {
+  id: string;
+  type: string;
+  amount: number;
+  currency: string;
+  category_id: string;
+  date: string;
+  note: string | null;
+  split_expense_id: string | null;
+  category_source: string;
+}
+
+async function transactionsOf(ctx: ReturnType<typeof buildApp>, token: string, from = "2026-07-01", to = "2026-07-31"): Promise<TransactionJson[]> {
+  const res = await ctx.app.request(`/api/finance/transactions?from=${from}&to=${to}`, authed(token));
+  return ((await res.json()) as { transactions: TransactionJson[] }).transactions;
+}
+
+/** The caller's mirror of `splitExpenseId`, read back through the public listing. */
+async function mirrorFor(ctx: ReturnType<typeof buildApp>, token: string, splitExpenseId: string): Promise<TransactionJson | undefined> {
+  return (await transactionsOf(ctx, token)).find((txn) => txn.split_expense_id === splitExpenseId);
 }
 
 describe("finance HTTP routes", () => {
@@ -681,7 +770,9 @@ describe("finance HTTP routes", () => {
 
       const res = await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(token));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450 }] });
+      // TWD is whitelisted, so the same 450 is also a transaction — the flag
+      // is what stops a caller adding this figure to the summary total.
+      expect(await res.json()).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450, counted_in_transactions: true }] });
     });
 
     // Both halves run through one app instance, so a future change that fed
@@ -711,9 +802,15 @@ describe("finance HTTP routes", () => {
       );
       expect(settled.status).toBe(201);
 
+      // A settlement is repayment, not spending, so it also creates no
+      // transaction. Kept as a regression assertion only: settlements are
+      // written by a repository this change never touched, so no mutation of
+      // *this* change could make one appear — do not present it as proven.
+      expect(await transactionsOf(ctx, token)).toHaveLength(1);
+
       const after = await (await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(token))).json();
       expect(after).toEqual(before);
-      expect(after).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450 }] });
+      expect(after).toEqual({ month: "2026-07", totals: [{ currency: "TWD", amount: 450, counted_in_transactions: true }] });
     });
 
     it("returns an empty array, not a zero row, for a month with no split shares", async () => {
@@ -846,6 +943,317 @@ describe("finance HTTP routes", () => {
 
       const manual = await ctx.app.request("/api/finance/transactions", authed(holder, "POST", { type: "expense", amount: 100, category_id: food.id, date: DAY }));
       expect(manual.status).toBe(400);
+    });
+  });
+
+  /**
+   * #76: a split write has to run the same budget-alert check a transaction
+   * the holder wrote themselves would — otherwise the mirrored numbers are
+   * right and nobody is ever told they crossed a threshold.
+   */
+  describe("split mirror: budget alerts", () => {
+    const DAY = "2026-07-06";
+
+    it("notifies a share holder who did not write the split", async () => {
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      // Both fixture conditions matter. The share alone has to cross the
+      // threshold — 1800 split evenly is 900 against a 1000 budget, 90%;
+      // a 900 split would be a 450 share, 45%, and dropping the check
+      // entirely would go unnoticed. And the budget belongs to the *other*
+      // participant, not the writer: being told about your own write is the
+      // half that was never broken.
+      await ctx.app.request("/api/finance/budgets", authed(holder, "PUT", { category_id: null, amount: 1000 }));
+
+      await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY);
+
+      expect(ctx.budgetAlertNotifier.messages).toHaveLength(1);
+      expect(ctx.budgetAlertNotifier.messages[0].userId).toBe(await idOf(ctx.app, holder));
+      expect(ctx.budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月支出已達預算 8 成" });
+    });
+
+    it("still notifies the same (budget, month, threshold) only once across two splits", async () => {
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      await ctx.app.request("/api/finance/budgets", authed(holder, "PUT", { category_id: null, amount: 1000 }));
+
+      await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY);
+      // A second, small split: the holder is still in the 80% band, so the
+      // dedup record from the first write is what has to keep this quiet.
+      await createSplitExpenseBetween(ctx, payer, holder, 100, "TWD", DAY);
+
+      expect(ctx.budgetAlertNotifier.messages).toHaveLength(1);
+    });
+
+    it("records the split even when the alert check itself throws", async () => {
+      // The spec's claim is about the HTTP response, so it is asserted here
+      // rather than one layer down. `findByUserAndCategory` is the throwing
+      // point on purpose: `checkBudget` returns early when it finds no
+      // budget, so a fixture without one never reaches anything further in.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      ctx.financeBudgetRepository.findByUserAndCategory = async () => {
+        throw new Error("budget lookup exploded");
+      };
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY);
+
+      expect((await mirrorFor(ctx, holder, splitId))?.amount).toBe(900);
+    });
+  });
+
+  /**
+   * D7: a mirror is the split's facts wearing a transaction's clothes. The
+   * holder owns its category and its note; everything else would only make
+   * the two views disagree, so the finance API refuses it — in the backend,
+   * because the frontend lives in another repo and the API is public.
+   */
+  describe("split mirror: half read-only in the finance API", () => {
+    const DAY = "2026-07-06";
+
+    /** The holder's mirror of a 1800 TWD even split, i.e. a 900 share. */
+    async function seedMirror(): Promise<{ payer: string; holder: string; splitId: string; mirror: TransactionJson }> {
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY, "餐飲");
+      const mirror = await mirrorFor(ctx, holder, splitId);
+      if (!mirror) throw new Error("no mirror was created for the holder");
+      return { payer, holder, splitId, mirror };
+    }
+
+    /**
+     * One of the holder's own categories by name. Looked up rather than
+     * created: the mirror seeds their defaults, so `POST /categories` with
+     * any default name is a duplicate and answers 400 — a fixture built that
+     * way would make every case below fail for the wrong reason.
+     */
+    async function categoryIdOf(token: string, name: string, type: "expense" | "income"): Promise<string> {
+      const res = await ctx.app.request("/api/finance/categories", authed(token));
+      const { categories } = (await res.json()) as { categories: { id: string; name: string; type: string }[] };
+      const found = categories.find((category) => category.name === name && category.type === type);
+      if (!found) throw new Error(`no ${type} category named ${name}`);
+      return found.id;
+    }
+
+    /** A full-replace body echoing the mirror back, with `overrides` applied. */
+    function replaceBody(mirror: TransactionJson, overrides: Record<string, unknown> = {}) {
+      return {
+        type: mirror.type,
+        amount: mirror.amount,
+        currency: mirror.currency,
+        category_id: mirror.category_id,
+        date: mirror.date,
+        note: mirror.note,
+        ...overrides,
+      };
+    }
+
+    async function expenseTotal(token: string): Promise<number | undefined> {
+      const res = await ctx.app.request("/api/finance/summary?month=2026-07", authed(token));
+      const body = (await res.json()) as { totals: { currency: string; expense: number }[] };
+      return body.totals.find((total) => total.currency === "TWD")?.expense;
+    }
+
+    it("refuses to delete a mirrored transaction", async () => {
+      const { holder, splitId, mirror } = await seedMirror();
+
+      const res = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "DELETE"));
+
+      expect(res.status).toBe(400);
+      expect(await mirrorFor(ctx, holder, splitId)).toBeDefined();
+    });
+
+    it("refuses a PUT that changes the amount, and leaves the summary where it was", async () => {
+      const { holder, mirror } = await seedMirror();
+      const before = await expenseTotal(holder);
+
+      const res = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { amount: 10 })));
+
+      expect(res.status).toBe(400);
+      expect(await expenseTotal(holder)).toBe(before);
+    });
+
+    it("refuses a PUT that flips the mirror to income", async () => {
+      // `type` is part of a full replace, so without it in the locked list a
+      // holder can turn their 900 expense into 900 of income: out of every
+      // budget's spent and out of the expense total, while the split still
+      // says they owe it — the exact disagreement this change exists to end.
+      const { holder, mirror } = await seedMirror();
+      const salary = await categoryIdOf(holder, "薪資", "income");
+      const before = await expenseTotal(holder);
+
+      const res = await ctx.app.request(
+        `/api/finance/transactions/${mirror.id}`,
+        authed(holder, "PUT", replaceBody(mirror, { type: "income", category_id: salary })),
+      );
+
+      expect(res.status).toBe(400);
+      expect(await expenseTotal(holder)).toBe(before);
+    });
+
+    it("refuses a PUT that changes the date or the currency", async () => {
+      const { holder, mirror } = await seedMirror();
+
+      const movedDay = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { date: "2026-07-20" })));
+      expect(movedDay.status).toBe(400);
+
+      const movedCurrency = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { currency: "USD" })));
+      expect(movedCurrency.status).toBe(400);
+    });
+
+    it("accepts a PUT that resends the same values and only changes the category", async () => {
+      // The one edit that is allowed, and a full replace is the only way to
+      // express it: "carried a value at all" cannot be the refusal condition
+      // or recategorising would be impossible. The currency is resent in the
+      // other case to pin that the comparison is normalized, not literal.
+      const { holder, mirror } = await seedMirror();
+      const fun = await categoryIdOf(holder, "娛樂", "expense");
+
+      const res = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { category_id: fun, currency: "twd" })));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ category_id: fun, amount: 900 });
+    });
+
+    it("keeps the holder's own category when the payer edits the split afterwards", async () => {
+      // The `PUT` has to mark the row `'manual'`, and only an end-to-end run
+      // can show that: the PGlite guard writes `'manual'` itself, so it would
+      // stay green with a handler that never set it.
+      const { payer, holder, splitId, mirror } = await seedMirror();
+      const fun = await categoryIdOf(holder, "娛樂", "expense");
+      await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { category_id: fun })));
+
+      await editSplitExpenseBetween(ctx, splitId, payer, holder, 2400, "TWD", DAY, "餐飲");
+
+      const after = await mirrorFor(ctx, holder, splitId);
+      expect(after?.category_id).toBe(fun);
+      // The amount still follows the split — the category is frozen, not the row.
+      expect(after?.amount).toBe(1200);
+    });
+
+    it("ignores a split_expense_id sent in a PUT body", async () => {
+      // D17: the column is only ever set by the mirror write path. A client
+      // that could set it would attach its own transaction to someone else's
+      // split; one that could clear it would unlock a mirror.
+      const { holder, splitId } = await seedMirror();
+      const food = await categoryIdOf(holder, "購物", "expense");
+      const created = await ctx.app.request("/api/finance/transactions", authed(holder, "POST", { type: "expense", amount: 100, category_id: food, date: DAY, split_expense_id: splitId }));
+      const own = (await created.json()) as TransactionJson;
+      expect(own.split_expense_id).toBeNull();
+
+      const res = await ctx.app.request(
+        `/api/finance/transactions/${own.id}`,
+        authed(holder, "PUT", { type: "expense", amount: 100, currency: "TWD", category_id: food, date: DAY, split_expense_id: splitId }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ split_expense_id: null });
+    });
+  });
+
+  /**
+   * D8/D9/D10: which shares become money in somebody's ledger. Everything
+   * here is a decision `plan` makes, so it is observable at this layer — the
+   * repository only writes the rows it is handed.
+   */
+  describe("split mirror: who gets one, and in which currency", () => {
+    const DAY = "2026-07-06";
+
+    it("creates no transaction for a zero share", async () => {
+      // `mode: "exact"` is the only way to express this: an even split into a
+      // zero share would need a total under 3, which validation rejects
+      // outright — so `createSplitExpenseBetween` cannot reach the case.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      const freeloader = await validToken("uid-free");
+
+      await createExactSplit(
+        ctx,
+        payer,
+        [
+          { token: payer, amount: 900 },
+          { token: holder, amount: 900 },
+          { token: freeloader, amount: 0 },
+        ],
+        { amount: 1800, day: DAY },
+      );
+
+      // Owing nothing is not spending — and `finance_transaction.amount` has
+      // no CHECK, so a 0 written here would sit in the ledger unnoticed.
+      expect(await transactionsOf(ctx, freeloader)).toHaveLength(0);
+      expect(await transactionsOf(ctx, holder)).toHaveLength(1);
+      expect(await transactionsOf(ctx, payer)).toHaveLength(1);
+    });
+
+    it("mirrors the payer for their own share, not for the whole bill", async () => {
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+
+      const splitId = await createExactSplit(
+        ctx,
+        payer,
+        [
+          { token: payer, amount: 900 },
+          { token: holder, amount: 900 },
+        ],
+        { amount: 1800, day: DAY },
+      );
+
+      expect((await mirrorFor(ctx, payer, splitId))?.amount).toBe(900);
+    });
+
+    it("gives the payer nothing when they only fronted the money", async () => {
+      // A different claim from the one above, and the mutation that breaks
+      // this one leaves that one green: a payer holding no share has no
+      // "their own share vs the whole bill" to get wrong.
+      const payer = await validToken("uid-payer");
+      const first = await validToken("uid-first");
+      const second = await validToken("uid-second");
+
+      await createExactSplit(
+        ctx,
+        payer,
+        [
+          { token: first, amount: 900 },
+          { token: second, amount: 900 },
+        ],
+        { amount: 1800, day: DAY },
+      );
+
+      expect(await transactionsOf(ctx, payer)).toHaveLength(0);
+    });
+
+    it("records a split in an unsupported currency without mirroring it", async () => {
+      // THB is a valid split currency (any three uppercase letters) and not a
+      // finance one. The split must still be created: refusing it would take
+      // a working feature away over a limitation of the other side.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+
+      await createSplitExpenseBetween(ctx, payer, holder, 1800, "THB", DAY);
+
+      expect(await transactionsOf(ctx, holder)).toHaveLength(0);
+      const spending = (await (await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(holder))).json()) as {
+        totals: { currency: string; amount: number }[];
+      };
+      expect(spending.totals).toEqual([{ currency: "THB", amount: 900, counted_in_transactions: false }]);
+    });
+
+    it("marks per currency whether split spending is already counted in the transactions", async () => {
+      // Both currencies in one response on purpose: with only one row a
+      // hard-coded flag would answer correctly every time.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY);
+      await createSplitExpenseBetween(ctx, payer, holder, 600, "THB", DAY);
+
+      const body = (await (await ctx.app.request("/api/finance/split-spending?month=2026-07", authed(holder))).json()) as {
+        totals: { currency: string; amount: number; counted_in_transactions: boolean }[];
+      };
+
+      const flagFor = (currency: string) => body.totals.find((total) => total.currency === currency)?.counted_in_transactions;
+      expect(flagFor("TWD")).toBe(true);
+      expect(flagFor("THB")).toBe(false);
     });
   });
 

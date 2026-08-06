@@ -58,3 +58,13 @@ export interface ReplaceFinanceTransactionInput {
   date: string;
   note?: string | null;
 }
+
+/**
+ * What the repository's update actually writes. `categorySource` is computed
+ * by the use case — a mirror whose owner just picked a category by hand — and
+ * has no field in the request body, so no client can hand a value in
+ * (design.md D6/D17). Absent means "leave the column as it is".
+ */
+export interface UpdateFinanceTransactionFields extends ReplaceFinanceTransactionInput {
+  categorySource?: FinanceCategorySource;
+}

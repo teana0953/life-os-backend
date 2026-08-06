@@ -11,7 +11,7 @@ import { updateCategory } from "../../../contexts/finance/application/update-cat
 import { updateTransaction } from "../../../contexts/finance/application/update-transaction";
 import { upsertBudget } from "../../../contexts/finance/application/upsert-budget";
 import type { BudgetAlertNotifier } from "../../../contexts/finance/domain/budget-alert-notifier";
-import { DEFAULT_CURRENCY } from "../../../contexts/finance/domain/currency";
+import { DEFAULT_CURRENCY, isSupportedCurrency } from "../../../contexts/finance/domain/currency";
 import { createNetWorthAccount } from "../../../contexts/finance/application/create-networth-account";
 import { getMonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
 import { getNetWorthTrend } from "../../../contexts/finance/application/get-networth-trend";
@@ -25,6 +25,7 @@ import {
   FinanceCategoryTypeMismatch,
   FinanceTransactionNotFound,
   InvalidFinanceInputError,
+  MirroredTransactionReadOnly,
 } from "../../../contexts/finance/domain/errors";
 import {
   NetWorthAccountArchived,
@@ -84,6 +85,7 @@ function mapFinanceError(err: unknown, c: Context): Response {
     err instanceof FinanceCategoryArchived ||
     err instanceof FinanceCategoryTypeMismatch ||
     err instanceof InvalidFinanceInputError ||
+    err instanceof MirroredTransactionReadOnly ||
     err instanceof NetWorthAccountArchived ||
     err instanceof NetWorthAccountNameConflict ||
     err instanceof NetWorthInvalidKind
@@ -303,8 +305,17 @@ export function createGetSummaryHandler(options: FinanceHandlerOptions) {
   };
 }
 
+/**
+ * `counted_in_transactions` says whether this currency's shares are already
+ * in the caller's transactions, i.e. in the monthly summary and every budget
+ * (design.md D11). It is per currency because that is where the two answers
+ * diverge: a whitelisted currency is mirrored and adding this figure to the
+ * summary would double-count it, while an unwhitelisted one is *only* here.
+ * Stating it in the response rather than in a document is the point — a
+ * client cannot infer finance's whitelist.
+ */
 function splitSpendingAmountToJson(amount: SplitSpendingAmount) {
-  return { currency: amount.currency, amount: amount.amount };
+  return { currency: amount.currency, amount: amount.amount, counted_in_transactions: isSupportedCurrency(amount.currency) };
 }
 
 /**

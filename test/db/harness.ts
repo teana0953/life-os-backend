@@ -113,7 +113,25 @@ function withBatchShim(pgliteDb: { execute: (query: SQL) => Promise<unknown> }):
   };
 }
 
-const TABLES = ["split_activity", "split_settlement", "split_share", "split_expense", "expense_group_member", "expense_group", "users"];
+// `finance_transaction` is here because a split expense writes the share
+// holders' mirrors into it, in the same batch (design.md D15): the upsert, the
+// dropped-holder delete, the partial unique index and the cascade all live in
+// SQL, so nothing about them can be proven anywhere else. `finance_category`
+// follows because a mirror's `category_id` points at it, and truncating one
+// without the other would leave rows referencing categories that are gone.
+const TABLES = [
+  "split_activity",
+  "split_settlement",
+  "split_share",
+  "finance_transaction",
+  "split_expense",
+  "finance_budget_alert",
+  "finance_budget",
+  "finance_category",
+  "expense_group_member",
+  "expense_group",
+  "users",
+];
 
 /** Seed helpers. Plain inserts, deliberately not `db.batch` — see limit 1 above. */
 export async function insertUser(db: Db, id: string, email: string, displayName: string | null = null): Promise<string> {
@@ -163,6 +181,26 @@ export async function insertExpense(
   if (input.shares.length > 0) {
     await db.insert(schema.splitShare).values(input.shares.map((share) => ({ expenseId: input.id, ...share })));
   }
+  return input.id;
+}
+
+/**
+ * A finance category for a share holder, so a mirror has somewhere to land.
+ * The mirror tests build their `ShareMirrorRow`s by hand — the application
+ * layer's category resolution is exercised at the HTTP layer, and repeating
+ * it here would only prove the fixture agrees with itself.
+ */
+export async function insertCategory(
+  db: Db,
+  input: { id: string; userId: string; name: string; type?: "expense" | "income"; archived?: boolean },
+): Promise<string> {
+  await db.insert(schema.financeCategory).values({
+    id: input.id,
+    userId: input.userId,
+    name: input.name,
+    type: input.type ?? "expense",
+    archived: input.archived ?? false,
+  });
   return input.id;
 }
 
