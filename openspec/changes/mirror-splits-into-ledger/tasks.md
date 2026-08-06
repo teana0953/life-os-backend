@@ -13,6 +13,7 @@
 
 - [ ] 1.1 `split_expense.category_name text null`。**存名字不存 id**(分類是 per-user 的)。
 - [ ] 1.2 `CreateExpenseInput`/`UpdateExpenseInput`、`validateExpenseFields`、`POST /api/split/expenses`、**`PATCH /api/split/expenses/:id`**(不是 PUT,`app.ts:478`)、`GET` 的回應都要帶。
+- [ ] 1.2a `category_name` 的輸入規則要寫進 `validateExpenseFields`,並補進 split-bills 那條「其餘一律 400」的輸入契約:空字串當成 null、前後空白去掉、長度上限。**要有測試**,不是只加欄位。
 - [ ] 1.3 **前端契約改動有三處**,全部寫進 PR:分帳建立表單多一個分類選擇;**每一筆交易的回應與列表都要帶「來自分帳」的標記**(前端才鎖得住欄位);**`GET /api/finance/split-spending` 每個幣別多一個「是否已計入交易」旗標**。前端在另一個 repo。
 
 ## 2. `SharesMirror` port(D2)
@@ -20,10 +21,11 @@
 - [ ] 2.1 `src/contexts/split/domain/shares-mirror.ts` 定義 `MirrorPlanInput`、`ShareMirrorRow`、`plan()`、`afterWrite()`。**port 在 split 的 domain,實作在 finance 那側**;split 的 domain/application 不 import `contexts/finance/`。**split 的 adapter 會 import `shared/db/schema` 的 `financeTransaction`** —— 那是允許的,寫在註解裡。
 - [ ] 2.2 `SplitExpenseRepository.create/update` 簽章收一組鏡像列。**repository 不算鏡像,只把拿到的列放進 batch。**
 - [ ] 2.3 `createExpense`/`updateExpense` 呼叫 `plan`,寫入成功後呼叫 `afterWrite`。**`deleteExpense` 不呼叫**(刪除靠 cascade)。**`id` 要從 `deps.expenses.create({ id: crypto.randomUUID(), … })` 裡提出來**(`create-expense.ts:36`),`plan` 需要它。
-- [ ] 2.4 **突變:把 `plan` 從應用層刪掉,改在 `DrizzleSplitExpenseRepository` 裡重新實作分類解析** —— 3.x 必須紅。(**不要**寫成「讓 repository 自己算」:3.x 走的是 `InMemorySplitExpenseRepository`,它沒有 `FinanceCategoryRepository`,算不出東西;而突變施加在 Drizzle 那個上,3.x 根本碰不到它。)
-- [ ] 2.5 **`FinanceSharesMirror` 在 `createApp` 裡組**,用它已經持有的 `financeCategoryRepository` / `financeTransactionRepository`(`app.ts:191-192`)。**不要給 `CreateAppOptions` 加 `sharesMirror`** —— 有 22 個測試檔呼叫 `createApp`,而且 `finance.test.ts` 會傳 fake 進去,分類解析就變回不可測。
+- [ ] 2.4 **突變:把 `plan` 從應用層刪掉。** 3.x 必須紅 —— 因為 `InMemorySplitExpenseRepository` 就不再收到任何鏡像列。(**不要**把突變寫成「改在 `DrizzleSplitExpenseRepository` 裡重新實作解析」:3.x 走的是 in-memory 那個,施加在 Drizzle 上的突變它碰不到,那樣寫守門是死的。)
+- [ ] 2.5 **`FinanceSharesMirror` 在 `createApp` 裡組**,用它已經持有的 **`financeCategoryRepository`(`plan` 解析分類用)+ `financeBudgetRepository` + `budgetAlertNotifier`(`afterWrite` 跑 `checkBudgetAlerts` 用,`CheckBudgetAlertsDeps` 是 `{ budgetRepository, categoryRepository, notifier }`)**。**不需要 `financeTransactionRepository`** —— 鏡像是 repository 放進 batch 的,不經過它。**不要給 `CreateAppOptions` 加 `sharesMirror`** —— 有 22 個測試檔呼叫 `createApp`,而且 `finance.test.ts` 會傳 fake 進去,分類解析就變回不可測。
 - [ ] 2.6 **`InMemorySplitExpenseRepository` 的建構子要收 `InMemoryFinanceTransactionRepository`,鏡像寫進去。** 它現在只有 `rows: SplitExpense[]`,而 finance 的端點讀的是**另一個物件**(`test/contexts/finance/fakes.ts:69`)。**fake 把鏡像存進自己的 list 的話,3.x/4.x/6.x/7.x/8.x/9.x 全部看不到鏡像** —— 那就是 D2 想修的問題往下搬一層。
-- [ ] 2.7 波及面:`CreateExpenseDeps`(`create-expense.ts:8`,`updateExpense` 共用)、`routes/split.ts:421` 的兩個 handler、五個 split 應用層測試檔、`stubSplitExpenseRepository`(`split-stubs.ts:26`)。**逐個列出來改,不要邊做邊發現。**
+- [ ] 2.7a **finance 那側的波及面**:`FinanceTransaction`、`CreateFinanceTransactionInput`、`ReplaceFinanceTransactionInput`、`FinanceTransactionRepository.update`、`transactionToJson`、`InMemoryFinanceTransactionRepository` 都要帶 `splitExpenseId` / `categorySource`。**逐個列出來改。**
+- [ ] 2.7 split 那側的波及面:`CreateExpenseDeps`(`create-expense.ts:8`,`updateExpense` 共用)、`routes/split.ts:421` 的兩個 handler、五個 split 應用層測試檔、`stubSplitExpenseRepository`(`split-stubs.ts:26`)。**逐個列出來改,不要邊做邊發現。**
 
 ## 3. 分類解析(D4)
 
@@ -39,16 +41,18 @@
 - [ ] 4.2 **不要沿用 share 的「刪光再插」**(`drizzle-split-expense-repository.ts:185-186`)。那會炸掉 `category_source='manual'`,而且會讓 5.3 的唯一索引守門變成不可能失敗。
 - [ ] 4.3 **這條在 `test/db`(PGlite),不在 HTTP 層。** 覆寫語意住在 `ON CONFLICT DO UPDATE` 的 SET 清單裡,HTTP 層施加突變只能改 in-memory fake —— 一個跟自己一致的 fake,證明不了生產的 SQL。
 - [ ] 4.4 **突變:SET 清單裡的 `CASE` 改成無條件覆寫 `category_id`**,一條「使用者改分類 → 付款人改金額 → **分類不變且金額有變**」的 PGlite 測試必須紅。**金額那半一定要斷言** —— 少了它,「乾脆什麼都不更新」這個突變會活下來。
+- [ ] 4.6 **另一個方向也要守:突變「鏡像寫入時不設 `category_source = 'mirror'`」。** 沒設的話欄位吃預設值 `'manual'`,`CASE` 永遠不觸發,**鏡像的分類從此再也不跟著分帳走**。現有的 scenario 全部只斷言「保留」,一條都不會紅。要一條「分帳原本是餐飲,付款人改成娛樂,分攤者從沒動過 → 鏡像的分類跟著變成娛樂」的測試。
 - [ ] 4.5 **`category_source` 的條件不能寫成 `DO UPDATE … WHERE`** —— 那會跳過整列,連 amount 都不更新。要寫成 SET 清單裡的 `CASE`。4.4 的金額斷言就是擋這個的。
 
 ## 5. Schema(D5)
 
 - [ ] 5.1 `finance_transaction.split_expense_id uuid null references split_expense(id) on delete cascade`。
 - [ ] 5.2 `finance_transaction.category_source text not null default 'manual'`。
-- [ ] 5.3 部分唯一索引 `(user_id, split_expense_id) where split_expense_id is not null`。**突變:拿掉索引**,一條「同一筆分帳連續編輯兩次,分攤者的交易數量仍然是 1」的 PGlite 測試必須紅。**這條只在 4.1 用 upsert 時才有意義**;若寫成刪光再插,拿掉索引什麼都不會變,守門是死的。
+- [ ] 5.3 部分唯一索引 `(user_id, split_expense_id) where split_expense_id is not null`。**突變:把索引縮成 `(user_id)`**,一條「同一個人在同月有**兩筆不同的分帳**,兩筆鏡像都在」的 PGlite 測試必須紅(縮窄之後第二筆會衝到第一筆上、去更新錯的列)。
+- [ ] 5.3a **不要用「拿掉索引」當突變**:4.1 是 `ON CONFLICT (user_id, split_expense_id)`,拿掉索引會讓 Postgres 直接報 *there is no unique or exclusion constraint matching the ON CONFLICT specification*,**每一條寫鏡像的測試都會紅**,紅在 SQL 錯誤而不是重複列。那只證明索引存在,不證明它是對的索引。
 - [ ] 5.4 移除的分攤者:batch 裡帶 `delete … where split_expense_id = ? and user_id not in (…)`。**集合式的,不需要知道編輯前是誰** —— adapter 刻意不讀 grouped expense 的舊分攤者(`:182-183`),那個最佳化不該為這個 change 死掉。鏡像集合為空時 `notInArray(col, [])` 在 drizzle-orm 0.45.2 產生 `true`,是安全的。
 - [ ] 5.5 **這條也在 `test/db`(PGlite),理由同 4.3。突變:拿掉那條 delete**,一條「grouped expense 移除一個分攤者後,他的交易不見了」的測試必須紅。**fixture 要用 grouped 的**。
-- [ ] 5.7 **batch 裡鏡像的 insert 必須排在 `expenseInsert` 之後**(FK 立即檢查)。這個 repo 對語句順序寫得很重(`:270`),照做。
+- [ ] 5.7 **batch 裡鏡像的 insert 必須排在 `expenseInsert` 之後**(FK 立即檢查)。這個 repo 對語句順序寫得很重(`:270`),照做。**這條不需要專屬的突變測試** —— 排錯順序會讓**每一條**建立分帳的測試 FK 失敗。在註解裡寫明理由即可,**不要謊稱它有突變驗證**。
 - [ ] 5.6 刪除分帳靠 `on delete cascade`,**不在 batch 裡另外刪**(`delete` 是單一 `db.delete(splitExpense)`)。
 
 ## 6. 警示(D2、#76)
@@ -57,15 +61,17 @@
 - [ ] 6.2 **突變:拿掉 `afterWrite` 呼叫**,一條「分帳讓分攤者跨過 80% → `FakeBudgetAlertNotifier` 收到一則」的測試必須紅。兩個 fixture 條件都不能少:
   - **自付額要真的跨過門檻**:總額 1800 平分是自付 900,對 1000 的預算是 90%。拿 900 平分(自付 450)是 45%,突變會活下來。
   - **被通知的要是「不是寫入者」的那個分攤者**。#76 和 D13 講的就是這件事;拿付款人自己當受測對象是沒意思的那一半。
-- [ ] 6.3 **突變:不 catch `afterWrite` 的錯誤**,一條「`afterWrite` 丟錯但分帳仍然 200 且鏡像仍然存在」的**應用層**測試必須紅,用一個會丟錯的 `SharesMirror` stub。
+- [ ] 6.3 **突變:不 catch `afterWrite` 的錯誤**,一條**應用層**測試必須紅:用會丟錯的 `SharesMirror` stub,斷言 `createExpense` 仍然回傳、鏡像列仍然傳進了 repository。(**這條不要斷言 HTTP 狀態碼** —— 應用層看不到它。)
+- [ ] 6.3b 規格說的是「API 回 200」,那是 **HTTP 層**的宣稱,要有自己的測試。**`financeBudgetRepository` 是 `createApp` 的 option**,傳一個 `getSpent` 會丟錯的進去就是一條真的端到端守門。**突變:不 catch** → 分帳的 `POST` 變成 500,測試紅。
 - [ ] 6.3a **不要用「notifier 丟錯」當那個突變** —— `check-budget-alerts.ts:65-69` **已經**把 notifier 的錯誤吞掉了(`try { notify } catch { console.error }`),所以會丟錯的 notifier **永遠不會讓 `afterWrite` 丟錯**,那個守門是死的。要丟錯就從 port 這一層丟。
 - [ ] 6.4 既有的「同一個 (budget, month, threshold) 永不重複通知」不能被破壞。
 
 ## 7. 半唯讀(D7)
 
-- [ ] 7.1 `split_expense_id is not null` 的交易:`DELETE` 一律拒絕;`PUT` **只在 amount/date/currency 的值真的不同時**拒絕。
+- [ ] 7.1 `split_expense_id is not null` 的交易:`DELETE` 一律拒絕;`PUT` **只在 amount/date/currency/`type` 的值真的不同時**拒絕。
+- [ ] 7.1a **`type` 一定要在鎖住的清單裡。** `PUT` 是全取代而 `type` 是它的一部分(`update-transaction.ts:29`),分攤者可以把鏡像翻成 `income`(挑一個收入分類,`update-transaction.ts:34` 會收)。那 900 元就離開支出總額、離開每個預算的 `spent`,變成 +900 收入,而分帳那邊還說他欠 900 —— **用被允許的編輯路徑做出這個 change 要消滅的那種不一致。突變:把 `type` 從鎖住清單拿掉**,一條「翻成 income 被拒、且 summary 的支出總額不變」的測試必須紅。
 - [ ] 7.2 **`PUT` 是全取代**,只改分類的客戶端一定會重送 amount/currency/date。**「帶了就拒絕」會讓唯一允許的編輯做不到。** 比較前要正規化 currency 大小寫與日期形式。
-- [ ] 7.3 改分類時把 `category_source` 設成 `'manual'`。
+- [ ] 7.3 改分類時把 `category_source` 設成 `'manual'`。**突變:不設**,一條 HTTP 層的測試必須紅:分攤者 `PUT` 改分類 → 付款人再編輯分帳 → **分類仍然是分攤者選的那個**。4.4 在 PGlite 層證不了這件事,那裡的 `'manual'` 是測試自己寫進去的,**從來沒有經過 PUT handler**。
 - [ ] 7.4 **在後端擋** —— 前端在另一個 repo,API 是公開的。
 - [ ] 7.5 **突變:只擋 delete 不擋 update**(以及反過來),兩個方向各要有一條測試紅。
 - [ ] 7.6 **突變:改成「帶了 amount 就拒絕」**,一條「重送相同的 amount/date/currency 只改分類 → 200」的測試必須紅。
@@ -75,7 +81,9 @@
 
 - [ ] 8.1 零元分攤**不產生鏡像**。split 允許零元(`validate-expense-fields.ts:97-99`,CHECK 是 `amount >= 0`),finance 要求 `amount > 0`,而 `finance_transaction.amount` **沒有 CHECK** —— 繞過應用層就會靜默寫進一筆 0 元交易。
 - [ ] 8.2 **突變:零元也產生鏡像**,一條「三人分攤其中一人 0 元 → 只有兩筆交易」的測試必須紅。**fixture 必須用 `mode: "exact"`** —— 三人平分做不出零元(要 `amount < 3`,而那會被 `validate-expense-fields.ts:86-90` 直接擋掉)。而且 `createSplitExpenseBetween`(`finance.test.ts:305`)**只支援兩人**,要先寫一個三人的 helper。
-- [ ] 8.3 墊錢但沒分攤的付款人不產生鏡像。**突變:付款人拿全額鏡像**,一條「A 付 1800、A 分攤 900 → A 的交易是 900」的測試必須紅。
+- [ ] 8.3 墊錢但沒分攤的付款人不產生鏡像。**兩個突變都要有,它們抓的不是同一件事:**
+  - **突變:付款人拿全額鏡像** → 一條「A 付 1800、A 分攤 900 → A 的交易是 900」的測試必須紅。
+  - **突變:即使付款人沒有分攤也給他鏡像** → 一條「A 全額替 B、C 墊,A 完全沒有分攤 → **A 一筆交易都沒有**」的測試必須紅。第一個突變抓不到這個(付款人根本沒有 share,「全額 vs 自付額」不成立),而規格寫的是這一句(`fronting money for others is not spending`)。`validate-expense-fields.ts:96-101` 確認付款人不持分攤是合法的。
 - [ ] 8.4 結清不產生鏡像。**這條不寫突變測試** —— 結清由完全不同的 repository 寫(`create-settlement.ts`),這個 change 一行都沒碰它,沒有任何**對這個 change 的**突變能讓它產生鏡像。寫一條「結清後交易數量不變」的斷言當回歸即可,**不要謊稱它有突變驗證**。
 
 ## 9. 白名單外的幣別(D10、D11)

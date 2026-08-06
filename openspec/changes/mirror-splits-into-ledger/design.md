@@ -59,7 +59,7 @@ export interface SharesMirror {
 
 ### 接線:在 `createApp` 裡組,不加新 option
 
-`createApp` **已經**同時持有 `financeCategoryRepository` 與 `financeTransactionRepository`(`app.ts:191-192`)。`FinanceSharesMirror` 用它們在 `createApp` 裡組出來即可。
+`createApp` **已經**同時持有 `financeCategoryRepository` 與 `financeTransactionRepository`(`app.ts:191-192`)。`FinanceSharesMirror` 在 `createApp` 裡組出來即可。它需要的是 **`financeCategoryRepository`**(`plan` 解析分類)加上 **`financeBudgetRepository` + `budgetAlertNotifier`**(`afterWrite` 跑 `checkBudgetAlerts`,其 deps 是 `{ budgetRepository, categoryRepository, notifier }`)—— **不需要 `financeTransactionRepository`**,鏡像是 repository 放進 batch 的,不經過它。
 
 **不要給 `CreateAppOptions` 加 `sharesMirror`**:有 **22 個測試檔**呼叫 `createApp`,加 option 等於全部要改,而且 `finance.test.ts` 會傳一個 fake 進去 —— 那就把分類解析變回不可測。在 `createApp` 裡組,`finance.test.ts` **自動拿到真的實作**。
 
@@ -128,7 +128,12 @@ finance_transaction
 
 ## D6:使用者改過分類之後,分帳更新不能蓋回去
 
-`category_source`:`'mirror'`(自動解析的)或 `'manual'`(使用者改過的)。`ON CONFLICT DO UPDATE` 只在 `category_source = 'mirror'` 時覆寫 `category_id`;`amount`/`day`/`currency` **無條件**覆寫。
+`category_source`:`'mirror'`(自動解析的)或 `'manual'`(使用者改過的)。
+
+**兩個方向都要有守門,而且第一版一個都沒有:**
+
+- 鏡像寫入**忘了設 `'mirror'`** → 吃預設值 `'manual'` → `CASE` 永遠不觸發 → **鏡像的分類從此再也不跟著分帳走**。只斷言「使用者改過的被保留」的測試**永遠不會紅**。
+- `PUT` **忘了設 `'manual'`** → 使用者的分類在付款人下次編輯時被靜默還原,正是這條規則存在要防的事。而在 PGlite 層寫的那條測試證不了它 —— 那裡的 `'manual'` 是測試自己寫進去的,**從來沒有經過 PUT handler**。`ON CONFLICT DO UPDATE` 只在 `category_source = 'mirror'` 時覆寫 `category_id`;`amount`/`day`/`currency` **無條件**覆寫。
 
 **不要用「分類跟預期值不同就當作使用者改過」來推斷** —— 付款人把分類從餐飲改成娛樂時,那個推斷會誤判成「使用者改過」,然後永遠不再同步。
 
@@ -136,9 +141,11 @@ finance_transaction
 
 `PUT /api/finance/transactions/:id` 是**全取代**(規格:currency「required on full-replace update」)。所以只改分類的客戶端**一定會**送 `amount`、`currency`、`date`。
 
-**規則:值不同才拒絕,不是帶了就拒絕。** 帶了就拒絕會讓「只改分類」這個唯一允許的編輯變成做不到。
+**規則:amount / date / currency / `type` 值不同才拒絕,不是帶了就拒絕。** 帶了就拒絕會讓「只改分類」這個唯一允許的編輯變成做不到。
 
 比較要正規化:currency 大小寫、date 用同一個 `YYYY-MM-DD` 形式。
+
+**`type` 一定要在鎖住的清單裡。** 第一版列了 amount/date/currency 就以為列完了 —— `PUT` 是全取代而 `type` 是它的一部分,分攤者可以把鏡像翻成 `income`(挑一個收入分類,`update-transaction.ts:34` 會收)。那筆錢就離開支出總額、離開每個預算的 `spent`,變成一筆收入,而分帳那邊還說他欠著 —— **用被允許的編輯路徑,做出這個 change 存在就是要消滅的那種不一致。**
 
 `DELETE` 一律拒絕。**在後端擋** —— 前端在另一個 repo,API 是公開的。
 

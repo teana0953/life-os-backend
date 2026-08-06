@@ -11,8 +11,10 @@ requirement's former outcome, that no transaction is created, no longer
 holds; its name is kept so the inversion is explicit rather than silent.
 
 A mirrored transaction SHALL carry the split expense it came from. Its
-`amount`, `date` and `currency` SHALL NOT be editable through the finance
-API, and it SHALL NOT be deletable there: those are facts of the split, and
+`amount`, `date`, `currency` and `type` SHALL NOT be editable through the
+finance API — `type` above all, since flipping an expense to income removes
+it from every budget and every expense total while the split still says the
+money is owed — and it SHALL NOT be deletable there: those are facts of the split, and
 changing them in one place only would make the two views disagree. Its
 `category_id` and `note` SHALL be editable, and once edited SHALL NOT be
 overwritten by later edits to the split.
@@ -116,6 +118,12 @@ This scenario is kept under its former name so the inversion is loud.
 - **THEN** every affected share holder's mirrored transaction changes with
   it, and a share holder who was removed no longer has one
 
+#### Scenario: An untouched mirror follows the split's category
+
+- **WHEN** a split names 餐飲, the payer later changes it to 娛樂, and the
+  share holder never recategorised their mirror
+- **THEN** the mirror's category becomes 娛樂
+
 #### Scenario: A hand-picked category survives the next split edit
 
 - **WHEN** a share holder recategorises their mirrored transaction and the
@@ -126,9 +134,10 @@ This scenario is kept under its former name so the inversion is loud.
 #### Scenario: The ledger refuses to rewrite a split's facts
 
 - **WHEN** a share holder tries to change a mirrored transaction's amount,
-  date or currency to a different value, or to delete it, through the finance
-  API
-- **THEN** the request is rejected and the transaction is unchanged
+  date, currency or type to a different value, or to delete it, through the
+  finance API
+- **THEN** the request is rejected and the transaction is unchanged, and the
+  monthly summary's expense total does not move
 
 #### Scenario: Recategorising a mirror through a full-replace update works
 
@@ -206,7 +215,7 @@ transaction SHALL be indistinguishable from a missing one (404).
 
 A transaction mirrored from a split expense SHALL be identified as such in
 every response that returns it, and SHALL NOT be deletable or have its
-`amount`, `date` or `currency` changed through this API.
+`amount`, `date`, `currency` or `type` changed through this API.
 
 A successful create or update of a TWD expense transaction SHALL additionally
 trigger the budget-alert check defined by the `finance-budgets` capability;
@@ -228,7 +237,12 @@ or failure behavior.
 
 #### Scenario: Users are isolated
 
-- **WHEN** user B attempts to GET, PUT, or DELETE a transaction created by user A
+Isolation is by owner, not by writer: a mirrored transaction is created by
+someone else's action but belongs to the share holder, who may read and
+recategorise it.
+
+- **WHEN** user B attempts to GET, PUT, or DELETE a transaction **owned** by
+  user A
 - **THEN** the response is 404 and A's data is unchanged
 
 #### Scenario: Category must match transaction type

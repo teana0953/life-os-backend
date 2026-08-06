@@ -2,9 +2,9 @@
 
 ### Requirement: An expense and its shares are written atomically
 
-Creating or editing an expense SHALL write the expense row, its share rows
-and the share holders' mirrored finance transactions in a single database
-statement batch, so a failure can never leave an expense whose shares do not
+Creating or editing an expense SHALL write the expense row, its share rows,
+its activity entry and the share holders' mirrored finance transactions in a
+single database statement batch, so a failure can never leave an expense whose shares do not
 sum to its amount, nor a split whose mirrors disagree with it. The identifier
 SHALL be generated before the write so every part of the batch can reference
 it. Deleting an expense SHALL remove its mirrors.
@@ -60,7 +60,13 @@ between the people named in its shares.
 
 The category SHALL be recorded as a name, not an identifier, because finance
 categories are per-user: the payer's identifier means nothing to the other
-participants, who are the ones who need to read it.
+participants, who are the ones who need to read it. An empty name SHALL be
+treated as none.
+
+Because an expense's participants each get a transaction in their own ledger,
+whoever may edit or delete an expense thereby writes to, and deletes from,
+other people's ledgers. That reach SHALL be limited to the mirrors of that
+expense: no other row of anyone's ledger SHALL be touched.
 
 #### Scenario: An expense stores a share per participant
 
@@ -111,9 +117,17 @@ participants, who are the ones who need to read it.
 
 #### Scenario: A category name is optional and stored as given
 
-- **WHEN** an expense is recorded with a category name, and another without
-- **THEN** both are created, and reading them back returns the name that was
-  given and nothing for the one that had none
+- **WHEN** an expense is recorded with a category name, another with an empty
+  one, and another with none at all
+- **THEN** all three are created, and reading them back returns the name that
+  was given and nothing for the other two
+
+#### Scenario: Deleting an expense touches only its own mirrors
+
+- **WHEN** the payer deletes an expense and a share holder has other
+  transactions that month
+- **THEN** only the mirror of that expense disappears from the share holder's
+  ledger
 
 ### Requirement: The split queries are proven against a real database
 
