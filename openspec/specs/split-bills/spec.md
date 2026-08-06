@@ -6,17 +6,32 @@ TBD - created by archiving change add-split-bills. Update Purpose after archive.
 ### Requirement: Split expenses record who paid and who owes
 
 A split expense SHALL record the amount in the currency's minor units, the
-currency, a payer, a description, a day, and one share row per participant
-holding the amount that participant owes. Each share SHALL be returned with
-its participant's display name, and the expense SHALL be returned with the
-payer's: a share holder can read the whole expense, including
-co-participants who are neither their friend nor a member of any group they
-share — the friendship rule is checked against the writer only — so nothing
-else could resolve those names. The payer's name SHALL NOT be derived from
-the shares, since a payer who merely fronted the money holds none. The
-shares SHALL always sum exactly to the expense amount. An expense MAY belong
-to a group or to none — a groupless expense is a direct split between the
-people named in its shares.
+currency, a payer, a description, a day, an optional category name, and one
+share row per participant holding the amount that participant owes. Each
+share SHALL be returned with its participant's display name, and the expense
+SHALL be returned with the payer's: a share holder can read the whole
+expense, including co-participants who are neither their friend nor a member
+of any group they share — the friendship rule is checked against the writer
+only — so nothing else could resolve those names. The payer's name SHALL NOT
+be derived from the shares, since a payer who merely fronted the money holds
+none. The shares SHALL always sum exactly to the expense amount. An expense
+MAY belong to a group or to none — a groupless expense is a direct split
+between the people named in its shares.
+
+The category SHALL be recorded as a name, not an identifier, because finance
+categories are per-user: the payer's identifier means nothing to the other
+participants, who are the ones who need to read it. An empty name SHALL be
+treated as none, and so SHALL an absent one. An edit is a full replacement,
+not a patch — every other field it leaves out is rejected as missing — so the
+category is the one optional field there, and leaving it out clears it rather
+than keeping what was stored. A client that means to keep the category SHALL
+resend it: leaving it out moves every share holder's mirror to their fallback
+category.
+
+Because an expense's participants each get a transaction in their own ledger,
+whoever may edit or delete an expense thereby writes to, and deletes from,
+other people's ledgers. That reach SHALL be limited to the mirrors of that
+expense: no other row of anyone's ledger SHALL be touched.
 
 #### Scenario: An expense stores a share per participant
 
@@ -64,6 +79,26 @@ people named in its shares.
 
 - **WHEN** an expense is submitted listing the same user twice in its shares
 - **THEN** the request is rejected with `400`
+
+#### Scenario: A category name is optional and stored as given
+
+- **WHEN** an expense is recorded with a category name, another with an empty
+  one, and another with none at all
+- **THEN** all three are created, and reading them back returns the name that
+  was given and nothing for the other two
+
+#### Scenario: An edit that leaves the category out clears it
+
+- **WHEN** an expense recorded with a category name is edited by a request
+  that does not carry one
+- **THEN** the expense has no category name afterwards
+
+#### Scenario: Deleting an expense touches only its own mirrors
+
+- **WHEN** the payer deletes an expense and a share holder has other
+  transactions that month
+- **THEN** only the mirror of that expense disappears from the share holder's
+  ledger
 
 ### Requirement: Equal splits divide the remainder deterministically
 
@@ -371,15 +406,53 @@ share into memory.
 
 ### Requirement: An expense and its shares are written atomically
 
-Creating or editing an expense SHALL write the expense row and its share rows
-in a single database statement batch, so a failure can never leave an expense
-whose shares do not sum to its amount. The identifier SHALL be generated
-before the write so both parts of the batch can reference it.
+Creating or editing an expense SHALL write the expense row, its share rows,
+its activity entry and the share holders' mirrored finance transactions in a
+single database statement batch, so a failure can never leave an expense whose shares do not
+sum to its amount, nor a split whose mirrors disagree with it. The identifier
+SHALL be generated before the write so every part of the batch can reference
+it. Deleting an expense SHALL remove its mirrors.
+
+Mirrors join this batch rather than following it because the driver has no
+transaction support: a mirror written afterwards could fail on its own,
+leaving a permanent disagreement between the two views that nothing would
+detect or repair.
+
+The mirror rows SHALL be determined before the write and handed to the
+repository, which SHALL NOT compute them: what a mirror contains, who gets
+one, and which category it lands on are decisions that SHALL be observable
+without a database. An edit SHALL update a share holder's existing mirror in
+place rather than replacing it, and SHALL remove the mirror of anyone who is
+no longer a share holder.
+
+The write SHALL report the mirrors **as it stored them**, which is not always
+what it was given: an edit keeps the category of a mirror its owner
+recategorised, so the planned row and the stored row name different
+categories. Anything that runs off a mirror after the write — the budget
+check below — SHALL be given the stored rows, or it would examine a category
+the money is not in and never the one it is.
 
 #### Scenario: A failed write leaves nothing behind
 
 - **WHEN** writing an expense's shares fails
 - **THEN** no expense row remains that has no shares or mismatched shares
+
+#### Scenario: A failed mirror leaves no split behind either
+
+- **WHEN** writing a share holder's mirrored transaction fails
+- **THEN** no expense row, share row or mirror remains from that write
+
+#### Scenario: An edit does not replace a mirror
+
+- **WHEN** an expense's amount is edited
+- **THEN** each remaining share holder's existing mirror is updated, keeping
+  anything they had personally changed on it
+
+#### Scenario: A dropped participant loses their mirror
+
+- **WHEN** an expense is edited so that a participant no longer holds a share
+- **THEN** that participant's mirror is removed in the same write, whether or
+  not the expense belongs to a group
 
 ### Requirement: Listing expenses is scoped and unambiguous
 
@@ -633,6 +706,14 @@ query is right rather than that nothing was checked. A behaviour that holds
 by another query — SHALL NOT be written as a test here, since no mutation
 could make it fail; state it where the code is instead.
 
+The writes that keep a share holder's mirrored transaction in step with the
+split SHALL be proven the same way — the upsert that preserves a category the
+user chose, the delete that removes a dropped participant's mirror, the
+partial unique index that stops a second mirror appearing, and the cascade
+that removes mirrors with the expense. These live in SQL, so a test driven
+through an in-memory repository would only prove the fake agrees with
+itself.
+
 #### Scenario: Visibility is proven, not assumed
 
 - **WHEN** the expense listing query runs for someone who is neither a payer,
@@ -657,6 +738,38 @@ could make it fail; state it where the code is instead.
 
 - **WHEN** a pair has balances in two currencies and settles one
 - **THEN** only that currency changes, executed against a real database
+
+#### Scenario: An edit keeps a user's own category, proven against SQL
+
+- **WHEN** a share holder has recategorised their mirror and the expense's
+  amount is then edited, executed against a real database
+- **THEN** the mirror's amount changes and its category does not — and making
+  the update overwrite the category unconditionally makes this fail
+
+#### Scenario: A dropped participant's mirror is removed, proven against SQL
+
+- **WHEN** an expense in a group is edited so a participant no longer holds a
+  share, executed against a real database
+- **THEN** their mirror is gone — and removing the delete from the write makes
+  this fail
+
+#### Scenario: A second mirror cannot appear
+
+- **WHEN** the same expense is edited twice, executed against a real database
+- **THEN** each share holder still has exactly one mirror, carrying the second
+  edit's amount — and writing the mirrors as a plain insert instead of an
+  upsert makes this fail. Dropping the index alone is not that mutation: the
+  `ON CONFLICT` target then matches no unique constraint and every mirror
+  write fails in the planner, which shows the index exists rather than that it
+  is the right index.
+
+#### Scenario: A write hands back the mirrors it stored
+
+- **WHEN** a share holder has recategorised their mirror and the expense is
+  edited, executed against a real database
+- **THEN** the write reports that holder's mirror on the category it is
+  stored in, not the one the edit planned — the categories the budget checks
+  below run on
 
 ### Requirement: Split activity record
 

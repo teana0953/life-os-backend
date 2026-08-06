@@ -28,14 +28,18 @@ alert records. Budgets SHALL be scoped to the authenticated user.
 ### Requirement: Budget progress reports TWD spending for a month
 
 GET `/api/finance/budgets?month=YYYY-MM` SHALL return every budget with that
-month's progress: `spent` (the sum of the user's TWD expense transactions in
-that month — all of them for the overall budget, the category's for a
-category budget), `remaining` (amount − spent, may be negative), and
-`percent`. Non-TWD transactions SHALL NOT count toward any budget.
-Aggregation SHALL happen in the database. Split shares and settlements SHALL
-NOT count toward any budget: a split carries no finance category, so it
-cannot be attributed to a category budget, and budget alerts fire when a
-transaction is written — which a split never is.
+month's progress: `spent`, `remaining` (amount − spent, may be negative), and
+`percent`.
+
+`spent` SHALL be the sum of the user's TWD expense transactions in that month —
+all of them for the overall budget, the category's for a category budget.
+Non-TWD transactions SHALL NOT count toward any budget. Aggregation SHALL
+happen in the database.
+
+The user's own share of a shared expense SHALL count, because it is one of
+those transactions: it is mirrored into the ledger when the split is
+recorded, carrying the category the split named. Money repaid between people
+SHALL NOT count, because a repayment is never mirrored.
 
 #### Scenario: Progress splits overall and category scopes
 
@@ -46,8 +50,12 @@ transaction is written — which a split never is.
 
 #### Scenario: A split expense does not consume a budget
 
-- **WHEN** the user holds a TWD share on a split expense in the month
-- **THEN** every budget's `spent` is unchanged and no alert is raised
+This scenario is kept under its former name so the inversion is explicit: a
+share now DOES consume a budget, because it is a transaction.
+
+- **WHEN** the user holds a TWD share on a shared expense in the month
+- **THEN** the overall budget's `spent` includes it, and so does the budget
+  for the category the split named
 
 ### Requirement: Crossing a budget threshold pushes once per month
 
@@ -62,6 +70,17 @@ same (budget, month, threshold) SHALL never notify twice, including under
 concurrent writes (database-level uniqueness). Push failure SHALL NOT fail
 the transaction write. Deleting a transaction SHALL neither trigger checks
 nor retract alerts.
+
+Recording or editing a shared expense SHALL run this same check for every
+share holder whose mirrored transaction was written, on the same best-effort
+terms: a failing check or push SHALL NOT fail the split write. A share holder
+SHALL be notified about their own budget even though someone else's action
+crossed it. Editing a shared expense SHALL check the categories the mirrors
+now carry — as read back from the write, not as the edit planned them, since
+a mirror its owner recategorised keeps the owner's category and the two
+therefore disagree exactly when it matters. It SHALL NOT be required to check
+a category a mirror carried before the edit, because spending on the category
+it left can only fall, and this check only ever fires on the way up.
 
 #### Scenario: Crossing 80 percent notifies once
 
@@ -92,4 +111,31 @@ nor retract alerts.
 - **WHEN** every push subscription send fails while recording a
   threshold-crossing expense
 - **THEN** the transaction is stored and the API responds success
+
+#### Scenario: A share crosses a threshold for someone who did not write it
+
+- **WHEN** another participant records a shared expense whose share pushes the
+  user past 80% of their overall budget
+- **THEN** the user is notified once, exactly as if they had recorded the
+  expense themselves
+
+#### Scenario: An edit checks the category the mirror is in now
+
+- **WHEN** a share holder has moved their mirror onto a category of their own
+  that carries a budget, and the payer then edits the split to an amount that
+  pushes that budget past 80%
+- **THEN** the holder is notified once, for the category the mirror is in —
+  not for the one the split names
+
+#### Scenario: One holder's failing check does not silence the others
+
+- **WHEN** the alert check throws for one share holder on a shared expense
+  with several holders
+- **THEN** the holders after them are still checked and still notified
+
+#### Scenario: A failing alert does not fail the split
+
+- **WHEN** the budget-alert check throws while a shared expense is recorded
+- **THEN** the expense, its shares and its mirrors are all stored and the API
+  responds success
 
