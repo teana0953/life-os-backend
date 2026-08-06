@@ -151,9 +151,10 @@ This scenario is kept under its former name so the inversion is loud.
 
 #### Scenario: A share holder who has never opened the ledger still gets one
 
-- **WHEN** a user with no finance categories at all is given a share
+- **WHEN** a user with no finance categories at all is given a share on a
+  split that names a category
 - **THEN** their default categories are seeded and the mirrored transaction
-  is created
+  lands on the named category the seeding just created, not on 其他
 
 #### Scenario: An unsupported currency is reported, not mirrored
 
@@ -306,7 +307,8 @@ real expense. A category's `type` SHALL be immutable after creation.
 
 - **WHEN** a user with no categories at all is given a share on a split
   expense
-- **THEN** their defaults are seeded and their mirrored transaction is created
+- **THEN** their defaults are seeded and their mirrored transaction is
+  created, on the category the split named
 
 #### Scenario: A mirror may land on an archived category
 
