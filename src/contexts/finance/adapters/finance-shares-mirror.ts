@@ -60,7 +60,13 @@ export class FinanceSharesMirror implements SharesMirror {
    * 1. the holder's own **expense** category of that name;
    * 2. otherwise their **expense** 其他 — for an unnamed category as well as
    *    an unmatched one;
-   * 3. otherwise re-seed the defaults and take 其他 again.
+   * 3. otherwise re-seed the defaults and **retry from step 1**.
+   *
+   * Step 3 retries from the top, not from step 2: the re-seed creates 餐飲
+   * alongside 其他, so a holder who has never opened the ledger and is given
+   * a share on a 餐飲 split should land on their brand-new 餐飲 — handing
+   * back to step 2 would file it under 其他 while the right category sat
+   * there unused.
    *
    * **Both lookups are pinned to `type = 'expense'`** because 其他 exists as
    * an income category too: landing there would file the money as income for
@@ -89,6 +95,11 @@ export class FinanceSharesMirror implements SharesMirror {
     if (fallback) return fallback.id;
 
     await this.deps.categories.insertDefaultsIfMissing(DEFAULT_CATEGORIES.map((category) => ({ ...category, userId })));
+
+    if (categoryName !== null) {
+      const seededNamed = await this.deps.categories.findByUserTypeName(userId, "expense", categoryName);
+      if (seededNamed) return seededNamed.id;
+    }
     const seeded = await this.deps.categories.findByUserTypeName(userId, "expense", FALLBACK_CATEGORY_NAME);
     if (seeded) return seeded.id;
     throw new Error(`failed to resolve a mirror category for ${userId}`);

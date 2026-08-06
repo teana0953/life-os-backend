@@ -807,10 +807,10 @@ describe("finance HTTP routes", () => {
 
       const mirror = await mirrorOf(holder, splitId);
       expect(mirror).toMatchObject({ amount: 450, category_source: "mirror" });
-      // 其他, not the 餐飲 the split named: the re-seed hands back to step 2,
-      // not to step 1 (design.md D4). The freshly seeded 餐飲 exists but this
-      // mirror does not go looking for it a second time.
-      expect(await mirrorCategory(holder, splitId)).toMatchObject({ name: "其他", type: "expense" });
+      // 餐飲, not 其他: the re-seed creates the named category too, so the
+      // retry goes back to step 1 rather than settling for the fallback with
+      // the right category sitting there unused (design.md D4).
+      expect(await mirrorCategory(holder, splitId)).toMatchObject({ name: "餐飲", type: "expense" });
       expect((await categoriesOf(holder)).length).toBe(11);
     });
 
