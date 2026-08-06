@@ -142,23 +142,19 @@ transactions now. They SHALL NOT be added a second time from the split tables.
   or user A calls it for an empty month
 - **THEN** the response contains empty `totals` and `by_category`
 
-#### Scenario: Summary is unaffected by split expenses
-
-This scenario is kept under its former name so the inversion is loud.
+#### Scenario: Summary counts a split share exactly once
 
 - **WHEN** the user holds a TWD share on a split expense in the month
 - **THEN** the summary's expense total includes it exactly once, and equals
   the overall budget's `spent` for that month
 
-### Requirement: Split spending is reported per month without becoming transactions
+### Requirement: A split share becomes a transaction in the holder's ledger
 
 A split expense SHALL create one finance transaction per share holder, for
 that holder's own share, in the same atomic write as the split expense
 itself — so the money is visible where personal spending is aggregated: the
 ledger listing, the monthly summary, budgets and budget alerts. Net worth and
-its trend read different tables and SHALL be unaffected. This
-requirement's former outcome, that no transaction is created, no longer
-holds; its name is kept so the inversion is explicit rather than silent.
+its trend read different tables and SHALL be unaffected.
 
 A mirrored transaction SHALL carry the split expense it came from. Its
 `amount`, `date`, `currency` and `type` SHALL NOT be editable through the
@@ -220,9 +216,7 @@ currency nor silently lose an unmirrored one.
 - **THEN** the split-spending figure is unchanged, and no transaction is
   created for the repayment
 
-#### Scenario: No transaction is created
-
-This scenario is kept under its former name so the inversion is loud.
+#### Scenario: Every share holder gets a transaction
 
 - **WHEN** a split expense in a whitelisted currency is recorded
 - **THEN** each share holder has a transaction for their own share, and

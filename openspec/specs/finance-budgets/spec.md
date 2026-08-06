@@ -48,10 +48,7 @@ SHALL NOT count, because a repayment is never mirrored.
 - **THEN** July progress shows the overall budget spent 3500 and the 餐飲
   budget spent 2500, the USD expense counted in neither
 
-#### Scenario: A split expense does not consume a budget
-
-This scenario is kept under its former name so the inversion is explicit: a
-share now DOES consume a budget, because it is a transaction.
+#### Scenario: A split expense consumes a budget
 
 - **WHEN** the user holds a TWD share on a shared expense in the month
 - **THEN** the overall budget's `spent` includes it, and so does the budget
