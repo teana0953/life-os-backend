@@ -21,6 +21,8 @@ export interface ValidateExpenseFieldsInput {
   currency: string;
   description: string;
   day: string;
+  /** Free-form and unchecked at this boundary: the rules are this function's (see `normalizeCategoryName`). */
+  categoryName?: unknown;
   split: SplitInput;
   /** Whether an archived group blocks this call. `false` for edits: archiving blocks only creation and adding members, never correcting an existing expense (design.md). */
   checkArchived: boolean;
@@ -33,6 +35,7 @@ export interface ValidatedExpenseFields {
   description: string;
   day: string;
   splitMode: SplitMode;
+  categoryName: string | null;
   shares: SplitShareInput[];
 }
 
@@ -49,6 +52,33 @@ export interface ValidatedExpenseFields {
  */
 /** Postgres `integer` upper bound — the column type both amount columns use. */
 export const MAX_MINOR_UNITS = 2147483647;
+
+/**
+ * `split_expense.category_name` is unbounded `text`, so the cap is here or
+ * nowhere. It exists because this name is resolved against every
+ * participant's own categories, and an unbounded one would let a payer write
+ * an arbitrarily large string into other people's lookups.
+ */
+export const MAX_CATEGORY_NAME_LENGTH = 100;
+
+/**
+ * An empty name means "none" — one fewer shape for callers to distinguish,
+ * and the finance side only ever asks "is there a name to match".
+ *
+ * **Deliberately not trimmed.** Finance category names are stored exactly as
+ * the user typed them, so trimming here would make a split's name stop
+ * matching a category whose name really does have a space in it, and it
+ * contradicts the spec's "reading them back returns the name that was given".
+ */
+function normalizeCategoryName(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new InvalidSplitInput("category_name must be a string or null");
+  if (value === "") return null;
+  if (value.length > MAX_CATEGORY_NAME_LENGTH) {
+    throw new InvalidSplitInput(`category_name must not exceed ${MAX_CATEGORY_NAME_LENGTH} characters`);
+  }
+  return value;
+}
 
 export async function validateExpenseFields(deps: ValidateExpenseFieldsDeps, input: ValidateExpenseFieldsInput): Promise<ValidatedExpenseFields> {
   if (!Number.isInteger(input.amount) || input.amount <= 0) {
@@ -70,6 +100,7 @@ export async function validateExpenseFields(deps: ValidateExpenseFieldsDeps, inp
   if (!isValidDay(input.day)) {
     throw new InvalidSplitInput(`day must be a valid date (YYYY-MM-DD): ${input.day}`);
   }
+  const categoryName = normalizeCategoryName(input.categoryName);
 
   const shares = computeShares(input.amount, input.split).map((share) => ({ userId: share.userId.toLowerCase(), amount: share.amount }));
   const payerUserId = input.payerUserId.toLowerCase();
@@ -125,6 +156,7 @@ export async function validateExpenseFields(deps: ValidateExpenseFieldsDeps, inp
     description: input.description,
     day: input.day,
     splitMode: input.split.mode,
+    categoryName,
     shares,
   };
 }

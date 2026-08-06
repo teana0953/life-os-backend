@@ -323,8 +323,9 @@ describe("getSplitSpending", () => {
       description: "dinner",
       day: "2026-08-01",
       splitMode: "equal",
+      categoryName: null,
       shares: [{ userId: A, amount: 300 }, { userId: B, amount: 600 }],
-    });
+    }, []);
     await expenses.create({
       id: "e2",
       groupId: null,
@@ -335,8 +336,9 @@ describe("getSplitSpending", () => {
       description: "hotel",
       day: "2026-08-15",
       splitMode: "equal",
+      categoryName: null,
       shares: [{ userId: A, amount: 1000 }],
-    });
+    }, []);
 
     const spending = await getSplitSpending(expenses, A, "2026-08");
 
@@ -357,8 +359,9 @@ describe("getSplitSpending", () => {
       description: "dinner",
       day: "2026-08-01",
       splitMode: "equal",
+      categoryName: null,
       shares: [{ userId: A, amount: 300 }, { userId: B, amount: 600 }],
-    });
+    }, []);
 
     const spending = await getSplitSpending(expenses, A, "2026-08");
 

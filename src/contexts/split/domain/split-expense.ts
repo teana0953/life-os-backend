@@ -41,6 +41,14 @@ export interface SplitExpense {
   day: string;
   /** How the caller originally entered the split — kept only so an edit can default back to the same input mode; the amounts owed are always `shares`, never recomputed from this. */
   splitMode: SplitMode;
+  /**
+   * The finance category every participant's mirror should land on, as a
+   * *name* rather than an id: categories are per-user, so the payer's id
+   * means nothing to the people who have to read this (design.md D1). `null`
+   * = the payer picked none, and each mirror falls back to its holder's own
+   * 其他.
+   */
+  categoryName: string | null;
   shares: SplitShare[];
   createdAt: Date;
   updatedAt: Date;
@@ -57,6 +65,7 @@ export interface CreateSplitExpenseInput {
   description: string;
   day: string;
   splitMode: SplitMode;
+  categoryName: string | null;
   shares: SplitShareInput[];
 }
 
@@ -68,5 +77,6 @@ export interface UpdateSplitExpenseFields {
   description: string;
   day: string;
   splitMode: SplitMode;
+  categoryName: string | null;
   shares: SplitShareInput[];
 }

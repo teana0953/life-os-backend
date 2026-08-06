@@ -377,10 +377,35 @@ export const financeTransaction = pgTable(
       .references(() => financeCategory.id),
     day: date("day").notNull(),
     note: text("note"),
+    // Set only by the split mirror write path, never from a request body
+    // (design.md D17): a client that could set or clear it would be able to
+    // attach its own transaction to someone's split, or unlock a mirror.
+    // `on delete cascade` is what removes the mirrors when the split expense
+    // goes — a database guarantee rather than an application one, since the
+    // deleting user is not the owner of the rows being deleted (D5).
+    // Forward-referencing `splitExpense`, defined further down, is safe:
+    // drizzle resolves the reference thunk lazily, not at table-build time.
+    splitExpenseId: uuid("split_expense_id").references(() => splitExpense.id, { onDelete: "cascade" }),
+    // 'mirror' = the category was resolved automatically from the split's
+    // category name; 'manual' = the owner picked it themselves and a later
+    // split edit must not overwrite it (D6). Defaults to 'manual' so an
+    // ordinary user-created transaction is never treated as overwritable.
+    categorySource: text("category_source").notNull().default("manual"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("finance_transaction_user_day_idx").on(t.userId, t.day)],
+  (t) => [
+    index("finance_transaction_user_day_idx").on(t.userId, t.day),
+    // At most one mirror per (user, split expense) — the identity key an edit
+    // upserts on. It cannot be the share id: an edit deletes every share and
+    // reinserts them, so share ids change on every edit (D5). Partial so it
+    // covers only mirrors — and the predicate must be repeated in the
+    // `ON CONFLICT` target, the same way `finance_budget`'s two partial
+    // indexes are matched with `targetWhere`.
+    uniqueIndex("finance_transaction_user_split_expense_idx")
+      .on(t.userId, t.splitExpenseId)
+      .where(sql`split_expense_id is not null`),
+  ],
 );
 
 // finance_budget: per-user recurring monthly budget (add-finance-budgets
@@ -587,6 +612,12 @@ export const splitExpense = pgTable(
     description: text("description").notNull(),
     day: date("day").notNull(),
     splitMode: text("split_mode").notNull(),
+    // The finance category this split should land on in every participant's
+    // ledger — a *name*, not an id, because finance categories are per-user:
+    // the payer's id means nothing to the other participants, and they are
+    // the ones who have to read it (design.md D1). Null = the payer picked
+    // none, and each mirror falls back to that holder's own 其他.
+    categoryName: text("category_name"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

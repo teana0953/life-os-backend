@@ -2,7 +2,7 @@ import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { financeTransaction } from "../../../shared/db/schema";
 import type { FinanceCategoryType } from "../domain/finance-category";
-import type { CreateFinanceTransactionInput, FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
+import type { CreateFinanceTransactionInput, FinanceCategorySource, FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import type { MonthlySummaryRaw } from "../domain/monthly-summary";
 
@@ -18,6 +18,8 @@ function toDomain(row: FinanceTransactionRow): FinanceTransaction {
     categoryId: row.categoryId,
     date: row.day,
     note: row.note,
+    splitExpenseId: row.splitExpenseId,
+    categorySource: row.categorySource as FinanceCategorySource,
   };
 }
 
@@ -37,6 +39,8 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         categoryId: input.categoryId,
         day: input.date,
         note: input.note ?? null,
+        splitExpenseId: input.splitExpenseId ?? null,
+        categorySource: input.categorySource ?? "manual",
       })
       .returning();
     if (!row) throw new Error("failed to create finance transaction");
@@ -61,7 +65,10 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
 
   async update(userId: string, id: string, input: ReplaceFinanceTransactionInput): Promise<FinanceTransaction | null> {
     const db = this.getDb();
-    // `updatedAt` has `defaultNow()` but that only fires on insert; every update sets it explicitly.
+    // `updatedAt` has `defaultNow()` but that only fires on insert; every
+    // update sets it explicitly. `splitExpenseId` and `categorySource` are
+    // absent from the SET list on purpose: a full-replace update must not be
+    // able to unlink a mirror from its split (design.md D17).
     const [row] = await db
       .update(financeTransaction)
       .set({

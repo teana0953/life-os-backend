@@ -1,3 +1,4 @@
+import type { ShareMirrorRow } from "./shares-mirror";
 import type { CreateSplitExpenseInput, SplitExpense, UpdateSplitExpenseFields } from "./split-expense";
 
 /**
@@ -12,20 +13,31 @@ export interface ListExpensesFilter {
 
 export interface SplitExpenseRepository {
   /**
-   * Writes the expense row, its share rows and its activity entry in a single
-   * batch (design.md: never a two-step insert that can leave an orphaned
-   * expense, and never a timeline that misses a change that happened). The
-   * activity's actor is `createdByUserId`, already part of the input.
+   * Writes the expense row, its share rows, its activity entry and the share
+   * holders' mirrored finance transactions in a single batch (design.md:
+   * never a two-step insert that can leave an orphaned expense, never a
+   * timeline that misses a change that happened, and never a mirror that
+   * outlives a failed split write). The activity's actor is
+   * `createdByUserId`, already part of the input.
+   *
+   * `mirrors` are computed by the caller (`SharesMirror.plan`) and only
+   * *placed* here: this repository never decides who gets one or on which
+   * category it lands.
    */
-  create(input: CreateSplitExpenseInput): Promise<SplitExpense>;
+  create(input: CreateSplitExpenseInput, mirrors: ShareMirrorRow[]): Promise<SplitExpense>;
   findById(id: string): Promise<SplitExpense | null>;
   /**
    * Replaces the row and atomically swaps its shares (delete + insert in one
    * batch), together with the activity entry recording the edit — hence
    * `actorUserId`, which is not derivable from `fields`. Returns null when the
    * expense does not exist.
+   *
+   * The mirrors are *updated in place*, not swapped like the shares: a share
+   * holder may have recategorised their own copy, and replacing the row would
+   * throw that away (design.md D5/D6). Anyone no longer holding a share loses
+   * their mirror in the same write.
    */
-  update(id: string, fields: UpdateSplitExpenseFields, now: Date, actorUserId: string): Promise<SplitExpense | null>;
+  update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, actorUserId: string): Promise<SplitExpense | null>;
   /**
    * Returns whether a row was deleted. `actorUserId` is who deleted it: the
    * activity entry is written in the same batch, conditional on the delete

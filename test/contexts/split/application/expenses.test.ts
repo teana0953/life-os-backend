@@ -9,9 +9,10 @@ import { getExpense } from "../../../../src/contexts/split/application/get-expen
 import { listExpenses } from "../../../../src/contexts/split/application/list-expenses";
 import { updateExpense } from "../../../../src/contexts/split/application/update-expense";
 import { ExpenseNotFound, InvalidSplitInput } from "../../../../src/contexts/split/domain/errors";
+import type { ShareMirrorRow } from "../../../../src/contexts/split/domain/shares-mirror";
 import type { CreateSplitExpenseInput, SplitExpense, UpdateSplitExpenseFields } from "../../../../src/contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../../src/contexts/split/domain/split-expense-repository";
-import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository } from "../fakes";
+import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository, noopSharesMirror } from "../fakes";
 
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const A = "user-a";
@@ -27,7 +28,7 @@ beforeEach(() => {
   groups = new InMemoryExpenseGroupRepository();
   friends = new InMemoryFriendChecker();
   expenses = new InMemorySplitExpenseRepository(groups);
-  deps = { expenses, groups, friends };
+  deps = { expenses, groups, friends, mirror: noopSharesMirror };
   friends.addFriendship(A, B);
   friends.addFriendship(A, C);
   friends.addFriendship(B, C);
@@ -129,6 +130,7 @@ describe("listExpenses", () => {
       description: "not yours",
       day: "2026-08-01",
       splitMode: "equal",
+      categoryName: null,
       shares: [{ userId: C, amount: 100, displayName: "Carol" }],
       createdAt: NOW,
       updatedAt: NOW,
@@ -140,7 +142,7 @@ describe("listExpenses", () => {
       async findById() {
         return null;
       },
-      async update(_id: string, _fields: UpdateSplitExpenseFields, _now: Date) {
+      async update(_id: string, _fields: UpdateSplitExpenseFields, _mirrors: ShareMirrorRow[], _now: Date) {
         return null;
       },
       async delete() {

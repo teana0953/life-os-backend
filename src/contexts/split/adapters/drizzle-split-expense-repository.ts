@@ -1,7 +1,16 @@
-import { and, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
-import { expenseGroupMember, splitActivity, splitExpense, splitShare, users } from "../../../shared/db/schema";
+// `financeTransaction` is another context's table, and importing it here is
+// deliberate (design.md D2): the mirrors have to be in the *same* `db.batch`
+// as the expense, and only this adapter builds that batch. The dependency is
+// on `shared/db/schema`, which CLAUDE.md allows an adapter to use — nothing
+// from `contexts/finance/` is imported, and nothing about *what* a mirror
+// contains is decided here. Do not "fix" this by moving the write into the
+// finance context: a second statement outside the batch is exactly the
+// non-atomic mirror the design rules out.
+import { expenseGroupMember, financeTransaction, splitActivity, splitExpense, splitShare, users } from "../../../shared/db/schema";
 import { grouplessAudience } from "./split-activity-audience";
+import type { ShareMirrorRow } from "../domain/shares-mirror";
 import type { CreateSplitExpenseInput, SplitExpense, SplitMode, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../domain/split-expense";
 import { splitDisplayName } from "../domain/display-name";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../domain/split-expense-repository";
@@ -32,6 +41,7 @@ function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<
     description: row.description,
     day: row.day,
     splitMode: row.splitMode as SplitMode,
+    categoryName: row.categoryName,
     shares: shareRows.map((share) => toShare(share, names.get(share.userId) ?? share.userId)),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -40,6 +50,26 @@ function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<
 
 function sharesToRows(expenseId: string, shares: SplitShareInput[]) {
   return shares.map((share) => ({ expenseId, userId: share.userId, amount: share.amount }));
+}
+
+/**
+ * A planned mirror as a `finance_transaction` row. `categorySource: "mirror"`
+ * is what later marks the category as still following the split — omitting it
+ * would let the column take its `'manual'` default and freeze every mirror's
+ * category forever (design.md D6).
+ */
+function mirrorToRow(mirror: ShareMirrorRow) {
+  return {
+    userId: mirror.userId,
+    type: "expense",
+    amount: mirror.amount,
+    currency: mirror.currency,
+    categoryId: mirror.categoryId,
+    day: mirror.day,
+    note: mirror.note,
+    splitExpenseId: mirror.splitExpenseId,
+    categorySource: "mirror",
+  };
 }
 
 /**
@@ -90,8 +120,11 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
    * The actor is `createdByUserId`: whoever recorded the expense, which need
    * not be the payer. No extra parameter is needed here, unlike `update` and
    * `delete`, where the caller's identity is not part of the input.
+   *
+   * `mirrors` are the share holders' finance transactions, already decided by
+   * the application layer; this method only places them in the batch.
    */
-  async create(input: CreateSplitExpenseInput): Promise<SplitExpense> {
+  async create(input: CreateSplitExpenseInput, mirrors: ShareMirrorRow[]): Promise<SplitExpense> {
     const db = this.getDb();
     const now = new Date();
     const expenseInsert = db.insert(splitExpense).values({
@@ -104,6 +137,7 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
       description: input.description,
       day: input.day,
       splitMode: input.splitMode,
+      categoryName: input.categoryName,
       createdAt: now,
       updatedAt: now,
     });
@@ -122,7 +156,12 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
           : null,
       createdAt: now,
     });
-    await db.batch([expenseInsert, shareInsert, activityInsert]);
+    // **ORDER: the mirror insert must come AFTER `expenseInsert`, and this is
+    // not a style choice.** `finance_transaction.split_expense_id`'s foreign
+    // key is checked immediately, so a mirror sent first references a row that
+    // does not exist yet and every creation fails with a foreign key error.
+    const mirrorInserts = mirrors.length > 0 ? [db.insert(financeTransaction).values(mirrors.map(mirrorToRow))] : [];
+    await db.batch([expenseInsert, shareInsert, ...mirrorInserts, activityInsert]);
 
     const names = await this.namesFor([input.payerUserId, ...input.shares.map((share) => share.userId)]);
     return {
@@ -136,6 +175,7 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
       description: input.description,
       day: input.day,
       splitMode: input.splitMode,
+      categoryName: input.categoryName,
       shares: input.shares.map((share) => ({ ...share, displayName: names.get(share.userId) ?? share.userId })),
       createdAt: now,
       updatedAt: now,
@@ -167,8 +207,14 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
    * new set would mean the one person an edit can hurt most — someone whose
    * share was removed, and whose balance therefore just changed — is the one
    * person never told about it.
+   *
+   * **The mirrors are upserted, never swapped like the shares.** A share
+   * holder may have recategorised their own copy, and delete-then-insert
+   * would silently throw that away — and would leave the partial unique index
+   * with nothing to catch, since no second row would ever exist to collide
+   * (design.md D5/D6).
    */
-  async update(id: string, fields: UpdateSplitExpenseFields, now: Date, actorUserId: string): Promise<SplitExpense | null> {
+  async update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, actorUserId: string): Promise<SplitExpense | null> {
     const db = this.getDb();
     const [existing] = await db
       .select({ id: splitExpense.id, groupId: splitExpense.groupId, payerUserId: splitExpense.payerUserId, amount: splitExpense.amount })
@@ -193,6 +239,7 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
         description: fields.description,
         day: fields.day,
         splitMode: fields.splitMode,
+        categoryName: fields.categoryName,
         updatedAt: now,
       })
       .where(eq(splitExpense.id, id));
@@ -220,7 +267,56 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
           : null,
       createdAt: now,
     });
-    await db.batch([deleteShares, insertShares, updateExpense, activityInsert]);
+
+    // The identity key is `(user_id, split_expense_id)`, not the share id:
+    // the shares above are deleted and reinserted on every edit, so their ids
+    // are new each time. `targetWhere` repeats the partial index's predicate,
+    // which Postgres requires to match a partial unique index (the same shape
+    // `drizzle-finance-budget-repository` uses).
+    //
+    // `category_id` is overwritten only while the row is still following the
+    // split. That condition is a `CASE` inside the SET list rather than a
+    // `DO UPDATE ... WHERE`, because the latter skips the *whole* row — the
+    // amount would stop following the split too. `note` is deliberately
+    // absent: it is written once at creation and belongs to the owner
+    // afterwards (D18), and `category_source` is absent so a user's 'manual'
+    // is never reset by someone else's edit.
+    const mirrorUpsert =
+      mirrors.length > 0
+        ? [
+            db
+              .insert(financeTransaction)
+              .values(mirrors.map(mirrorToRow))
+              .onConflictDoUpdate({
+                target: [financeTransaction.userId, financeTransaction.splitExpenseId],
+                targetWhere: sql`split_expense_id is not null`,
+                set: {
+                  amount: sql`excluded.amount`,
+                  currency: sql`excluded.currency`,
+                  day: sql`excluded.day`,
+                  categoryId: sql`case when ${financeTransaction.categorySource} = 'mirror' then excluded.category_id else ${financeTransaction.categoryId} end`,
+                  updatedAt: now,
+                },
+              }),
+          ]
+        : [];
+    // Anyone who is no longer a share holder loses their mirror. Set-based on
+    // purpose: it needs no knowledge of who held a share before the edit, so
+    // the deliberate "never read a grouped expense's previous share holders"
+    // optimisation above survives. `notInArray(col, [])` renders as `true` in
+    // drizzle-orm 0.45.2, which is the wanted behaviour when nobody is left.
+    const mirrorDelete = db
+      .delete(financeTransaction)
+      .where(
+        and(
+          eq(financeTransaction.splitExpenseId, id),
+          notInArray(
+            financeTransaction.userId,
+            mirrors.map((mirror) => mirror.userId),
+          ),
+        ),
+      );
+    await db.batch([deleteShares, insertShares, updateExpense, ...mirrorUpsert, mirrorDelete, activityInsert]);
 
     return this.findById(id);
   }

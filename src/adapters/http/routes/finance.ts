@@ -102,6 +102,11 @@ function transactionToJson(txn: FinanceTransaction) {
     category_id: txn.categoryId,
     date: txn.date,
     note: txn.note,
+    // Present on every transaction, not just mirrored ones, so a client can
+    // tell them apart without a second call and lock the fields the finance
+    // API will refuse to change anyway.
+    split_expense_id: txn.splitExpenseId,
+    category_source: txn.categorySource,
   };
 }
 

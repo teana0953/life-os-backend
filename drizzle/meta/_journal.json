@@ -190,6 +190,13 @@
       "when": 1785904877531,
       "tag": "0026_split-activity-direction",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786003222795,
+      "tag": "0027_mirror-splits-into-ledger",
+      "breakpoints": true
     }
   ]
 }

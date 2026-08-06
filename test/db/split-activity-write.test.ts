@@ -97,12 +97,13 @@ describe("split activity writes (real Postgres)", () => {
     description: "Dinner",
     day: "2026-03-10",
     splitMode: "exact" as const,
+    categoryName: null,
     shares: [{ userId: B, amount: 300 }],
   };
 
   describe("create expense", () => {
     it("records the creation, with the actor and the whole participant set as its audience", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
 
       const [entry] = await activityRows();
       expect(entry).toMatchObject({
@@ -120,7 +121,7 @@ describe("split activity writes (real Postgres)", () => {
 
     it("leaves no entry when the expense's own write fails", async () => {
       await expect(
-        expenses.create({ ...grouplessExpenseInput, shares: [{ userId: B, amount: -300 }] }),
+        expenses.create({ ...grouplessExpenseInput, shares: [{ userId: B, amount: -300 }] }, []),
       ).rejects.toThrow();
 
       expect(await activityRows()).toHaveLength(0);
@@ -128,7 +129,7 @@ describe("split activity writes (real Postgres)", () => {
     });
 
     it("does not create the expense when the activity write fails", async () => {
-      await withActivityWritesFailing(() => expenses.create(grouplessExpenseInput));
+      await withActivityWritesFailing(() => expenses.create(grouplessExpenseInput, []));
 
       expect(await harness.db.select().from(splitExpense)).toHaveLength(0);
     });
@@ -136,10 +137,11 @@ describe("split activity writes (real Postgres)", () => {
 
   describe("update expense", () => {
     it("records both the previous and the new amount", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await expenses.update(
         E1,
-        { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact", shares: [{ userId: B, amount: 500 }] },
+        { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact", categoryName: null, shares: [{ userId: B, amount: 500 }] },
+        [],
         NOW,
         A,
       );
@@ -153,10 +155,11 @@ describe("split activity writes (real Postgres)", () => {
       // it moved": a client reading `previous_amount != null` as "the amount
       // changed" would be wrong on every edit, and this pins the real
       // behaviour so the doc comments cannot drift back to the old claim.
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await expenses.update(
         E1,
-        { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner, renamed", day: "2026-03-10", splitMode: "exact", shares: [{ userId: B, amount: 300 }] },
+        { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner, renamed", day: "2026-03-10", splitMode: "exact", categoryName: null, shares: [{ userId: B, amount: 300 }] },
+        [],
         NOW,
         A,
       );
@@ -170,10 +173,11 @@ describe("split activity writes (real Postgres)", () => {
       // and B is no longer anywhere in the expense — if the audience were the
       // new participants only, the one person the edit took money off would be
       // the one person never told.
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await expenses.update(
         E1,
-        { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner", day: "2026-03-10", splitMode: "exact", shares: [{ userId: C, amount: 300 }] },
+        { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner", day: "2026-03-10", splitMode: "exact", categoryName: null, shares: [{ userId: C, amount: 300 }] },
+        [],
         NOW,
         A,
       );
@@ -183,11 +187,12 @@ describe("split activity writes (real Postgres)", () => {
     });
 
     it("leaves no entry when the edit's own write fails", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await expect(
         expenses.update(
           E1,
-          { payerUserId: A, amount: 500, currency: "TWD", description: "Broken", day: "2026-03-10", splitMode: "exact", shares: [{ userId: B, amount: -500 }] },
+          { payerUserId: A, amount: 500, currency: "TWD", description: "Broken", day: "2026-03-10", splitMode: "exact", categoryName: null, shares: [{ userId: B, amount: -500 }] },
+          [],
           NOW,
           A,
         ),
@@ -199,11 +204,12 @@ describe("split activity writes (real Postgres)", () => {
     });
 
     it("does not apply the edit when the activity write fails", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await withActivityWritesFailing(() =>
         expenses.update(
           E1,
-          { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact", shares: [{ userId: B, amount: 500 }] },
+          { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact", categoryName: null, shares: [{ userId: B, amount: 500 }] },
+          [],
           NOW,
           A,
         ),
@@ -217,7 +223,7 @@ describe("split activity writes (real Postgres)", () => {
 
   describe("delete expense", () => {
     it("keeps the deleted expense readable — amount, description, and who could see it", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await harness.db.delete(splitActivity);
 
       expect(await expenses.delete(E1, A, NOW)).toBe(true);
@@ -237,7 +243,7 @@ describe("split activity writes (real Postgres)", () => {
       // and an insert that had lost its `where id = ?` — selecting every
       // expense there is — would still write nothing, and this case would pass
       // against exactly the bug it is here to catch.
-      await expenses.create({ ...grouplessExpenseInput, id: E2, description: "Someone else's" });
+      await expenses.create({ ...grouplessExpenseInput, id: E2, description: "Someone else's" }, []);
       await harness.db.delete(splitActivity);
 
       expect(await expenses.delete(E1, A, NOW)).toBe(false);
@@ -245,7 +251,7 @@ describe("split activity writes (real Postgres)", () => {
     });
 
     it("does not delete the expense when the activity write fails", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await withActivityWritesFailing(() => expenses.delete(E1, A, NOW));
 
       expect(await harness.db.select().from(splitExpense).where(eq(splitExpense.id, E1))).toHaveLength(1);
@@ -255,7 +261,7 @@ describe("split activity writes (real Postgres)", () => {
       await insertGroup(harness.db, G, "Trip", A);
       await insertMember(harness.db, G, A);
       await insertMember(harness.db, G, B);
-      await expenses.create({ ...grouplessExpenseInput, groupId: G });
+      await expenses.create({ ...grouplessExpenseInput, groupId: G }, []);
       await harness.db.delete(splitActivity);
 
       await expenses.delete(E1, A, NOW);
@@ -525,7 +531,7 @@ describe("split activity writes (real Postgres)", () => {
     }
 
     it("the emitted SQL takes a row lock on the row the entry is about", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await settlements.create({ id: S1, groupId: null, fromUserId: B, toUserId: A, amount: 200, currency: "JPY", day: "2026-03-11", note: null, createdByUserId: A });
       await insertGroup(harness.db, G, "Trip", A);
       await insertMember(harness.db, G, A);
@@ -585,7 +591,7 @@ describe("split activity writes (real Postgres)", () => {
   describe("created_at", () => {
     const CALLER_NOW = new Date("2026-04-01T10:00:00.123Z");
     const settlementInput = { id: S1, groupId: null, fromUserId: B, toUserId: A, amount: 200, currency: "JPY", day: "2026-03-11", note: null, createdByUserId: A };
-    const editedFields = { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact" as const, shares: [{ userId: B, amount: 500 }] };
+    const editedFields = { payerUserId: A, amount: 500, currency: "TWD", description: "Dinner and drinks", day: "2026-03-10", splitMode: "exact" as const, categoryName: null, shares: [{ userId: B, amount: 500 }] };
 
     /** The one entry of `type`, and the claim: exactly the caller's instant, to the millisecond, with nothing below it. */
     async function expectCallerClock(type: string): Promise<Date> {
@@ -596,13 +602,13 @@ describe("split activity writes (real Postgres)", () => {
     }
 
     it("expense update", async () => {
-      await expenses.create(grouplessExpenseInput);
-      await expenses.update(E1, editedFields, CALLER_NOW, A);
+      await expenses.create(grouplessExpenseInput, []);
+      await expenses.update(E1, editedFields, [], CALLER_NOW, A);
       await expectCallerClock("expense_updated");
     });
 
     it("expense delete", async () => {
-      await expenses.create(grouplessExpenseInput);
+      await expenses.create(grouplessExpenseInput, []);
       await expenses.delete(E1, A, CALLER_NOW);
 
       // The path where leaving `created_at` out is silent: it is built with
@@ -680,7 +686,7 @@ describe("split activity writes (real Postgres)", () => {
     }
 
     it("expense create", async () => {
-      const { result: expense, transactionStartedAt } = await withDelayedBatch(() => expenses.create(grouplessExpenseInput));
+      const { result: expense, transactionStartedAt } = await withDelayedBatch(() => expenses.create(grouplessExpenseInput, []));
       await expectPreBatchClock("expense_created", expense.createdAt, transactionStartedAt);
     });
 

@@ -2,6 +2,7 @@ import { ExpenseNotFound, InvalidSplitInput } from "../domain/errors";
 import type { SplitExpense } from "../domain/split-expense";
 import type { CreateExpenseDeps } from "./create-expense";
 import type { UpdateExpenseInput } from "./expense-input";
+import { writeMirrorAftermath } from "./mirror-aftermath";
 import { validateExpenseFields } from "./validate-expense-fields";
 
 /**
@@ -39,12 +40,26 @@ export async function updateExpense(deps: CreateExpenseDeps, callerUserId: strin
       currency: input.currency,
       description: input.description,
       day: input.day,
+      categoryName: input.categoryName,
       split: input.split,
       checkArchived: false,
     },
   );
 
-  const updated = await deps.expenses.update(expenseId, validated, now, caller);
+  // Planned before the write, like `createExpense`: the mirrors travel in the
+  // same batch as the expense, so they must exist before it is built.
+  const mirrors = await deps.mirror.plan({
+    splitExpenseId: expenseId,
+    currency: validated.currency,
+    day: validated.day,
+    description: validated.description,
+    categoryName: validated.categoryName,
+    shares: validated.shares,
+  });
+
+  const updated = await deps.expenses.update(expenseId, validated, mirrors, now, caller);
   if (!updated) throw new ExpenseNotFound();
+
+  await writeMirrorAftermath(deps.mirror, mirrors);
   return updated;
 }

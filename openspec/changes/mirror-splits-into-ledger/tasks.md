@@ -6,46 +6,46 @@
 
 ## 0. 先決定,再動手
 
-- [ ] 0.1 `split-into-budget` 已刪除。確認 repo 裡沒有殘留的 `SplitSpentLookup`、`includes_split`。
+- [x] 0.1 `split-into-budget` 已刪除。確認 repo 裡沒有殘留的 `SplitSpentLookup`、`includes_split`。
 - [ ] 0.2 **數 `select count(*) from split_expense`**(D14)。是 0 就把第 10 節整段砍掉並寫進 PR;不是 0 就照第 10 節做。**要真的數,不要憑印象。**
 
 ## 1. 分帳加分類欄位(D1)—— 這是新功能,不是接線
 
-- [ ] 1.1 `split_expense.category_name text null`。**存名字不存 id**(分類是 per-user 的)。
-- [ ] 1.2 `CreateExpenseInput`/`UpdateExpenseInput`、`validateExpenseFields`、`POST /api/split/expenses`、**`PATCH /api/split/expenses/:id`**(不是 PUT,`app.ts:478`)、`GET` 的回應都要帶。
-- [ ] 1.2a `category_name` 的輸入規則要寫進 `validateExpenseFields`,並補進 split-bills 那條「其餘一律 400」的輸入契約:**空字串當成 null**、長度上限。**不做前後空白修剪** —— 規格的 scenario 寫「讀回來就是送進去的那個名字」,修剪會跟它打架,而分類名字本來就是照使用者輸入存的。**要有測試**,不是只加欄位。
+- [x] 1.1 `split_expense.category_name text null`。**存名字不存 id**(分類是 per-user 的)。
+- [x] 1.2 `CreateExpenseInput`/`UpdateExpenseInput`、`validateExpenseFields`、`POST /api/split/expenses`、**`PATCH /api/split/expenses/:id`**(不是 PUT,`app.ts:478`)、`GET` 的回應都要帶。
+- [x] 1.2a `category_name` 的輸入規則要寫進 `validateExpenseFields`,並補進 split-bills 那條「其餘一律 400」的輸入契約:**空字串當成 null**、長度上限。**不做前後空白修剪** —— 規格的 scenario 寫「讀回來就是送進去的那個名字」,修剪會跟它打架,而分類名字本來就是照使用者輸入存的。**要有測試**,不是只加欄位。
 - [ ] 1.3 **前端契約改動有三處**,全部寫進 PR:分帳建立表單多一個分類選擇;**每一筆交易的回應與列表都要帶「來自分帳」的標記**(前端才鎖得住欄位);**`GET /api/finance/split-spending` 每個幣別多一個「是否已計入交易」旗標**。前端在另一個 repo。
 
 ## 2. `SharesMirror` port(D2)
 
-- [ ] 2.1 `src/contexts/split/domain/shares-mirror.ts` 定義 `MirrorPlanInput`、`ShareMirrorRow`、`plan()`、`afterWrite()`。**port 在 split 的 domain,實作在 finance 那側**;split 的 domain/application 不 import `contexts/finance/`。**split 的 adapter 會 import `shared/db/schema` 的 `financeTransaction`** —— 那是允許的,寫在註解裡。
-- [ ] 2.2 `SplitExpenseRepository.create/update` 簽章收一組鏡像列。**repository 不算鏡像,只把拿到的列放進 batch。**
-- [ ] 2.3 `createExpense`/`updateExpense` 呼叫 `plan`,寫入成功後呼叫 `afterWrite`。**`deleteExpense` 不呼叫**(刪除靠 cascade)。**`id` 要從 `deps.expenses.create({ id: crypto.randomUUID(), … })` 裡提出來**(`create-expense.ts:36`),`plan` 需要它。
-- [ ] 2.4 **突變:把 `plan` 從應用層刪掉。** 3.x 必須紅 —— 因為 `InMemorySplitExpenseRepository` 就不再收到任何鏡像列。(**不要**把突變寫成「改在 `DrizzleSplitExpenseRepository` 裡重新實作解析」:3.x 走的是 in-memory 那個,施加在 Drizzle 上的突變它碰不到,那樣寫守門是死的。)
-- [ ] 2.5 **`FinanceSharesMirror` 在 `createApp` 裡組**,用它已經持有的 **`financeCategoryRepository`(`plan` 解析分類用)+ `financeBudgetRepository` + `budgetAlertNotifier`(`afterWrite` 跑 `checkBudgetAlerts` 用,`CheckBudgetAlertsDeps` 是 `{ budgetRepository, categoryRepository, notifier }`)**。**不需要 `financeTransactionRepository`** —— 鏡像是 repository 放進 batch 的,不經過它。**不要給 `CreateAppOptions` 加 `sharesMirror`** —— 有 22 個測試檔呼叫 `createApp`,而且 `finance.test.ts` 會傳 fake 進去,分類解析就變回不可測。
-- [ ] 2.6 **`InMemorySplitExpenseRepository` 的建構子要收 `InMemoryFinanceTransactionRepository`,鏡像寫進去** —— 而且**要照 `(user_id, split_expense_id)` 這個身分鍵做 upsert、要照 `category_source` 條件覆寫、要刪掉不再是分攤者的那些**。只做「append 一筆」的話,7.3、「編輯分帳兩邊都動」、「移除的分攤者失去鏡像」在 HTTP 層**都觀察不到**。 它現在只有 `rows: SplitExpense[]`,而 finance 的端點讀的是**另一個物件**(`test/contexts/finance/fakes.ts:69`)。**fake 把鏡像存進自己的 list 的話,3.x/4.x/6.x/7.x/8.x/9.x 全部看不到鏡像** —— 那就是 D2 想修的問題往下搬一層。
-- [ ] 2.7a **finance 那側的波及面**:`FinanceTransaction`、`CreateFinanceTransactionInput`、`ReplaceFinanceTransactionInput`、`FinanceTransactionRepository.update`、`transactionToJson`、`InMemoryFinanceTransactionRepository` 都要帶 `splitExpenseId` / `categorySource`。
+- [x] 2.1 `src/contexts/split/domain/shares-mirror.ts` 定義 `MirrorPlanInput`、`ShareMirrorRow`、`plan()`、`afterWrite()`。**port 在 split 的 domain,實作在 finance 那側**;split 的 domain/application 不 import `contexts/finance/`。**split 的 adapter 會 import `shared/db/schema` 的 `financeTransaction`** —— 那是允許的,寫在註解裡。
+- [x] 2.2 `SplitExpenseRepository.create/update` 簽章收一組鏡像列。**repository 不算鏡像,只把拿到的列放進 batch。**
+- [x] 2.3 `createExpense`/`updateExpense` 呼叫 `plan`,寫入成功後呼叫 `afterWrite`。**`deleteExpense` 不呼叫**(刪除靠 cascade)。**`id` 要從 `deps.expenses.create({ id: crypto.randomUUID(), … })` 裡提出來**(`create-expense.ts:36`),`plan` 需要它。
+- [x] 2.4 **突變:把 `plan` 從應用層刪掉。** 3.x 必須紅 —— 因為 `InMemorySplitExpenseRepository` 就不再收到任何鏡像列。(**不要**把突變寫成「改在 `DrizzleSplitExpenseRepository` 裡重新實作解析」:3.x 走的是 in-memory 那個,施加在 Drizzle 上的突變它碰不到,那樣寫守門是死的。)
+- [x] 2.5 **`FinanceSharesMirror` 在 `createApp` 裡組**,用它已經持有的 **`financeCategoryRepository`(`plan` 解析分類用)+ `financeBudgetRepository` + `budgetAlertNotifier`(`afterWrite` 跑 `checkBudgetAlerts` 用,`CheckBudgetAlertsDeps` 是 `{ budgetRepository, categoryRepository, notifier }`)**。**不需要 `financeTransactionRepository`** —— 鏡像是 repository 放進 batch 的,不經過它。**不要給 `CreateAppOptions` 加 `sharesMirror`** —— 有 22 個測試檔呼叫 `createApp`,而且 `finance.test.ts` 會傳 fake 進去,分類解析就變回不可測。
+- [x] 2.6 **`InMemorySplitExpenseRepository` 的建構子要收 `InMemoryFinanceTransactionRepository`,鏡像寫進去** —— 而且**要照 `(user_id, split_expense_id)` 這個身分鍵做 upsert、要照 `category_source` 條件覆寫、要刪掉不再是分攤者的那些**。只做「append 一筆」的話,7.3、「編輯分帳兩邊都動」、「移除的分攤者失去鏡像」在 HTTP 層**都觀察不到**。 它現在只有 `rows: SplitExpense[]`,而 finance 的端點讀的是**另一個物件**(`test/contexts/finance/fakes.ts:69`)。**fake 把鏡像存進自己的 list 的話,3.x/4.x/6.x/7.x/8.x/9.x 全部看不到鏡像** —— 那就是 D2 想修的問題往下搬一層。
+- [x] 2.7a **finance 那側的波及面**:`FinanceTransaction`、`CreateFinanceTransactionInput`、`ReplaceFinanceTransactionInput`、`FinanceTransactionRepository.update`、`transactionToJson`、`InMemoryFinanceTransactionRepository` 都要帶 `splitExpenseId` / `categorySource`。
 - [ ] 2.7b **`delete-transaction.ts` 目前沒有任何讀取**(`repository.delete(userId, id)`,五行,沒有 `findById`),**所以 7.1 的「DELETE 一律拒絕」實作不出來**。要嘛加一次讀取,要嘛在 repository 層加述詞。**同時決定回什麼狀態碼**(過濾式刪除會變 404;明確拒絕是 400/409)—— 7.5 的兩條測試需要這個答案。
-- [ ] 2.7c **`test/adapters/http/split.test.ts` 的 `financeCategoryRepository` / `financeTransactionRepository` / `financeBudgetRepository` 全是會丟錯的 `notImplemented` stub(`split.test.ts:213-235`)。** `createApp` 一旦組出 `FinanceSharesMirror`,那個檔案裡**每一條建立/編輯分帳的測試都會 500**。這是最大的波及面,而 2.7 自稱是「不要邊做邊發現」的清單。
+- [x] 2.7c **`test/adapters/http/split.test.ts` 的 `financeCategoryRepository` / `financeTransactionRepository` / `financeBudgetRepository` 全是會丟錯的 `notImplemented` stub(`split.test.ts:213-235`)。** `createApp` 一旦組出 `FinanceSharesMirror`,那個檔案裡**每一條建立/編輯分帳的測試都會 500**。這是最大的波及面,而 2.7 自稱是「不要邊做邊發現」的清單。
 - [ ] 2.7d **`split_expense_id` 與 `category_source` 永遠不從請求 body 讀**(D17)。`updateTransaction:38` 是 `{...input, type, currency}` 展開 —— 欄位進了 replace input 而 handler 沒填,`PUT` 會**把連結清成 null**,鏡像瞬間解鎖;handler 若從 body 讀,客戶端就能自己掛上或拆掉。**突變:讓 `PUT` 從 body 讀 `split_expense_id`**,一條「送一個假的 `split_expense_id` 上去,交易的連結不變」的測試必須紅。**這個突變不是改一行 handler**:D17 讓 `splitExpenseId` 不在 `ReplaceFinanceTransactionInput` 裡,所以突變還要把欄位加進輸入型別、`FinanceTransactionRepository.update`、以及 in-memory fake 的 `update`(它是逐欄位指派,`fakes.ts:96-106`)。**只改 handler 會型別錯誤或什麼都不做,那不叫驗證過。**
-- [ ] 2.7 split 那側的波及面:`CreateExpenseDeps`(`create-expense.ts:8`,`updateExpense` 共用)、`routes/split.ts:421` 的兩個 handler、五個 split 應用層測試檔、`stubSplitExpenseRepository`(`split-stubs.ts:26`)。**逐個列出來改,不要邊做邊發現。**
+- [x] 2.7 split 那側的波及面:`CreateExpenseDeps`(`create-expense.ts:8`,`updateExpense` 共用)、`routes/split.ts:421` 的兩個 handler、五個 split 應用層測試檔、`stubSplitExpenseRepository`(`split-stubs.ts:26`)。**逐個列出來改,不要邊做邊發現。**
 
 ## 3. 分類解析(D4)
 
-- [ ] 3.1 同名 `type='expense'` → 「其他」`type='expense'` → **「其他」不在就 `insertDefaultsIfMissing` 再回第 2 步**。**只有三步** —— 不要加「退到任何一個支出分類」的第四步,見 3.1b。
-- [ ] 3.1a **第 3 步的條件是「其他不在」,不是「一個分類都沒有」。** 分類可以改名(`update-category.ts:21-26`),改名之後舊條件不觸發,解不出 `category_id`,而它是 NOT NULL —— **付款人一次合法的建立分帳,會因為一個無關的參與者改過名字而失敗。**
-- [ ] 3.1b **突變:把條件改回「一個分類都沒有」。斷言不能寫成「付款人仍然建得起分帳」** —— 改名的使用者當然還有別的分類,只要有任何退路,那個斷言在突變下照樣綠(這正是第一版加了第四步之後發生的事)。**斷言要指名落在哪:鏡像的分類名字是「其他」、`type` 是 expense,而且分攤者的支出分類數量比之前多一(代表真的重新 seed 了)。**
-- [ ] 3.1c **不要加第四步的退路。** 步驟 3 正確時它到不了,而它唯一的效果是廢掉 3.1b。
-- [ ] 3.2 **突變:拿掉 seed 那一步**,一個「參與者從沒開過記帳頁」的 fixture 必須紅。fixture 要真的讓那個使用者**一個分類都沒有** —— **不能先呼叫 `GET /api/finance/categories`**,那會把他 seed 掉,測試就永遠綠。
-- [ ] 3.3 **突變:名字解析不限定 `type`。兩個步驟各要一條測試** —— 規格的 scenario 講的是步驟 1,而只測步驟 2 的話步驟 1 完全沒有守門。
+- [x] 3.1 同名 `type='expense'` → 「其他」`type='expense'` → **「其他」不在就 `insertDefaultsIfMissing` 再回第 2 步**。**只有三步** —— 不要加「退到任何一個支出分類」的第四步,見 3.1b。
+- [x] 3.1a **第 3 步的條件是「其他不在」,不是「一個分類都沒有」。** 分類可以改名(`update-category.ts:21-26`),改名之後舊條件不觸發,解不出 `category_id`,而它是 NOT NULL —— **付款人一次合法的建立分帳,會因為一個無關的參與者改過名字而失敗。**
+- [x] 3.1b **突變:把條件改回「一個分類都沒有」。斷言不能寫成「付款人仍然建得起分帳」** —— 改名的使用者當然還有別的分類,只要有任何退路,那個斷言在突變下照樣綠(這正是第一版加了第四步之後發生的事)。**斷言要指名落在哪:鏡像的分類名字是「其他」、`type` 是 expense,而且分攤者的支出分類數量比之前多一(代表真的重新 seed 了)。**
+- [x] 3.1c **不要加第四步的退路。** 步驟 3 正確時它到不了,而它唯一的效果是廢掉 3.1b。
+- [x] 3.2 **突變:拿掉 seed 那一步**,一個「參與者從沒開過記帳頁」的 fixture 必須紅。fixture 要真的讓那個使用者**一個分類都沒有** —— **不能先呼叫 `GET /api/finance/categories`**,那會把他 seed 掉,測試就永遠綠。
+- [x] 3.3 **突變:名字解析不限定 `type`。兩個步驟各要一條測試** —— 規格的 scenario 講的是步驟 1,而只測步驟 2 的話步驟 1 完全沒有守門。
 
   **fixture 不能靠「指定 `sortOrder`」或「先建 income 那筆」來釘。** `findByUserTypeName` 兩個實作**都不排序**:adapter 是沒有 `ORDER BY` 的 `.limit(1)`(`drizzle-finance-category-repository.ts:41-49`),fake 是 `.find()` 照插入順序(`test/contexts/finance/fakes.ts:32-34`)。而預設 seed 把 expense 的「其他」排在 income 之前(`default-categories.ts` index 6 vs 10),所以照一般寫法,拿掉 `type` 述詞的突變**照樣撿到對的那筆,守門是死的**。
 
   **要用「同名的只有 income 那一筆」把它釘死,不依賴任何順序:**
   - **步驟 1**:分帳指定「餐飲」,分攤者只有 **income** 的「餐飲」,沒有 expense 的。正確的程式碼步驟 1 不中 → 退到「其他」;**突變**步驟 1 中了 income 的餐飲 → 鏡像落在收入分類上。斷言鏡像的分類是「其他」且 `type` 是 expense。
   - **步驟 2**:分攤者的 expense「其他」被改名,而且有一個 income 的「其他」。正確的程式碼步驟 2 不中 → seed → 落在重建的 expense「其他」;**突變**步驟 2 中了 income 的「其他」。斷言同上。(這條跟 3.1b 共用 fixture。)
-- [ ] 3.4 **突變:改用付款人的 `category_id`**,一個「兩人分類 id 不同但同名」的 fixture 必須紅。**斷言方式只能是「鏡像的 `category_id` 等於分攤者自己那個 id」** —— 不要斷言「寫入失敗」:`finance_transaction.category_id` **沒有**任何把它綁到同一個 `user_id` 的約束,付款人的 id 存在,插入會成功,只是把錢記到別人的分類上。
-- [ ] 3.5 封存分類:鏡像照用。**測試同時斷言 `POST /api/finance/transactions` 選同一個分類仍然被拒**(`create-transaction.ts:28`)—— 只斷言前半的話,「乾脆把 create 的封存檢查拿掉」這個突變會活下來。兩件事都在 HTTP 層,同一條測試寫得出來。
+- [x] 3.4 **突變:改用付款人的 `category_id`**,一個「兩人分類 id 不同但同名」的 fixture 必須紅。**斷言方式只能是「鏡像的 `category_id` 等於分攤者自己那個 id」** —— 不要斷言「寫入失敗」:`finance_transaction.category_id` **沒有**任何把它綁到同一個 `user_id` 的約束,付款人的 id 存在,插入會成功,只是把錢記到別人的分類上。
+- [x] 3.5 封存分類:鏡像照用。**測試同時斷言 `POST /api/finance/transactions` 選同一個分類仍然被拒**(`create-transaction.ts:28`)—— 只斷言前半的話,「乾脆把 create 的封存檢查拿掉」這個突變會活下來。兩件事都在 HTTP 層,同一條測試寫得出來。
 
 ## 4. 不覆蓋使用者改過的分類(D6)
 
@@ -58,9 +58,9 @@
 
 ## 5. Schema(D5)
 
-- [ ] 5.1 `finance_transaction.split_expense_id uuid null references split_expense(id) on delete cascade`。
-- [ ] 5.2 `finance_transaction.category_source text not null default 'manual'`。
-- [ ] 5.3 部分唯一索引 `(user_id, split_expense_id) where split_expense_id is not null`。**突變:索引與 `ON CONFLICT` 的目標「一起」縮成 `(user_id)`**,一條「同一個人在同月有**兩筆不同的分帳**,兩筆鏡像都在」的 PGlite 測試必須紅 —— 縮窄之後第二筆會衝到第一筆上、去更新錯的列。
+- [x] 5.1 `finance_transaction.split_expense_id uuid null references split_expense(id) on delete cascade`。
+- [x] 5.2 `finance_transaction.category_source text not null default 'manual'`。
+- [x] 5.3 部分唯一索引 `(user_id, split_expense_id) where split_expense_id is not null`。**突變:索引與 `ON CONFLICT` 的目標「一起」縮成 `(user_id)`**,一條「同一個人在同月有**兩筆不同的分帳**,兩筆鏡像都在」的 PGlite 測試必須紅 —— 縮窄之後第二筆會衝到第一筆上、去更新錯的列。
 - [ ] 5.3b **只縮索引、不動 `ON CONFLICT` 目標是不行的**:那會讓 Postgres 在計畫階段就報 *there is no unique or exclusion constraint matching the ON CONFLICT specification*,**第一次寫鏡像就紅**,紅在 SQL 錯誤而不是重複列 —— 正是 5.3a 說不算數的那種。
 - [ ] 5.3a **也不要用「拿掉索引」當突變**:4.1 是 `ON CONFLICT (user_id, split_expense_id)`,拿掉索引會讓 Postgres 直接報 *there is no unique or exclusion constraint matching the ON CONFLICT specification*,**每一條寫鏡像的測試都會紅**,紅在 SQL 錯誤而不是重複列。那只證明索引存在,不證明它是對的索引。
 - [ ] 5.4 移除的分攤者:batch 裡帶 `delete … where split_expense_id = ? and user_id not in (…)`。**集合式的,不需要知道編輯前是誰** —— adapter 刻意不讀 grouped expense 的舊分攤者(`:182-183`),那個最佳化不該為這個 change 死掉。鏡像集合為空時 `notInArray(col, [])` 在 drizzle-orm 0.45.2 產生 `true`,是安全的。

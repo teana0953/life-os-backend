@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import { FinanceSharesMirror } from "../../contexts/finance/adapters/finance-shares-mirror";
 import type { BudgetAlertNotifier } from "../../contexts/finance/domain/budget-alert-notifier";
 import type { FinanceBudgetRepository } from "../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../contexts/finance/domain/finance-category-repository";
@@ -456,8 +457,17 @@ export function createApp(options: CreateAppOptions) {
   // `/api/split/groups/:id/balances` are registered before the plain
   // `/api/split/groups/:id`, mirroring the friends routes' precedent, so a
   // sub-path segment is never mistaken for the `:id` param.
+  // Composed here rather than injected as an option (design.md D2): every
+  // `createApp` caller — including `finance.test.ts` — then gets the real
+  // category resolution instead of a fake that would agree with itself.
+  const sharesMirror = new FinanceSharesMirror({
+    categories: options.financeCategoryRepository,
+    budgets: options.financeBudgetRepository,
+    notifier: options.budgetAlertNotifier,
+  });
   const splitOptions = {
     userRepository: options.userRepository,
+    sharesMirror,
     expenseGroupRepository: options.expenseGroupRepository,
     splitExpenseRepository: options.splitExpenseRepository,
     balanceRepository: options.splitBalanceRepository,

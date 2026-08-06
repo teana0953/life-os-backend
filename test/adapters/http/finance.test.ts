@@ -196,7 +196,10 @@ function buildApp() {
   // expense through `/api/split/expenses` and read it back.
   const userDirectory = new TestUserDirectory();
   const expenseGroupRepository = new InMemoryExpenseGroupRepository(userDirectory);
-  const splitExpenseRepository = new InMemorySplitExpenseRepository(expenseGroupRepository, userDirectory);
+  // The mirrors land in the *same* transactions fake every finance endpoint
+  // reads from — a separate list would put them out of reach of exactly the
+  // assertions they exist for.
+  const splitExpenseRepository = new InMemorySplitExpenseRepository(expenseGroupRepository, userDirectory, financeTransactionRepository);
   const splitFriendChecker = new InMemoryFriendChecker();
   const splitSettlementRepository = new InMemorySettlementRepository(expenseGroupRepository, userDirectory);
   const app = createApp({
@@ -298,9 +301,10 @@ async function idOf(app: ReturnType<typeof buildApp>["app"], token: string): Pro
 
 /**
  * Creates a split expense between two tokens, splitting evenly — enough to
- * give `payerToken` a real `split_share` in the month, for the split-spending
- * and budget-non-interference tests below. Establishes the friendship the
- * split creation rule requires.
+ * give both of them a real `split_share`, and therefore a mirrored
+ * transaction, in the month. Establishes the friendship the split creation
+ * rule requires. Returns the expense id so a test can find the mirror it
+ * produced.
  */
 async function createSplitExpenseBetween(
   ctx: ReturnType<typeof buildApp>,
@@ -309,7 +313,8 @@ async function createSplitExpenseBetween(
   amount: number,
   currency: string,
   day: string,
-): Promise<void> {
+  categoryName: string | null = null,
+): Promise<string> {
   const payerId = await idOf(ctx.app, payerToken);
   const otherId = await idOf(ctx.app, otherToken);
   ctx.splitFriendChecker.addFriendship(payerId, otherId);
@@ -323,10 +328,12 @@ async function createSplitExpenseBetween(
       currency,
       description: "dinner",
       day,
+      category_name: categoryName,
       split: { mode: "equal", participant_user_ids: [payerId, otherId] },
     }),
   });
   if (res.status !== 201) throw new Error(`failed to seed split expense: ${res.status} ${await res.text()}`);
+  return (await res.json<{ id: string }>()).id;
 }
 
 function authHeaderFor(token: string): Record<string, string> {
@@ -639,23 +646,29 @@ describe("finance HTTP routes", () => {
       expect(await res.json()).toEqual({ month: "2026-07", totals: [], by_category: [] });
     });
 
-    it("is unaffected by split expenses: totals and by_category are exactly what the user's own transactions produce", async () => {
-      // Pins /api/finance/summary's response shape and content against a
-      // regression where a split share leaks into it (design.md: summary's
-      // shape must not change, since clients already read it — split
-      // spending is reported via its own endpoint instead).
+    it("is unaffected by split expenses: the share is counted once, as the transaction it now is", async () => {
+      // Kept under its former name so the inversion is loud: a split share
+      // used to be invisible here and now it is a real transaction. The
+      // "exactly once" half is the one that matters — the share must reach
+      // the summary through the mirror and never a second time from the
+      // split tables.
       const token = await validToken();
       const otherToken = await validToken("uid-other");
       const foodCategory = await seedCategory(ctx.app, token, { name: "餐飲", type: "expense" });
 
       await ctx.app.request("/api/finance/transactions", authed(token, "POST", { type: "expense", amount: 300, category_id: foodCategory.id, date: "2026-07-05" }));
-      const withoutSplit = await (await ctx.app.request("/api/finance/summary?month=2026-07", authed(token))).json();
-
       await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-06");
 
       const res = await ctx.app.request("/api/finance/summary?month=2026-07", authed(token));
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual(withoutSplit);
+      const body = (await res.json()) as { totals: Array<{ currency: string; expense: number }> };
+      expect(body.totals.find((total) => total.currency === "TWD")?.expense).toBe(750);
+
+      // ...and the same number the budget reports, which is the whole point:
+      // the two used to disagree by exactly the share.
+      await ctx.app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 10000 }));
+      const budgets = (await (await ctx.app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as { budgets: Array<{ spent: number }> };
+      expect(budgets.budgets[0].spent).toBe(750);
     });
   });
 
@@ -708,6 +721,131 @@ describe("finance HTTP routes", () => {
       const res = await ctx.app.request("/api/finance/split-spending?month=2026-08", authed(token));
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ month: "2026-08", totals: [] });
+    });
+  });
+
+  /**
+   * These run through `createApp`, which composes the real
+   * `FinanceSharesMirror` out of the in-memory finance repositories — so the
+   * category resolution under test is the production one, not a fake
+   * reimplementation agreeing with itself.
+   */
+  describe("split mirror: category resolution", () => {
+    const DAY = "2026-07-06";
+
+    interface MirrorJson {
+      id: string;
+      amount: number;
+      category_id: string;
+      split_expense_id: string | null;
+      category_source: string;
+    }
+
+    async function mirrorOf(token: string, splitExpenseId: string): Promise<MirrorJson | undefined> {
+      const res = await ctx.app.request("/api/finance/transactions?from=2026-07-01&to=2026-07-31", authed(token));
+      const body = (await res.json()) as { transactions: MirrorJson[] };
+      return body.transactions.find((txn) => txn.split_expense_id === splitExpenseId);
+    }
+
+    async function categoriesOf(token: string): Promise<Array<{ id: string; name: string; type: string; archived: boolean }>> {
+      const res = await ctx.app.request("/api/finance/categories", authed(token));
+      return ((await res.json()) as { categories: Array<{ id: string; name: string; type: string; archived: boolean }> }).categories;
+    }
+
+    /** Names the category a mirror landed on, resolved through the owner's own category list. */
+    async function mirrorCategory(token: string, splitExpenseId: string): Promise<{ name: string; type: string } | undefined> {
+      const mirror = await mirrorOf(token, splitExpenseId);
+      if (!mirror) return undefined;
+      return (await categoriesOf(token)).find((category) => category.id === mirror.category_id);
+    }
+
+    it("takes the share holder's own expense category of that name, never their income one", async () => {
+      // The holder has 餐飲 only as an *income* category. Step 1 must miss it
+      // and fall through to their expense 其他 — an unfiltered name lookup
+      // would file a split dinner as income, and `getMonthlySummaryRaw`
+      // groups by category, so nothing about the result would look wrong.
+      const payer = await validToken();
+      const holder = await validToken("uid-holder");
+      await seedCategory(ctx.app, holder, { name: "其他", type: "expense" });
+      await seedCategory(ctx.app, holder, { name: "餐飲", type: "income" });
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 900, "TWD", DAY, "餐飲");
+
+      expect(await mirrorCategory(holder, splitId)).toMatchObject({ name: "其他", type: "expense" });
+    });
+
+    it("re-seeds a renamed 其他 rather than landing on whatever expense category is left over", async () => {
+      // The holder renamed their 其他 and has an income 其他. They still have
+      // plenty of categories, so a "seed only when they have none" condition
+      // would never fire for them and the mirror would have nowhere to go —
+      // failing the payer's perfectly legal split because of a rename they
+      // know nothing about.
+      const payer = await validToken();
+      const holder = await validToken("uid-holder");
+      const renamed = await seedCategory(ctx.app, holder, { name: "其他", type: "expense" });
+      await ctx.app.request(`/api/finance/categories/${renamed.id}`, authed(holder, "PUT", { name: "雜項" }));
+      await seedCategory(ctx.app, holder, { name: "其他", type: "income" });
+      const expenseCountBefore = (await categoriesOf(holder)).filter((category) => category.type === "expense").length;
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 900, "TWD", DAY, "旅遊");
+
+      expect(await mirrorCategory(holder, splitId)).toMatchObject({ name: "其他", type: "expense" });
+      // Proof the 其他 it landed on was genuinely re-seeded, not the renamed
+      // one under another name or the income one.
+      const expenseCountAfter = (await categoriesOf(holder)).filter((category) => category.type === "expense").length;
+      expect(expenseCountAfter).toBeGreaterThan(expenseCountBefore);
+    });
+
+    it("seeds the defaults for a share holder who has never opened the ledger", async () => {
+      // Deliberately no category call for the holder before the split: one
+      // `GET /api/finance/categories` would seed them and this guard could
+      // never fail again.
+      const payer = await validToken();
+      const holder = await validToken("uid-holder");
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 900, "TWD", DAY, "餐飲");
+
+      const mirror = await mirrorOf(holder, splitId);
+      expect(mirror).toMatchObject({ amount: 450, category_source: "mirror" });
+      // 其他, not the 餐飲 the split named: the re-seed hands back to step 2,
+      // not to step 1 (design.md D4). The freshly seeded 餐飲 exists but this
+      // mirror does not go looking for it a second time.
+      expect(await mirrorCategory(holder, splitId)).toMatchObject({ name: "其他", type: "expense" });
+      expect((await categoriesOf(holder)).length).toBe(11);
+    });
+
+    it("resolves the category per user: each side's mirror uses their own id for the same name", async () => {
+      // `finance_transaction.category_id` has no constraint tying it to the
+      // row's `user_id`, so using the payer's id would insert happily and
+      // just file the holder's money under someone else's category.
+      const payer = await validToken();
+      const holder = await validToken("uid-holder");
+      const payerFood = await seedCategory(ctx.app, payer, { name: "餐飲", type: "expense" });
+      const holderFood = await seedCategory(ctx.app, holder, { name: "餐飲", type: "expense" });
+      expect(payerFood.id).not.toBe(holderFood.id);
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 900, "TWD", DAY, "餐飲");
+
+      expect((await mirrorOf(holder, splitId))?.category_id).toBe(holderFood.id);
+      expect((await mirrorOf(payer, splitId))?.category_id).toBe(payerFood.id);
+    });
+
+    it("lets a mirror land on an archived category, while the API still refuses to create one there", async () => {
+      // The asymmetry is deliberate: archiving hides a category from new
+      // *choices*, and a mirror is not a choice — refusing it would drop a
+      // real expense. Both halves are asserted, because with only the first
+      // one "just drop the archived check from create" would survive.
+      const payer = await validToken();
+      const holder = await validToken("uid-holder");
+      const food = await seedCategory(ctx.app, holder, { name: "餐飲", type: "expense" });
+      await ctx.app.request(`/api/finance/categories/${food.id}`, authed(holder, "PUT", { archived: true }));
+
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 900, "TWD", DAY, "餐飲");
+
+      expect((await mirrorOf(holder, splitId))?.category_id).toBe(food.id);
+
+      const manual = await ctx.app.request("/api/finance/transactions", authed(holder, "POST", { type: "expense", amount: 100, category_id: food.id, date: DAY }));
+      expect(manual.status).toBe(400);
     });
   });
 
@@ -804,22 +942,31 @@ describe("finance HTTP routes", () => {
       expect(budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月餐飲支出已達預算 8 成" });
     });
 
-    it("a TWD split share in the month leaves every budget's spent unchanged and raises no alert (checkBudgetAlerts only fires from createTransaction)", async () => {
-      const { app, budgetAlertNotifier } = ctx;
+    it("a TWD split share does consume a budget: both the overall one and the category the split named", async () => {
+      // Kept under its former name so the inversion is explicit. The
+      // per-category half needs the split to actually name a category: with
+      // no name the mirror lands on 其他 and only the overall budget moves,
+      // which would leave "the split's category is honoured" unguarded.
+      const { app } = ctx;
       const token = await validToken();
       const otherToken = await validToken("uid-other");
       const food = await seedCategory(app, token, { name: "餐飲" });
-      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 1000 }));
-      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: food.id, amount: 1000 }));
+      const transport = await seedCategory(app, token, { name: "交通" });
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: null, amount: 10000 }));
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: food.id, amount: 10000 }));
+      await app.request("/api/finance/budgets", authed(token, "PUT", { category_id: transport.id, amount: 10000 }));
 
-      const before = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as { budgets: unknown[] };
+      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-01", "餐飲");
 
-      // Large enough to cross the 80% alert threshold were it (wrongly) counted.
-      await createSplitExpenseBetween(ctx, token, otherToken, 900, "TWD", "2026-07-01");
-
-      const after = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as { budgets: unknown[] };
-      expect(after).toEqual(before);
-      expect(budgetAlertNotifier.messages).toHaveLength(0);
+      const after = (await (await app.request("/api/finance/budgets?month=2026-07", authed(token))).json()) as {
+        budgets: Array<{ category_id: string | null; spent: number }>;
+      };
+      const spentFor = (categoryId: string | null) => after.budgets.find((budget) => budget.category_id === categoryId)?.spent;
+      expect(spentFor(null)).toBe(450);
+      expect(spentFor(food.id)).toBe(450);
+      // The budget of a category the split did not name stays untouched — the
+      // share lands somewhere specific, not everywhere.
+      expect(spentFor(transport.id)).toBe(0);
     });
   });
 

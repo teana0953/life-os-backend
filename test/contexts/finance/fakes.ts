@@ -80,6 +80,8 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
       categoryId: input.categoryId,
       date: input.date,
       note: input.note ?? null,
+      splitExpenseId: input.splitExpenseId ?? null,
+      categorySource: input.categorySource ?? "manual",
     };
     this.transactions.push(txn);
     return txn;
@@ -104,6 +106,8 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
     txn.categoryId = input.categoryId;
     txn.date = input.date;
     txn.note = input.note ?? null;
+    // `splitExpenseId`/`categorySource` are deliberately not assigned: the
+    // real adapter leaves those columns out of its SET list too (D17).
     return txn;
   }
 

@@ -7,7 +7,7 @@ import { getBalances } from "../../../../src/contexts/split/application/get-bala
 import { createSettlement } from "../../../../src/contexts/split/application/create-settlement";
 import { getGroupBalances } from "../../../../src/contexts/split/application/get-group-balances";
 import { GroupNotFound } from "../../../../src/contexts/split/domain/errors";
-import { InMemoryBalanceRepository, InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySettlementRepository, InMemorySplitExpenseRepository, TestUserDirectory } from "../fakes";
+import { InMemoryBalanceRepository, InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySettlementRepository, InMemorySplitExpenseRepository, noopSharesMirror, TestUserDirectory } from "../fakes";
 
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const A = "user-a";
@@ -34,7 +34,7 @@ beforeEach(() => {
   users.add(D, "Dave");
   settlements = new InMemorySettlementRepository(groups, users);
   balances = new InMemoryBalanceRepository(expenses, groups, users, settlements);
-  deps = { expenses, groups, friends };
+  deps = { expenses, groups, friends, mirror: noopSharesMirror };
   friends.addFriendship(A, B);
   friends.addFriendship(A, C);
   friends.addFriendship(A, D);

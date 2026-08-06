@@ -1,5 +1,13 @@
 import type { CreateFinanceCategoryInput } from "./finance-category";
 
+/**
+ * The catch-all every user has by default, and the fallback a mirrored split
+ * transaction lands on when the split named no category or named one this
+ * user does not have. Note it exists under **both** types below, so any
+ * lookup for it must say which one it wants.
+ */
+export const FALLBACK_CATEGORY_NAME = "其他";
+
 /** Default per-user categories seeded lazily on first `GET /api/finance/categories` (design.md). */
 export const DEFAULT_CATEGORIES: Omit<CreateFinanceCategoryInput, "userId">[] = [
   { name: "餐飲", type: "expense", sortOrder: 0 },

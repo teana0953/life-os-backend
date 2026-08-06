@@ -5,7 +5,7 @@ import { createExpense, type CreateExpenseDeps } from "../../../../src/contexts/
 import { createGroup } from "../../../../src/contexts/split/application/create-group";
 import type { CreateExpenseInput } from "../../../../src/contexts/split/application/expense-input";
 import { DuplicateParticipant, GroupArchived, GroupNotFound, InvalidSplitInput, NotAGroupMember, NotAParticipant, NotFriends, SharesDoNotSumToAmount, SplitTooSmall } from "../../../../src/contexts/split/domain/errors";
-import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository } from "../fakes";
+import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository, noopSharesMirror } from "../fakes";
 
 const A = "user-a";
 const B = "user-b";
@@ -21,7 +21,7 @@ beforeEach(() => {
   groups = new InMemoryExpenseGroupRepository();
   friends = new InMemoryFriendChecker();
   expenses = new InMemorySplitExpenseRepository(groups);
-  deps = { expenses, groups, friends };
+  deps = { expenses, groups, friends, mirror: noopSharesMirror };
   friends.addFriendship(A, B);
   friends.addFriendship(A, C);
 });
