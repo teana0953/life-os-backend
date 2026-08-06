@@ -1034,6 +1034,54 @@ describe("finance HTTP routes", () => {
 
       expect((await mirrorFor(ctx, holder, splitId))?.amount).toBe(900);
     });
+
+    it("one holder's failing check does not silence the holders after them", async () => {
+      // The loop's catch is per row on purpose. `writeMirrorAftermath` keeps a
+      // failed check from failing the split write, but it sits outside the
+      // loop — without this one, the first holder to throw would abandon
+      // everyone after them, and since alerts are month-deduped and only fire
+      // on the way up, those holders would never be told at all.
+      const payer = await validToken("uid-payer");
+      const doomed = await validToken("uid-doomed");
+      const later = await validToken("uid-later");
+      const payerId = await idOf(ctx.app, payer);
+      const doomedId = await idOf(ctx.app, doomed);
+      const laterId = await idOf(ctx.app, later);
+      ctx.splitFriendChecker.addFriendship(payerId, doomedId);
+      ctx.splitFriendChecker.addFriendship(payerId, laterId);
+
+      // `later` must cross 80% on their share alone, so the alert can only
+      // come from the loop having reached them.
+      await ctx.app.request("/api/finance/budgets", authed(later, "PUT", { category_id: null, amount: 1000 }));
+
+      const realLookup = ctx.financeBudgetRepository.findByUserAndCategory.bind(ctx.financeBudgetRepository);
+      ctx.financeBudgetRepository.findByUserAndCategory = async (userId: string, categoryId: string | null) => {
+        if (userId === doomedId) throw new Error("budget lookup exploded for this holder only");
+        return realLookup(userId, categoryId);
+      };
+
+      const res = await ctx.app.request("/api/split/expenses", {
+        method: "POST",
+        headers: authHeaderFor(payer),
+        body: JSON.stringify({
+          group_id: null,
+          payer_user_id: payerId,
+          amount: 2700,
+          currency: "TWD",
+          description: "dinner",
+          day: DAY,
+          category_name: null,
+          // `doomed` is listed before `later`, so the loop reaches the
+          // throwing holder first — the whole point of the fixture.
+          split: { mode: "equal", participant_user_ids: [payerId, doomedId, laterId] },
+        }),
+      });
+      expect(res.status).toBe(201);
+
+      const alerted = ctx.budgetAlertNotifier.messages.map((message) => message.userId);
+      expect(alerted).toContain(laterId);
+      expect(alerted).not.toContain(doomedId);
+    });
   });
 
   /**

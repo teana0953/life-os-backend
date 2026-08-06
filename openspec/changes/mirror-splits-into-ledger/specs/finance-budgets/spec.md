@@ -103,6 +103,12 @@ it left can only fall, and this check only ever fires on the way up.
 - **THEN** the holder is notified once, for the category the mirror is in —
   not for the one the split names
 
+#### Scenario: One holder's failing check does not silence the others
+
+- **WHEN** the alert check throws for one share holder on a shared expense
+  with several holders
+- **THEN** the holders after them are still checked and still notified
+
 #### Scenario: A failing alert does not fail the split
 
 - **WHEN** the budget-alert check throws while a shared expense is recorded

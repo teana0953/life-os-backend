@@ -76,10 +76,14 @@ export class FinanceSharesMirror implements SharesMirror {
    * A holder is notified about their own budget even though somebody else's
    * action crossed it — that is the point, not an accident (design.md D13).
    *
-   * Errors are deliberately **not** caught here: the caller
-   * (`writeMirrorAftermath`) owns the best-effort contract for the whole
-   * step, so catching per row as well would give the rule two homes that
-   * could drift apart.
+   * One holder's failure must not silence the rest. `writeMirrorAftermath`
+   * owns the best-effort contract for the *step* — it is what keeps a failed
+   * check from failing the split write — but it sits outside this loop, so
+   * without a per-row catch the first holder to throw would abandon every
+   * holder after them. Alerts are month-deduped and only fire on the way up,
+   * so those holders would not simply be late: they would never be told at
+   * all. The two catches are not the same rule twice; this one decides who
+   * still gets checked, that one decides whether the split write survives.
    *
    * Only the categories the mirrors carry *now* are checked. An edit that
    * moved a mirror off a category cannot have raised that category's spend,
@@ -87,10 +91,14 @@ export class FinanceSharesMirror implements SharesMirror {
    */
   async afterWrite(rows: ShareMirrorRow[]): Promise<void> {
     for (const row of rows) {
-      await checkBudgetAlerts(
-        { budgetRepository: this.deps.budgets, categoryRepository: this.deps.categories, notifier: this.deps.notifier },
-        { userId: row.userId, type: "expense", currency: row.currency, categoryId: row.categoryId, date: row.day },
-      );
+      try {
+        await checkBudgetAlerts(
+          { budgetRepository: this.deps.budgets, categoryRepository: this.deps.categories, notifier: this.deps.notifier },
+          { userId: row.userId, type: "expense", currency: row.currency, categoryId: row.categoryId, date: row.day },
+        );
+      } catch (error) {
+        console.error("budget alert check failed for a split mirror", { userId: row.userId, error });
+      }
     }
   }
 
