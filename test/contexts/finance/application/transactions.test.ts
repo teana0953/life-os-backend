@@ -367,6 +367,39 @@ describe("updateTransaction racing a split edit", () => {
 
     expect(updated).toMatchObject({ amount: 900, categoryId: fun.id, categorySource: "manual" });
   });
+
+  it("answers 'not found', not 'changed underneath', when the split was deleted", async () => {
+    // A no-match has two causes and they are not the same answer: the row
+    // moved on (retry and it may work) or the payer deleted the split and the
+    // cascade took the row with it (retrying never will). Without this, the
+    // re-read that tells them apart can be dropped for a blanket conflict and
+    // nothing notices.
+    const vanishing = new RacingTransactionRepository(() => {
+      vanishing.transactions.length = 0;
+    });
+    const food = await seedCategory();
+    const fun = await seedCategory({ name: "娛樂" });
+    const mirror = await vanishing.create({
+      userId: "user-1",
+      type: "expense",
+      amount: 900,
+      currency: "TWD",
+      categoryId: food.id,
+      date: "2026-07-15",
+      splitExpenseId: "split-1",
+      categorySource: "mirror",
+    });
+
+    await expect(
+      updateTransaction(categories, vanishing, "user-1", mirror.id, {
+        type: "expense",
+        amount: 900,
+        currency: "TWD",
+        categoryId: fun.id,
+        date: "2026-07-15",
+      }),
+    ).rejects.toBeInstanceOf(FinanceTransactionNotFound);
+  });
 });
 
 describe("deleteTransaction", () => {

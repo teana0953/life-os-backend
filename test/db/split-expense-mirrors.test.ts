@@ -416,6 +416,26 @@ describe("split expense mirrors (real Postgres)", () => {
 
       expect(written).toMatchObject({ amount: 900, categoryId: FUN_B, categorySource: "manual" });
     });
+
+    it("compares every one of the four facts, not only the amount", async () => {
+      // The case above only moves `amount`, so three of the four terms in the
+      // predicate were free to fall out of the WHERE without a single test
+      // noticing. One stale value per fact, each on its own row.
+      const stale = { type: "expense" as const, amount: 900, currency: "TWD", date: DAY };
+      const write = { type: "expense" as const, amount: 900, currency: "TWD", categoryId: FUN_B, date: DAY, categorySource: "manual" as const };
+
+      // One seed is enough: every one of these writes nothing, so the row is
+      // still the row the next iteration compares against.
+      const row = await seedMirrorRow();
+      for (const expected of [
+        { ...stale, type: "income" as const },
+        { ...stale, currency: "USD" },
+        { ...stale, date: "2026-07-09" },
+      ]) {
+        expect(await transactions().update(B, row.id, write, expected)).toBeNull();
+        expect((await mirrorFor(B, E1))?.categoryId).toBe(FOOD_B);
+      }
+    });
   });
 
   describe("the mirrors share the expense's fate", () => {

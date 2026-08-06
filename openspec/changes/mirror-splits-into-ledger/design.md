@@ -201,6 +201,10 @@ has already moved past」):交錯只能在 `updateTransaction` 自己的那次�
 製造出來,HTTP 層碰不到那個縫。**SQL 那半在 `test/db`** —— in-memory 的 repository
 用 JavaScript 做同一個判斷,只能證明它跟自己一致。
 
+**述詞裡刻意沒有 `category_id`。** 分類是持有者自己的欄位,不是分帳的事實 —— 把它放進述詞會讓「付款人改了分帳的分類」變成持有者一次合法編輯的 409,而那不是衝突。
+
+代價是一個窄的、會自癒的缺口:持有者讀取之後、寫入之前,付款人改了分帳的分類,持有者那次寫入會把舊分類寫回去,而且 `category_source` 仍然是 `'mirror'`(因為比對用的是那份過期的讀取)。**下一次付款人編輯分帳時它會自己修好** —— `CASE` 照樣適用。這不是 D7 要防的「永久對不上」。
+
 ## D8:零元分攤**不產生鏡像**
 
 split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓分攤裡真的不欠錢是真實情況」,CHECK 是 `amount >= 0`)。finance 要求 `amount > 0`(`validateTransactionFields:15`),而 `finance_transaction.amount` **沒有 CHECK**,所以繞過應用層的 SQL 插入會靜默寫進一筆 0 元交易。
