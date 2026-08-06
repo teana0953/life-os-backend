@@ -21,6 +21,13 @@ without a database. An edit SHALL update a share holder's existing mirror in
 place rather than replacing it, and SHALL remove the mirror of anyone who is
 no longer a share holder.
 
+The write SHALL report the mirrors **as it stored them**, which is not always
+what it was given: an edit keeps the category of a mirror its owner
+recategorised, so the planned row and the stored row name different
+categories. Anything that runs off a mirror after the write — the budget
+check below — SHALL be given the stored rows, or it would examine a category
+the money is not in and never the one it is.
+
 #### Scenario: A failed write leaves nothing behind
 
 - **WHEN** writing an expense's shares fails
@@ -61,7 +68,12 @@ between the people named in its shares.
 The category SHALL be recorded as a name, not an identifier, because finance
 categories are per-user: the payer's identifier means nothing to the other
 participants, who are the ones who need to read it. An empty name SHALL be
-treated as none.
+treated as none, and so SHALL an absent one. An edit is a full replacement,
+not a patch — every other field it leaves out is rejected as missing — so the
+category is the one optional field there, and leaving it out clears it rather
+than keeping what was stored. A client that means to keep the category SHALL
+resend it: leaving it out moves every share holder's mirror to their fallback
+category.
 
 Because an expense's participants each get a transaction in their own ledger,
 whoever may edit or delete an expense thereby writes to, and deletes from,
@@ -121,6 +133,12 @@ expense: no other row of anyone's ledger SHALL be touched.
   one, and another with none at all
 - **THEN** all three are created, and reading them back returns the name that
   was given and nothing for the other two
+
+#### Scenario: An edit that leaves the category out clears it
+
+- **WHEN** an expense recorded with a category name is edited by a request
+  that does not carry one
+- **THEN** the expense has no category name afterwards
 
 #### Scenario: Deleting an expense touches only its own mirrors
 
@@ -190,6 +208,18 @@ itself.
 #### Scenario: A second mirror cannot appear
 
 - **WHEN** the same expense is edited twice, executed against a real database
-- **THEN** each share holder still has exactly one mirror — and dropping the
-  partial unique index makes this fail
+- **THEN** each share holder still has exactly one mirror, carrying the second
+  edit's amount — and writing the mirrors as a plain insert instead of an
+  upsert makes this fail. Dropping the index alone is not that mutation: the
+  `ON CONFLICT` target then matches no unique constraint and every mirror
+  write fails in the planner, which shows the index exists rather than that it
+  is the right index.
+
+#### Scenario: A write hands back the mirrors it stored
+
+- **WHEN** a share holder has recategorised their mirror and the expense is
+  edited, executed against a real database
+- **THEN** the write reports that holder's mirror on the category it is
+  stored in, not the one the edit planned — the categories the budget checks
+  below run on
 

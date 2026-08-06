@@ -14,6 +14,7 @@
 - [x] 1.1 `split_expense.category_name text null`。**存名字不存 id**(分類是 per-user 的)。
 - [x] 1.2 `CreateExpenseInput`/`UpdateExpenseInput`、`validateExpenseFields`、`POST /api/split/expenses`、**`PATCH /api/split/expenses/:id`**(不是 PUT,`app.ts:478`)、`GET` 的回應都要帶。
 - [x] 1.2a `category_name` 的輸入規則要寫進 `validateExpenseFields`,並補進 split-bills 那條「其餘一律 400」的輸入契約:**空字串當成 null**、長度上限。**不做前後空白修剪** —— 規格的 scenario 寫「讀回來就是送進去的那個名字」,修剪會跟它打架,而分類名字本來就是照使用者輸入存的。**要有測試**,不是只加欄位。
+- [x] 1.2b **`PATCH` 沒帶 `category_name` = 清空**(D1)。handler 對其他欄位都是全取代,這個保持一致。**要有一條測試**(`split.test.ts`「clears the category name when a PATCH omits it」)**並且寫進 split-bills 規格**,前端在另一個 repo,不寫下來就是靠掉資料發現。突變:改成「沒帶就沿用原值」→ 那條測試紅(已驗)。
 - [ ] 1.3 **前端契約改動有三處**,全部寫進 PR:分帳建立表單多一個分類選擇;**每一筆交易的回應與列表都要帶「來自分帳」的標記**(前端才鎖得住欄位);**`GET /api/finance/split-spending` 每個幣別多一個「是否已計入交易」旗標**。前端在另一個 repo。
 
 ## 2. `SharesMirror` port(D2)
@@ -63,8 +64,9 @@
 - [x] 5.3 部分唯一索引 `(user_id, split_expense_id) where split_expense_id is not null`。**突變:索引與 `ON CONFLICT` 的目標「一起」縮成 `(user_id)`**,一條「同一個人在同月有**兩筆不同的分帳**,兩筆鏡像都在」的 PGlite 測試必須紅 —— 縮窄之後第二筆會衝到第一筆上、去更新錯的列。
 - [x] 5.3b **只縮索引、不動 `ON CONFLICT` 目標是不行的**:那會讓 Postgres 在計畫階段就報 *there is no unique or exclusion constraint matching the ON CONFLICT specification*,**第一次寫鏡像就紅**,紅在 SQL 錯誤而不是重複列 —— 正是 5.3a 說不算數的那種。
 - [x] 5.3a **也不要用「拿掉索引」當突變**:4.1 是 `ON CONFLICT (user_id, split_expense_id)`,拿掉索引會讓 Postgres 直接報 *there is no unique or exclusion constraint matching the ON CONFLICT specification*,**每一條寫鏡像的測試都會紅**,紅在 SQL 錯誤而不是重複列。那只證明索引存在,不證明它是對的索引。
+- [x] 5.3c **「同一筆分帳編輯兩次,每個分攤者仍然只有一筆鏡像」要有自己的測試**(規格的 scenario)。**能讓它紅的突變是「upsert 改回單純的 insert」**(第二次寫入撞唯一索引而不是更新);5.3 那條縮索引+ON CONFLICT 的突變**它活得下來**(一個 (user, split) 一列本來就成立),那個由「leaves the other split's mirror alone」抓。不要謊稱兩者是同一個守門。
 - [x] 5.4 移除的分攤者:batch 裡帶 `delete … where split_expense_id = ? and user_id not in (…)`。**集合式的,不需要知道編輯前是誰** —— adapter 刻意不讀 grouped expense 的舊分攤者(`:182-183`),那個最佳化不該為這個 change 死掉。鏡像集合為空時 `notInArray(col, [])` 在 drizzle-orm 0.45.2 產生 `true`,是安全的。
-- [x] 5.5 **這條也在 `test/db`(PGlite),理由同 4.3。突變:拿掉那條 delete**,一條「grouped expense 移除一個分攤者後,他的交易不見了」的測試必須紅。**fixture 要用 grouped 的**。
+- [x] 5.5 **這條也在 `test/db`(PGlite),理由同 4.3。突變:拿掉那條 delete**,一條「grouped expense 移除一個分攤者後,他的交易不見了」的測試必須紅。**fixture 要用 grouped 的**。**groupless 的也要一條** —— 規格寫的是「不管屬不屬於群組」,而 groupless 那條路徑 adapter 會去讀編輯前的分攤者(活動的 audience 要),所以只有 grouped 的 fixture 蓋不到「用舊名單去刪」這個寫法。兩條都在,誰也不取代誰。
 - [x] 5.7 **batch 裡鏡像的 insert 必須排在 `expenseInsert` 之後**(FK 立即檢查)。這個 repo 對語句順序寫得很重(`:270`),照做。**這條不需要專屬的突變測試** —— 排錯順序會讓**每一條**建立分帳的測試 FK 失敗。在註解裡寫明理由即可,**不要謊稱它有突變驗證**。
 - [x] 5.6 刪除分帳靠 `on delete cascade`,**不在 batch 裡另外刪**(`delete` 是單一 `db.delete(splitExpense)`)。
 
@@ -74,6 +76,10 @@
 - [x] 6.2 **突變:拿掉 `afterWrite` 呼叫**,一條「分帳讓分攤者跨過 80% → `FakeBudgetAlertNotifier` 收到一則」的測試必須紅。兩個 fixture 條件都不能少:
   - **自付額要真的跨過門檻**:總額 1800 平分是自付 900,對 1000 的預算是 90%。拿 900 平分(自付 450)是 45%,突變會活下來。
   - **被通知的要是「不是寫入者」的那個分攤者**。#76 和 D13 講的就是這件事;拿付款人自己當受測對象是沒意思的那一半。
+- [x] 6.2a **編輯路徑也要有自己的守門。** 6.2 只蓋到建立那半:把 `update-expense.ts` 的 `writeMirrorAftermath` 整行刪掉,1241 條測試**全綠**。要一條走 `editSplitExpenseBetween` 的警示測試。
+- [x] 6.2b **`afterWrite` 收到的必須是「寫進去的」列,不是 `plan` 的列**(D19a)。分攤者改過分類的鏡像,`plan` 說餐飲、資料庫是娛樂 —— 用 `plan` 的列去查,永遠查不到那筆錢真的在的分類。repository 的 `create`/`update` 回傳 `SplitExpenseWriteResult`,`mirrors` 來自 upsert 的 `.returning()`。
+  - **HTTP 層的守門一條蓋兩件事**(`finance.test.ts`「checks the category a recategorised mirror now carries when the split is edited」):分攤者把鏡像搬到有預算的娛樂 → 付款人改金額 → 收到一則娛樂的 80% 通知。**兩個突變各驗過**:刪掉編輯路徑的 `writeMirrorAftermath` → 紅;改回傳 `plan` 的列 → 紅。
+  - **SQL 那半在 `test/db`**(「hands back the stored category, not the planned one」):HTTP 層走的是 in-memory fake,證不了 `.returning()` 真的回傳 `CASE` 之後的值。突變:`written = mirrors` → 紅(已驗)。
 - [x] 6.3 **突變:不 catch `afterWrite` 的錯誤**,一條**應用層**測試必須紅:用會丟錯的 `SharesMirror` stub,斷言 `createExpense` 仍然回傳、鏡像列仍然傳進了 repository。(**這條不要斷言 HTTP 狀態碼** —— 應用層看不到它。)
 - [x] 6.3b 規格說的是「API 回 200」,那是 **HTTP 層**的宣稱,要有自己的測試。**`financeBudgetRepository` 是 `createApp` 的 option**,傳一個會丟錯的進去就是一條真的端到端守門。**丟錯的要是 `findByUserAndCategory`,或者 fixture 要先給分攤者一個預算** —— `checkBudget` 在沒有預算時就從 `findByUserAndCategory` 早退,`getSpent` 根本跑不到。**突變:不 catch** → 分帳的 `POST` 變成 500,測試紅。
 - [x] 6.3a **不要用「notifier 丟錯」當那個突變** —— `check-budget-alerts.ts:65-69` **已經**把 notifier 的錯誤吞掉了(`try { notify } catch { console.error }`),所以會丟錯的 notifier **永遠不會讓 `afterWrite` 丟錯**,那個守門是死的。要丟錯就從 port 這一層丟。

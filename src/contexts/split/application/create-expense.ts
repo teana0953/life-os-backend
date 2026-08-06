@@ -53,8 +53,11 @@ export async function createExpense(deps: CreateExpenseDeps, input: CreateExpens
     shares: validated.shares,
   });
 
-  const expense = await deps.expenses.create({ id, groupId: input.groupId, createdByUserId: input.callerUserId.toLowerCase(), ...validated }, mirrors);
+  const written = await deps.expenses.create({ id, groupId: input.groupId, createdByUserId: input.callerUserId.toLowerCase(), ...validated }, mirrors);
 
-  await writeMirrorAftermath(deps.mirror, mirrors);
-  return expense;
+  // The rows the write produced, not the ones it was handed: the two can
+  // differ, and the budget check has to run on the categories the mirrors are
+  // really in (see `SplitExpenseWriteResult`).
+  await writeMirrorAftermath(deps.mirror, written.mirrors);
+  return written.expense;
 }

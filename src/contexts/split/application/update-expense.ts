@@ -57,9 +57,13 @@ export async function updateExpense(deps: CreateExpenseDeps, callerUserId: strin
     shares: validated.shares,
   });
 
-  const updated = await deps.expenses.update(expenseId, validated, mirrors, now, caller);
-  if (!updated) throw new ExpenseNotFound();
+  const written = await deps.expenses.update(expenseId, validated, mirrors, now, caller);
+  if (!written) throw new ExpenseNotFound();
 
-  await writeMirrorAftermath(deps.mirror, mirrors);
-  return updated;
+  // The stored rows, not the planned ones. An edit keeps the category of a
+  // mirror its owner recategorised, so on this path the two routinely differ —
+  // and checking the planned category would check a budget the row does not
+  // count towards while never checking the one it does.
+  await writeMirrorAftermath(deps.mirror, written.mirrors);
+  return written.expense;
 }

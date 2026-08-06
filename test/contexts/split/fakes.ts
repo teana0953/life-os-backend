@@ -9,7 +9,7 @@ import type { ListSettlementsFilter, SettlementRepository } from "../../../src/c
 import type { ShareMirrorRow, SharesMirror } from "../../../src/contexts/split/domain/shares-mirror";
 import type { CreateSplitExpenseInput, SplitExpense, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../../../src/contexts/split/domain/split-expense";
 import type { InMemoryFinanceTransactionRepository } from "../finance/fakes";
-import type { ListExpensesFilter, SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
+import type { ListExpensesFilter, SplitExpenseRepository, SplitExpenseWriteResult } from "../../../src/contexts/split/domain/split-expense-repository";
 import type { SplitSpendingAmount } from "../../../src/contexts/split/domain/split-spending";
 import type { SplitSpendingRepository } from "../../../src/contexts/split/domain/split-spending-repository";
 import type { SplitActivity } from "../../../src/contexts/split/domain/split-activity";
@@ -161,13 +161,22 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
    *
    * It proves nothing about that SQL — see `test/db` for that. It exists so
    * the HTTP-level guards can observe a mirror at all.
+   *
+   * Returns the rows **as stored**, standing in for the adapter's
+   * `RETURNING`: for a row whose owner recategorised it the stored category is
+   * not the planned one, and the caller's budget check runs off the stored
+   * one.
    */
-  private async writeMirrors(splitExpenseId: string, mirrors: ShareMirrorRow[]): Promise<void> {
+  private async writeMirrors(splitExpenseId: string, mirrors: ShareMirrorRow[]): Promise<ShareMirrorRow[]> {
     const store = this.financeTransactions;
-    if (!store) return;
+    // No ledger to write into (the application-layer tests that predate
+    // mirrors): nothing can have diverged, so the planned rows are the
+    // written ones.
+    if (!store) return mirrors;
     const holders = new Set(mirrors.map((mirror) => mirror.userId));
     store.transactions = store.transactions.filter((txn) => txn.splitExpenseId !== splitExpenseId || holders.has(txn.userId));
 
+    const written: ShareMirrorRow[] = [];
     for (const mirror of mirrors) {
       const existing = store.transactions.find((txn) => txn.splitExpenseId === splitExpenseId && txn.userId === mirror.userId);
       if (existing) {
@@ -177,9 +186,10 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
         // Only while the row still follows the split; `note` is never
         // rewritten, matching the adapter's SET list (D6/D18).
         if (existing.categorySource === "mirror") existing.categoryId = mirror.categoryId;
+        written.push({ ...mirror, categoryId: existing.categoryId, note: existing.note });
         continue;
       }
-      await store.create({
+      const created = await store.create({
         userId: mirror.userId,
         type: "expense",
         amount: mirror.amount,
@@ -190,7 +200,9 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
         splitExpenseId: mirror.splitExpenseId,
         categorySource: "mirror",
       });
+      written.push({ ...mirror, categoryId: created.categoryId, note: created.note });
     }
+    return written;
   }
 
   private withNames(shares: SplitShareInput[]): SplitShare[] {
@@ -200,7 +212,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     }));
   }
 
-  async create(input: CreateSplitExpenseInput, mirrors: ShareMirrorRow[]): Promise<SplitExpense> {
+  async create(input: CreateSplitExpenseInput, mirrors: ShareMirrorRow[]): Promise<SplitExpenseWriteResult> {
     const now = new Date();
     const expense: SplitExpense = {
       ...input,
@@ -210,15 +222,14 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
       updatedAt: now,
     };
     this.rows.push(expense);
-    await this.writeMirrors(input.id, mirrors);
-    return expense;
+    return { expense, mirrors: await this.writeMirrors(input.id, mirrors) };
   }
 
   async findById(id: string): Promise<SplitExpense | null> {
     return this.rows.find((row) => row.id === id) ?? null;
   }
 
-  async update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, _actorUserId: string): Promise<SplitExpense | null> {
+  async update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, _actorUserId: string): Promise<SplitExpenseWriteResult | null> {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;
     row.payerUserId = fields.payerUserId;
@@ -231,8 +242,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     row.categoryName = fields.categoryName;
     row.shares = this.withNames(fields.shares);
     row.updatedAt = now;
-    await this.writeMirrors(id, mirrors);
-    return row;
+    return { expense: row, mirrors: await this.writeMirrors(id, mirrors) };
   }
 
   async delete(id: string, _actorUserId: string, _now: Date): Promise<boolean> {

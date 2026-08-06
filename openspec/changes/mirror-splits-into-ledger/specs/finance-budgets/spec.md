@@ -52,9 +52,11 @@ share holder whose mirrored transaction was written, on the same best-effort
 terms: a failing check or push SHALL NOT fail the split write. A share holder
 SHALL be notified about their own budget even though someone else's action
 crossed it. Editing a shared expense SHALL check the categories the mirrors
-now carry; it SHALL NOT be required to check a category a mirror carried
-before the edit, because spending on the category it left can only fall, and
-this check only ever fires on the way up.
+now carry — as read back from the write, not as the edit planned them, since
+a mirror its owner recategorised keeps the owner's category and the two
+therefore disagree exactly when it matters. It SHALL NOT be required to check
+a category a mirror carried before the edit, because spending on the category
+it left can only fall, and this check only ever fires on the way up.
 
 #### Scenario: Crossing 80 percent notifies once
 
@@ -92,6 +94,14 @@ this check only ever fires on the way up.
   user past 80% of their overall budget
 - **THEN** the user is notified once, exactly as if they had recorded the
   expense themselves
+
+#### Scenario: An edit checks the category the mirror is in now
+
+- **WHEN** a share holder has moved their mirror onto a category of their own
+  that carries a budget, and the payer then edits the split to an amount that
+  pushes that budget past 80%
+- **THEN** the holder is notified once, for the category the mirror is in —
+  not for the one the split names
 
 #### Scenario: A failing alert does not fail the split
 

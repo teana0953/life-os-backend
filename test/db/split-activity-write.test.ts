@@ -686,8 +686,8 @@ describe("split activity writes (real Postgres)", () => {
     }
 
     it("expense create", async () => {
-      const { result: expense, transactionStartedAt } = await withDelayedBatch(() => expenses.create(grouplessExpenseInput, []));
-      await expectPreBatchClock("expense_created", expense.createdAt, transactionStartedAt);
+      const { result: written, transactionStartedAt } = await withDelayedBatch(() => expenses.create(grouplessExpenseInput, []));
+      await expectPreBatchClock("expense_created", written.expense.createdAt, transactionStartedAt);
     });
 
     it("settlement create", async () => {

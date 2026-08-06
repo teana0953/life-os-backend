@@ -16,6 +16,12 @@
 
 `null` 代表付款人沒選,鏡像退到各自的「其他」。**這也是前端契約改動**(分帳建立表單多一個分類選擇),前端在另一個 repo。
 
+**`PATCH` 沒帶 `category_name` = 清空,不是「保留原值」。** 那個 handler 對其他
+每一個欄位都是全取代(少帶就 400),`category_name` 是唯一可選的那個,做成黏著
+的會讓它變成整組欄位裡唯一的例外。代價要寫出來:前端漏送就會把每個分攤者的鏡像
+搬到他們的「其他」。**決定保留這個行為,但要有測試、而且要寫進規格**,否則前端只
+能靠掉資料發現。
+
 ## D2:鏡像在**應用層**算出來,由 repository 放進 batch —— 不是在 adapter 裡拼 SQL
 
 第一版把鏡像寫成「adapter 在 batch 裡多加幾條語句」。那個形狀有兩個致命後果:
@@ -54,7 +60,7 @@ export interface SharesMirror {
 
 - `createExpense` / `updateExpense` **應用層**呼叫 `plan`,把結果傳給 repository(`deleteExpense` 不呼叫 —— 刪除靠 cascade,沒有東西要 plan)
 - **`id` 要從 repository 呼叫裡提出來**:現在是 `deps.expenses.create({ id: crypto.randomUUID(), … })`(`create-expense.ts:36`),而 `plan` 需要 id 才能填 `splitExpenseId`
-- repository 的簽章變成 `create(input, mirrors)` —— **它不算鏡像,只負責把拿到的列放進同一個 batch**
+- repository 的簽章變成 `create(input, mirrors)` —— **它不算鏡像,只負責把拿到的列放進同一個 batch**,並且**回傳寫進去的那一組**(D19a)
 - 寫入成功後應用層呼叫 `afterWrite`,那裡面才去跑每個分攤者的預算警示
 
 ### 接線:在 `createApp` 裡組,不加新 option
@@ -236,6 +242,21 @@ split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓�
 規格寫 `category_id` **與 `note`**「使用者改過之後不被分帳的後續編輯覆蓋」,但 `category_source` 只追蹤分類。
 
 **決定:`note` 不放進 upsert 的 SET 清單。** 鏡像建立時填一次(分帳的描述),之後只屬於使用者。這樣不需要第二個旗標,而且分帳的描述本來就會在分帳頁看得到。
+
+## D19a:`afterWrite` 必須拿到**寫進去的**列,不是 `plan` 算出來的列
+
+`plan` 算出來的 `categoryId` 跟資料庫裡的**不一定一樣**:D6 的 `CASE` 在
+`category_source = 'manual'` 時**保留原本的分類**。所以只要分攤者改過分類,
+`plan` 說「餐飲」而那一列其實在「娛樂」——拿 `plan` 的列去跑
+`checkBudgetAlerts`,查的是**那筆錢不在的那個分類**,而它**真的在的那個**永遠
+不會被查。編輯路徑上這不是邊角:D6 存在就是為了讓這兩者不一樣。
+
+所以 repository 的 `create`/`update` 回傳 `SplitExpenseWriteResult`
+(`{ expense, mirrors }`),`mirrors` 來自 upsert 的 `.returning()` —— batch 的
+結果是逐語句回來的,所以拿得到。應用層把**那一組**交給 `writeMirrorAftermath`。
+
+**port 要誠實**:`afterWrite` 的參數名義上是「鏡像列」,那就必須是資料庫裡的
+那些列,否則它的型別在說謊。
 
 ## D19:編輯分帳時,警示查不到「舊分類」
 

@@ -985,6 +985,40 @@ describe("finance HTTP routes", () => {
       expect(ctx.budgetAlertNotifier.messages).toHaveLength(1);
     });
 
+    it("checks the category a recategorised mirror now carries when the split is edited", async () => {
+      // Two things at once, because neither is observable without the other:
+      // the edit path has to run the check at all, and the check has to run
+      // against the category the mirror is *in*. The holder moved their copy
+      // to 娛樂, so the row the payer's edit grows is a 娛樂 row — planning
+      // said 餐飲, and a check on 餐飲 would look at a category holding
+      // nothing and stay silent forever.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      const splitId = await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", DAY, "餐飲");
+      const mirror = await mirrorFor(ctx, holder, splitId);
+      if (!mirror) throw new Error("no mirror was created for the holder");
+      const categories = (await (await ctx.app.request("/api/finance/categories", authed(holder))).json()) as {
+        categories: { id: string; name: string; type: string }[];
+      };
+      const fun = categories.categories.find((category) => category.name === "娛樂" && category.type === "expense")?.id;
+      await ctx.app.request("/api/finance/budgets", authed(holder, "PUT", { category_id: fun, amount: 2000 }));
+      const moved = await ctx.app.request(
+        `/api/finance/transactions/${mirror.id}`,
+        authed(holder, "PUT", { type: "expense", amount: mirror.amount, currency: mirror.currency, category_id: fun, date: mirror.date, note: mirror.note }),
+      );
+      expect(moved.status).toBe(200);
+      // 900 of 2000 is 45%: the fixture is not already over the line, so the
+      // alert below can only come from the edit.
+      expect(ctx.budgetAlertNotifier.messages).toHaveLength(0);
+
+      await editSplitExpenseBetween(ctx, splitId, payer, holder, 3600, "TWD", DAY, "餐飲");
+
+      expect((await mirrorFor(ctx, holder, splitId))?.category_id).toBe(fun);
+      expect(ctx.budgetAlertNotifier.messages).toHaveLength(1);
+      expect(ctx.budgetAlertNotifier.messages[0].userId).toBe(await idOf(ctx.app, holder));
+      expect(ctx.budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月娛樂支出已達預算 8 成" });
+    });
+
     it("records the split even when the alert check itself throws", async () => {
       // The spec's claim is about the HTTP response, so it is asserted here
       // rather than one layer down. `findByUserAndCategory` is the throwing

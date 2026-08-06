@@ -676,6 +676,45 @@ describe("expenses: editing and deleting", () => {
 
     expect((await patch("餐".repeat(101))).status).toBe(400);
   });
+
+  it("clears the category name when a PATCH omits it, like every other field it omits", async () => {
+    // `PATCH` here is a full replacement, not a partial one: it already
+    // requires payer, amount, currency, description, day and split on every
+    // call, and an omitted one is not "keep what was there". `category_name`
+    // follows that rule rather than being the single sticky field, so a
+    // client that leaves it out clears it — and every share holder's mirror
+    // moves to their 其他 with it. Written down because it is the kind of
+    // thing a frontend discovers by losing data.
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await createExpenseAs(ALICE, {
+      payerUserId: aliceId,
+      amount: 900,
+      categoryName: "餐飲",
+      split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+    });
+    const expense = await created.json<{ id: string }>();
+
+    const res = await app.request(`/api/split/expenses/${expense.id}`, {
+      method: "PATCH",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        payer_user_id: aliceId,
+        amount: 900,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+    const read = await app.request(`/api/split/expenses/${expense.id}`, { headers: await authHeader(BOB) });
+    expect(await read.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+  });
 });
 
 describe("GET /api/split/expenses filters", () => {

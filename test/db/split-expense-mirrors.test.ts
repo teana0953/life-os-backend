@@ -144,6 +144,87 @@ describe("split expense mirrors (real Postgres)", () => {
       expect(row?.amount).toBe(1200);
     });
 
+    it("hands back the stored category, not the planned one", async () => {
+      // What the caller runs the share holders' budget-alert checks on. The
+      // planned row says 餐飲 and the stored row is in 娛樂, so a `create`/
+      // `update` that echoed its argument back would have the check look at a
+      // budget the money is not in, and never at the one it is (D6/D19). Only
+      // the statement's own `RETURNING` can tell the two apart.
+      await expenses.create(createInput(), [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)]);
+      await harness.db
+        .update(financeTransaction)
+        .set({ categoryId: FUN_B, categorySource: "manual" })
+        .where(and(eq(financeTransaction.userId, B), eq(financeTransaction.splitExpenseId, E1)));
+
+      const written = await expenses.update(
+        E1,
+        updateFields({ amount: 2400, shares: [{ userId: A, amount: 1200 }, { userId: B, amount: 1200 }] }),
+        [mirror(A, FOOD_A, 1200), mirror(B, FOOD_B, 1200)],
+        NOW,
+        A,
+      );
+
+      const forB = written?.mirrors.find((row) => row.userId === B);
+      expect(forB).toEqual({ userId: B, splitExpenseId: E1, amount: 1200, currency: "TWD", categoryId: FUN_B, day: DAY, note: "dinner" });
+      // A never touched theirs, so for them the two agree — which is what
+      // makes B's row above the difference and not a blanket mismatch.
+      expect(written?.mirrors.find((row) => row.userId === A)?.categoryId).toBe(FOOD_A);
+    });
+
+    it("keeps exactly one mirror per holder when the same expense is edited twice", async () => {
+      // The partial unique index is what stops a second row appearing, and the
+      // upsert is what makes it enforceable: written as a plain insert the
+      // second write collides instead of updating. Narrowing the index and the
+      // `ON CONFLICT` target together is *not* the mutation for this case —
+      // one row per (user, split) survives it — that one is caught by "leaves
+      // the other split's mirror alone" above.
+      await expenses.create(createInput(), [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)]);
+
+      await expenses.update(
+        E1,
+        updateFields({ amount: 2400, shares: [{ userId: A, amount: 1200 }, { userId: B, amount: 1200 }] }),
+        [mirror(A, FOOD_A, 1200), mirror(B, FOOD_B, 1200)],
+        NOW,
+        A,
+      );
+      await expenses.update(
+        E1,
+        updateFields({ amount: 3000, shares: [{ userId: A, amount: 1500 }, { userId: B, amount: 1500 }] }),
+        [mirror(A, FOOD_A, 1500), mirror(B, FOOD_B, 1500)],
+        NOW,
+        A,
+      );
+
+      expect(await mirrorsOf(A)).toHaveLength(1);
+      expect(await mirrorsOf(B)).toHaveLength(1);
+      // The surviving row is the updated one, not a stale first write.
+      expect((await mirrorFor(B, E1))?.amount).toBe(1500);
+    });
+
+    it("removes the mirror of a participant who no longer holds a share, with no group (5.5)", async () => {
+      // The groupless twin of the grouped case below. Here the adapter *does*
+      // load the previous share holders (for the activity audience), so this
+      // one would still pass if the delete were driven off that list — which
+      // is why the grouped fixture exists too, and why neither replaces the
+      // other.
+      await expenses.create(
+        createInput({ shares: [{ userId: A, amount: 600 }, { userId: B, amount: 600 }, { userId: C, amount: 600 }] }),
+        [mirror(A, FOOD_A, 600), mirror(B, FOOD_B, 600), mirror(C, FOOD_C, 600)],
+      );
+
+      await expenses.update(
+        E1,
+        updateFields({ shares: [{ userId: A, amount: 900 }, { userId: B, amount: 900 }] }),
+        [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)],
+        NOW,
+        A,
+      );
+
+      expect(await mirrorsOf(C)).toHaveLength(0);
+      expect(await mirrorsOf(A)).toHaveLength(1);
+      expect(await mirrorsOf(B)).toHaveLength(1);
+    });
+
     it("moves an untouched mirror onto the split's new category (4.6)", async () => {
       // The other direction of the same rule: the mirror write must really
       // set `category_source = 'mirror'`. Left to the column's `'manual'`
