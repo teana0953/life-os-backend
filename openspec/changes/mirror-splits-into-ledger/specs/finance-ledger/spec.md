@@ -4,8 +4,9 @@
 
 A split expense SHALL create one finance transaction per share holder, for
 that holder's own share, in the same atomic write as the split expense
-itself — so the money is visible everywhere personal spending is: the ledger,
-the monthly summary, budgets, budget alerts, trends and net worth. This
+itself — so the money is visible where personal spending is aggregated: the
+ledger listing, the monthly summary, budgets and budget alerts. Net worth and
+its trend read different tables and SHALL be unaffected. This
 requirement's former outcome, that no transaction is created, no longer
 holds; its name is kept so the inversion is explicit rather than silent.
 
@@ -16,15 +17,23 @@ changing them in one place only would make the two views disagree. Its
 `category_id` and `note` SHALL be editable, and once edited SHALL NOT be
 overwritten by later edits to the split.
 
-The mirrored transaction's category SHALL be the share holder's own category
-of the same name as the one chosen on the split, falling back to their 其他
-category, seeding their default categories first if they have none. A
+A split expense SHALL carry an optional category name. The mirrored
+transaction's category SHALL be the share holder's own **expense** category of
+that name, falling back to their 其他 expense category — for an unnamed
+category as well as an unmatched one — and seeding their default categories
+first if they have none. A
 mirrored transaction MAY land on an archived category, unlike a
 user-created one, because the mirror is not a choice and refusing it would
 drop a real expense.
 
 The payer SHALL be mirrored only for their own share; fronting money for
-others is not spending. A repayment SHALL NOT be mirrored.
+others is not spending. A repayment SHALL NOT be mirrored. A zero share SHALL
+NOT be mirrored: owing nothing is not spending, and a finance transaction's
+amount must be positive.
+
+Writing the mirrors SHALL trigger each share holder's budget-alert check, on
+the same best-effort terms as a transaction they wrote themselves: a failing
+check or push SHALL NOT fail the split write.
 
 A split expense in a currency outside the finance whitelist SHALL NOT be
 mirrored, because a transaction cannot hold it. The system SHALL still
@@ -72,6 +81,35 @@ This scenario is kept under its former name so the inversion is loud.
   their monthly summary expense total includes it, and it consumes both the
   overall and the chosen category's budget
 
+#### Scenario: A share can cross a budget threshold and notify
+
+- **WHEN** a share pushes a holder's monthly spending past 80% of a budget
+- **THEN** that holder is notified, once, exactly as if they had recorded the
+  expense themselves
+
+#### Scenario: A split write survives a failing alert
+
+- **WHEN** the budget-alert check or its push delivery throws while a split is
+  being recorded
+- **THEN** the split expense, its shares and its mirrors are all stored and
+  the API responds success
+
+#### Scenario: A zero share gets no transaction
+
+- **WHEN** a participant's share on a split is zero
+- **THEN** no transaction is created for them
+
+#### Scenario: An expense category is chosen, never an income one
+
+- **WHEN** the split names a category whose name exists for the share holder
+  as both an expense and an income category
+- **THEN** the mirrored transaction uses the expense one
+
+#### Scenario: Net worth does not move
+
+- **WHEN** a split expense is recorded
+- **THEN** the user's net worth and its trend are unchanged
+
 #### Scenario: Editing the split moves both mirrors
 
 - **WHEN** the payer changes the dinner's amount, date or participants
@@ -88,8 +126,16 @@ This scenario is kept under its former name so the inversion is loud.
 #### Scenario: The ledger refuses to rewrite a split's facts
 
 - **WHEN** a share holder tries to change a mirrored transaction's amount,
-  date or currency, or to delete it, through the finance API
+  date or currency to a different value, or to delete it, through the finance
+  API
 - **THEN** the request is rejected and the transaction is unchanged
+
+#### Scenario: Recategorising a mirror through a full-replace update works
+
+- **WHEN** a share holder PUTs a mirrored transaction with a new category and
+  the same amount, date and currency it already has
+- **THEN** the update succeeds — resending unchanged values is how a
+  full-replace update expresses "only the category changed"
 
 #### Scenario: A share holder who has never opened the ledger still gets one
 
@@ -115,3 +161,97 @@ This scenario is kept under its former name so the inversion is loud.
 - **THEN** the split-spending report shows TWD marked as already counted in
   the user's transactions, so adding it to the summary total would
   double-count
+
+### Requirement: Monthly summary aggregates per currency without conversion
+
+The system SHALL provide GET `/api/finance/summary?month=YYYY-MM` returning,
+for the authenticated user's transactions in that month: per-currency totals
+(`expense`, `income`, and `net` = income − expense), and per-category
+per-currency amounts. Amounts in different currencies SHALL be reported as
+separate rows and never converted or mixed. Aggregation SHALL happen in the
+database query, and a month with no transactions SHALL return empty lists.
+
+The user's own shares on split expenses SHALL be included, because they are
+transactions now. They SHALL NOT be added a second time from the split tables.
+
+#### Scenario: Summary splits currencies and balances totals
+
+- **WHEN** a user has July expenses of TWD 300 and USD 1000 (cents) and July
+  income of TWD 50000, and calls GET `/api/finance/summary?month=2026-07`
+- **THEN** the totals contain a TWD row (expense 300, income 50000, net 49700)
+  and a USD row (expense 1000, income 0, net -1000), each currency separate
+- **AND** `by_category` attributes the amounts to their categories per currency
+
+#### Scenario: Summary excludes other users and other months
+
+- **WHEN** user B calls the summary for a month where only user A has data,
+  or user A calls it for an empty month
+- **THEN** the response contains empty `totals` and `by_category`
+
+#### Scenario: Summary is unaffected by split expenses
+
+This scenario is kept under its former name so the inversion is loud.
+
+- **WHEN** the user holds a TWD share on a split expense in the month
+- **THEN** the summary's expense total includes it exactly once, and equals
+  the overall budget's `spent` for that month
+
+### Requirement: Finance transactions are per-user CRUD records
+
+The system SHALL let an authenticated user create, list, update, and delete
+finance transactions. A transaction records `type` (`expense` or `income`), a
+positive integer `amount` in the currency's minor-or-natural unit (TWD in 元,
+USD in cents), a `currency` from the supported whitelist (defaulting to `TWD` on create;
+required on full-replace update, so an omitted currency can never silently
+rewrite a foreign-currency transaction), a `category_id` referencing one of
+the user's finance categories, a `date` as a `YYYY-MM-DD` string, and an
+optional `note`. Listing SHALL require a `from`/`to` date range and return
+the user's transactions in that range.
+Every operation SHALL be scoped to the authenticated user: another user's
+transaction SHALL be indistinguishable from a missing one (404).
+
+A transaction mirrored from a split expense SHALL be identified as such in
+every response that returns it, and SHALL NOT be deletable or have its
+`amount`, `date` or `currency` changed through this API.
+
+A successful create or update of a TWD expense transaction SHALL additionally
+trigger the budget-alert check defined by the `finance-budgets` capability;
+this side effect is best-effort and SHALL NOT change the operation's response
+or failure behavior.
+
+#### Scenario: Create and list a transaction
+
+- **WHEN** a user POSTs a valid expense transaction for `2026-07-15`
+- **THEN** the response contains the stored transaction with its id
+- **AND** GET `/api/finance/transactions?from=2026-07-01&to=2026-07-31` includes it
+
+#### Scenario: Validation rejects bad input
+
+- **WHEN** a user POSTs a transaction with `amount` of `0` or negative, a
+  currency outside the whitelist, a malformed `date`, or a missing
+  `category_id`
+- **THEN** the request fails with 400 and nothing is stored
+
+#### Scenario: Users are isolated
+
+- **WHEN** user B attempts to GET, PUT, or DELETE a transaction created by user A
+- **THEN** the response is 404 and A's data is unchanged
+
+#### Scenario: Category must match transaction type
+
+- **WHEN** a user POSTs an `expense` transaction whose `category_id` is an
+  `income` category, or a category belonging to another user
+- **THEN** the request fails (400 for type mismatch, 404 for another user's
+  category) and nothing is stored
+
+#### Scenario: Write succeeds even when the alert side effect fails
+
+- **WHEN** a user POSTs a valid TWD expense and the budget-alert check or its
+  push delivery throws
+- **THEN** the transaction is stored and the response is the normal success
+
+#### Scenario: A mirrored transaction is marked in the listing
+
+- **WHEN** a share holder lists transactions for a month containing a split
+- **THEN** the mirrored transaction is present and identifiable as coming
+  from a split, so a client can present it as partly locked
