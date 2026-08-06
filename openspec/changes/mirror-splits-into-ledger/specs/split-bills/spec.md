@@ -114,3 +114,68 @@ participants, who are the ones who need to read it.
 - **WHEN** an expense is recorded with a category name, and another without
 - **THEN** both are created, and reading them back returns the name that was
   given and nothing for the one that had none
+
+### Requirement: The split queries are proven against a real database
+
+The queries that decide who can see a split record and how much anyone owes
+SHALL be verified by executing them against a real PostgreSQL engine with the
+project's own migrations applied — not against a test double. Each such test SHALL be shown to fail
+when the part of the query it covers is made wrong, so that passing means the
+query is right rather than that nothing was checked. A behaviour that holds
+**by construction** rather than by a query — one table simply not being read
+by another query — SHALL NOT be written as a test here, since no mutation
+could make it fail; state it where the code is instead.
+
+The writes that keep a share holder's mirrored transaction in step with the
+split SHALL be proven the same way — the upsert that preserves a category the
+user chose, the delete that removes a dropped participant's mirror, the
+partial unique index that stops a second mirror appearing, and the cascade
+that removes mirrors with the expense. These live in SQL, so a test driven
+through an in-memory repository would only prove the fake agrees with
+itself.
+
+#### Scenario: Visibility is proven, not assumed
+
+- **WHEN** the expense listing query runs for someone who is neither a payer,
+  a share holder, nor a member of the expense's group
+- **THEN** the expense is absent from the result, executed against a real
+  database
+
+#### Scenario: A repayment moves the balance in the proven direction
+
+- **WHEN** someone owes 450 and repays 300, and the balance query is executed
+  against a real database
+- **THEN** the remaining balance is 150 — and reversing the settlement's sign
+  in the query makes this fail
+
+#### Scenario: The payer's own share is treated oppositely in the two queries
+
+- **WHEN** a payer holds a share in their own expense
+- **THEN** the balance query excludes it while the split-spending query
+  includes it, both executed against a real database
+
+#### Scenario: Currencies are never combined
+
+- **WHEN** a pair has balances in two currencies and settles one
+- **THEN** only that currency changes, executed against a real database
+
+#### Scenario: An edit keeps a user's own category, proven against SQL
+
+- **WHEN** a share holder has recategorised their mirror and the expense's
+  amount is then edited, executed against a real database
+- **THEN** the mirror's amount changes and its category does not — and making
+  the update overwrite the category unconditionally makes this fail
+
+#### Scenario: A dropped participant's mirror is removed, proven against SQL
+
+- **WHEN** an expense in a group is edited so a participant no longer holds a
+  share, executed against a real database
+- **THEN** their mirror is gone — and removing the delete from the write makes
+  this fail
+
+#### Scenario: A second mirror cannot appear
+
+- **WHEN** the same expense is edited twice, executed against a real database
+- **THEN** each share holder still has exactly one mirror — and dropping the
+  partial unique index makes this fail
+

@@ -26,7 +26,9 @@
 
 ### 正確的形狀
 
-在 **split 的 domain** 定義它需要的東西,由 finance 提供實作。**依賴方向是 finance → split,split 不 import finance。**
+在 **split 的 domain** 定義它需要的東西,由 finance 提供實作。**依賴方向是 finance → split,split 的 domain/application 不 import finance。**
+
+**但 split 的 adapter 會 import `shared/db/schema` 的 `financeTransaction`** 才能把列放進 batch。CLAUDE.md 允許 adapter 用 `shared/db`,**但這件事要寫出來**,否則之後會有人把它「修掉」。
 
 ```ts
 // src/contexts/split/domain/shares-mirror.ts
@@ -35,17 +37,39 @@ export interface ShareMirrorRow {
   categoryId: string; day: string; note: string | null;
 }
 
+/** `plan` 需要的分帳事實。id 必須先產生 —— 見下方。 */
+export interface MirrorPlanInput {
+  splitExpenseId: string; currency: string; day: string;
+  description: string; categoryName: string | null;
+  shares: { userId: string; amount: number }[];
+}
+
 export interface SharesMirror {
   /** 解析每個分攤者的分類、決定誰有鏡像。批次寫入前呼叫。 */
-  plan(expense: MirrorablePlanInput): Promise<ShareMirrorRow[]>;
+  plan(input: MirrorPlanInput): Promise<ShareMirrorRow[]>;
   /** 批次寫入成功後呼叫。盡力而為,失敗不影響分帳。 */
   afterWrite(rows: ShareMirrorRow[]): Promise<void>;
 }
 ```
 
-- `createExpense` / `updateExpense` / `deleteExpense` **應用層**呼叫 `plan`,把結果傳給 repository
+- `createExpense` / `updateExpense` **應用層**呼叫 `plan`,把結果傳給 repository(`deleteExpense` 不呼叫 —— 刪除靠 cascade,沒有東西要 plan)
+- **`id` 要從 repository 呼叫裡提出來**:現在是 `deps.expenses.create({ id: crypto.randomUUID(), … })`(`create-expense.ts:36`),而 `plan` 需要 id 才能填 `splitExpenseId`
 - repository 的簽章變成 `create(input, mirrors)` —— **它不算鏡像,只負責把拿到的列放進同一個 batch**
 - 寫入成功後應用層呼叫 `afterWrite`,那裡面才去跑每個分攤者的預算警示
+
+### 接線:在 `createApp` 裡組,不加新 option
+
+`createApp` **已經**同時持有 `financeCategoryRepository` 與 `financeTransactionRepository`(`app.ts:191-192`)。`FinanceSharesMirror` 用它們在 `createApp` 裡組出來即可。
+
+**不要給 `CreateAppOptions` 加 `sharesMirror`**:有 **22 個測試檔**呼叫 `createApp`,加 option 等於全部要改,而且 `finance.test.ts` 會傳一個 fake 進去 —— 那就把分類解析變回不可測。在 `createApp` 裡組,`finance.test.ts` **自動拿到真的實作**。
+
+這跟既有的 `budgetAlertDeps()`(`routes/finance.ts:143`)是同一個形狀:具體 adapter 由 `src/index.ts` 注入,`createApp` 只是把它們組成一個服務。
+
+### fake 也必須寫進 finance 讀得到的地方
+
+`InMemorySplitExpenseRepository`(`fakes.ts:120`)只有 `rows: SplitExpense[]`,而 `/api/finance/transactions`、`/summary`、`/budgets` 讀的是 **`InMemoryFinanceTransactionRepository`**(另一個物件,`test/contexts/finance/fakes.ts:69`)。
+
+**fake 若把鏡像存進自己的 list,finance 的端點一個都看不到** —— 那就是 D2 想修的那個問題往下搬一層。**fake 的建構子要收 `InMemoryFinanceTransactionRepository`,鏡像寫進去。**
 
 ### 這個形狀解掉了什麼
 
@@ -90,9 +114,15 @@ finance_transaction
   + unique index (user_id, split_expense_id) where split_expense_id is not null
 ```
 
-**更新必須寫成 `INSERT … ON CONFLICT (user_id, split_expense_id) … DO UPDATE`,不能沿用 share 的「刪光再插」。** 刪光再插會**炸掉 `category_source = 'manual'`**(D6),而且唯一索引擋不住任何東西 —— 那條索引的守門就變成不可能失敗的。
+**更新必須寫成 `INSERT … ON CONFLICT … DO UPDATE`,不能沿用 share 的「刪光再插」。**
+
+衝突目標要**重複索引的述詞**(部分唯一索引的規定):`onConflictDoUpdate({ target: [userId, splitExpenseId], targetWhere: sql for split_expense_id is not null, … })`。既有的 `drizzle-finance-budget-repository.ts:51-55` 就是這個形狀。
+
+「只在 `category_source = 'mirror'` 時覆寫 `category_id`」**不能寫成 `DO UPDATE … WHERE`** —— 那會跳過**整列**,連 amount 都不更新。要寫成 SET 清單裡的 `CASE`。 刪光再插會**炸掉 `category_source = 'manual'`**(D6),而且唯一索引擋不住任何東西 —— 那條索引的守門就變成不可能失敗的。
 
 **編輯後不再是分攤者的人,他的鏡像要刪掉**:batch 裡帶一條 `delete … where split_expense_id = ? and user_id not in (…)`。這是集合式的,不需要知道編輯前是誰 —— 重要,因為 adapter **刻意不讀** grouped expense 的舊分攤者(`:182-183`「Only a groupless entry freezes an audience, so a grouped expense never pays for this query」),而那個最佳化不該為了這個 change 死掉。
+
+**batch 裡的語句順序:鏡像的 insert 必須排在 `expenseInsert` 之後。** FK `finance_transaction.split_expense_id → split_expense(id)` 是立即檢查的,排前面就是外鍵錯誤。這個 repo 別的地方對順序寫得很重(`:270`「**ORDER: the insert must come BEFORE the delete, and this is not a style choice**」),這裡也一樣。
 
 **刪除分帳靠 `on delete cascade`,不靠應用層記得。** `delete` 是單一 `db.delete(splitExpense)`(`:326`),資料庫保證比程式碼保證可靠。
 
@@ -171,3 +201,7 @@ split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓�
 `harness.ts:116` 的 `TABLES` 一張 finance 表都沒有,`test/db/` 下也沒有建構過任何 finance repository。這個 change 需要在 PGlite 層證明的東西(原子性、upsert、cascade、唯一索引)**全部需要先把那條路接起來**。
 
 好消息:`withBatchShim`(`harness.ts:100-114`)是真的 Postgres 原子性,rollback 本身被 `harness-batch.test.ts` 釘住;部分唯一索引在這個 stack 已經證明可行(`drizzle/0020_daffy_pride.sql:25`)。
+
+## D16:封存群組裡的分帳仍然可編輯,所以仍然會改寫別人的帳本
+
+`update-expense.ts:43` 傳 `checkArchived: false`,規格也明說封存群組裡的支出保持可修正。**這是對的,不改** —— 但它代表封存群組裡的一次編輯照樣會動到別人的 `finance_transaction`。沒寫下來的話會被當成漏洞。

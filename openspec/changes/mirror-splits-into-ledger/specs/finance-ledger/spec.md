@@ -143,12 +143,6 @@ This scenario is kept under its former name so the inversion is loud.
 - **THEN** their default categories are seeded and the mirrored transaction
   is created
 
-#### Scenario: A mirror may land on an archived category
-
-- **WHEN** a share holder has archived the category the split names
-- **THEN** their mirrored transaction still uses it, while creating a
-  transaction on that category through the API is still rejected
-
 #### Scenario: An unsupported currency is reported, not mirrored
 
 - **WHEN** a split is recorded in a currency outside the finance whitelist
@@ -255,3 +249,50 @@ or failure behavior.
 - **WHEN** a share holder lists transactions for a month containing a split
 - **THEN** the mirrored transaction is present and identifiable as coming
   from a split, so a client can present it as partly locked
+
+### Requirement: Finance categories are per-user with lazy defaults and soft archive
+
+The system SHALL manage per-user finance categories with `name`, `type`
+(`expense` or `income`), `icon`, `sort_order`, and an `archived` flag. The
+defaults — expense: 餐飲, 交通, 購物, 娛樂, 居住, 醫療, 其他; income: 薪資,
+獎金, 利息, 其他 — SHALL be seeded the first time a user has none (archived
+included), whether that is because they listed their categories or because a
+split expense needs to be mirrored into their ledger. This seeding SHALL be
+idempotent.
+
+Categories SHALL never be hard-deleted through the API: archiving hides a
+category from new use while existing transactions keep referencing it. An
+archived category SHALL NOT accept new transactions **created through this
+API**, and updating a transaction SHALL reject switching it onto an archived
+category — but a transaction already referencing an archived category SHALL
+remain editable (amount, date, note) as long as its category is unchanged. A
+transaction mirrored from a split expense MAY land on an archived category,
+because it is not a choice the user is making and refusing it would drop a
+real expense. A category's `type` SHALL be immutable after creation.
+
+#### Scenario: First list seeds defaults idempotently
+
+- **WHEN** a user with no categories calls GET `/api/finance/categories` twice
+- **THEN** both responses contain exactly the default set, seeded once
+
+#### Scenario: Archived category blocks new transactions but keeps history readable and editable
+
+- **WHEN** a user archives a category that has transactions, then POSTs a new
+  transaction with that category
+- **THEN** the POST fails with 400
+- **AND** listing transactions still returns the existing ones referencing it
+- **AND** updating an existing transaction's amount or note while keeping that
+  archived category succeeds, but switching a transaction onto the archived
+  category fails with 400
+
+#### Scenario: Defaults are seeded for a share holder who never opened the ledger
+
+- **WHEN** a user with no categories at all is given a share on a split
+  expense
+- **THEN** their defaults are seeded and their mirrored transaction is created
+
+#### Scenario: A mirror may land on an archived category
+
+- **WHEN** a share holder has archived the category a split names
+- **THEN** their mirrored transaction still uses it, while creating a
+  transaction on that category through the API is still rejected
