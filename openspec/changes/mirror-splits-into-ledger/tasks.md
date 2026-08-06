@@ -7,7 +7,7 @@
 ## 0. 先決定,再動手
 
 - [x] 0.1 `split-into-budget` 已刪除。確認 repo 裡沒有殘留的 `SplitSpentLookup`、`includes_split`。
-- [ ] 0.2 **數 `select count(*) from split_expense`**(D14)。是 0 就把第 10 節整段砍掉並寫進 PR;不是 0 就照第 10 節做。**要真的數,不要憑印象。**
+- [x] 0.2 **數過了(2026-08-06,對 `.dev.vars` 的 Neon 連線跑唯讀 count):`split_expense` = 0、`split_share` = 0。** 第 10 節整段不做,寫進 PR。
 
 ## 1. 分帳加分類欄位(D1)—— 這是新功能,不是接線
 
@@ -105,12 +105,9 @@
 - [x] 9.2 **突變:白名單外整筆失敗**,一條 THB 分帳的測試必須紅。
 - [x] 9.3 `GET /api/finance/split-spending` 每個幣別標明是否已計入交易。**突變:標記寫死成同一個值**,一條**同時有 TWD 與 THB 分帳**的測試必須紅 —— 只測一種幣別的話常數會活下來。
 
-## 10. 回填(**只在 0.2 數出來不是 0 時才做**)
+## 10. 回填 —— **不做**
 
-- [ ] 10.1 **不能寫成 migration。** `drizzle/*.sql` 拿不到 `SharesMirror`、拿不到任何 JS。要做就是一支一次性腳本走 D2 的 `plan`。
-- [ ] 10.2 **不呼叫 `afterWrite`** —— 否則一次噴出一堆歷史通知。**這條沒有突變測試**:腳本只跑一次、沒有測試會再跑到它。**用 code review 擋,並在 PR 裡明說它只有 review 擋著。**
-- [ ] 10.3 白名單外幣別、零元分攤跳過。
-- [ ] 10.4 可重跑(唯一索引擋重複)。PR 裡寫明使用者會看到過去月份的數字變高。
+- [x] 10.1 0.2 數出 `split_expense` = 0,上線時分帳表是空的,**沒有東西要回填,新舊界線不存在**。PR 裡寫明這件事,以及它是數出來的而不是假設的。
 
 ## 11. `test/db` 要先接起來(D15)
 
@@ -133,5 +130,5 @@
 
 ## 14. 不要寫的測試
 
-- [ ] 14.1 **「淨值不動」不要寫成測試。** 那是 by construction 的(networth 的 adapter 根本不讀 `finance_transaction`,D12),沒有任何突變能讓它紅。split-bills 那條「真資料庫驗證」的要求**明文禁止**這種形狀:「state it where the code is instead」。**寫在註解裡。**
+- [x] 14.1 **「淨值不動」不要寫成測試。** 那是 by construction 的(networth 的 adapter 根本不讀 `finance_transaction`,D12),沒有任何突變能讓它紅。split-bills 那條「真資料庫驗證」的要求**明文禁止**這種形狀:「state it where the code is instead」。**寫在註解裡**(已寫在 `drizzle-networth-repository.ts` 開頭)。
 - [ ] 14.2 同理,5.7(batch 語句順序)、8.4(結清)、10.2(回填不發警示)都已標明沒有突變驗證。**不要為了湊數補上假的。**

@@ -5,6 +5,13 @@ import type { CreateNetWorthAccountInput, NetWorthAccount, NetWorthKind, UpdateN
 import type { MonthlyNetWorthTotals, NetWorthRepository } from "../domain/networth-repository";
 import type { NetWorthAccountValue, NetWorthSnapshot, NetWorthTrendPoint, UpsertNetWorthSnapshotInput } from "../domain/networth-snapshot";
 
+/**
+ * Net worth reads only its own two tables — never `finance_transaction`. That
+ * is why mirroring split shares into the ledger leaves net worth and its
+ * trend untouched, and why there is no test asserting so: nothing in that
+ * change could make such a test fail, and a guard that cannot fail is worse
+ * than none (`split-bills` spec: state it where the code is instead).
+ */
 type NetWorthAccountRow = typeof financeNetworthAccount.$inferSelect;
 type NetWorthSnapshotRow = typeof financeNetworthSnapshot.$inferSelect;
 

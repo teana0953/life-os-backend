@@ -208,7 +208,7 @@ split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓�
 
 回填的成本不在 SQL,在**分類解析要再實作一次**,而它在 production 只跑一次、沒有測試會再跑到它。而且它**不能寫成 migration** —— migration 是 `drizzle/*.sql`,拿不到 `SharesMirror`、拿不到任何 JS。要做就是一支一次性腳本走 D2 的 `plan`。
 
-分帳功能目前還沒有人在用。**上線前查 `select count(*) from split_expense`:**
+分帳功能目前還沒有人在用。**已查(2026-08-06):`split_expense` = 0、`split_share` = 0 —— 回填不做。** 下面兩條保留,說明當初怎麼決定的:
 
 - **是 0** → 整段砍掉,PR 裡寫明「上線時分帳表是空的,沒有回填,新舊界線不存在」
 - **不是 0** → 用腳本回填,**不呼叫 `afterWrite`**(否則一次噴出一堆歷史通知),並寫明使用者會看到過去月份的預算 `spent` 變高、summary 變
