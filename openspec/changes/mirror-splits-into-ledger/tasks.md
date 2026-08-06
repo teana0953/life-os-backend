@@ -55,6 +55,8 @@
 - [x] 4.3 **這條在 `test/db`(PGlite),不在 HTTP 層。** 覆寫語意住在 `ON CONFLICT DO UPDATE` 的 SET 清單裡,HTTP 層施加突變只能改 in-memory fake —— 一個跟自己一致的 fake,證明不了生產的 SQL。
 - [x] 4.4 **突變:SET 清單裡的 `CASE` 改成無條件覆寫 `category_id`**,一條「使用者改分類 → 付款人改金額 → **分類不變且金額有變**」的 PGlite 測試必須紅。**金額那半一定要斷言** —— 少了它,「乾脆什麼都不更新」這個突變會活下來。
 - [x] 4.6 **另一個方向也要守:突變「鏡像寫入時不設 `category_source = 'mirror'`」。** 沒設的話欄位吃預設值 `'manual'`,`CASE` 永遠不觸發,**鏡像的分類從此再也不跟著分帳走**。現有的 scenario 全部只斷言「保留」,一條都不會紅。要一條「分帳原本是餐飲,付款人改成娛樂,分攤者從沒動過 → 鏡像的分類跟著變成娛樂」的測試。
+- [x] 4.7 **`category_source` 本身不能進 SET 清單。** 加 `categorySource: sql`'mirror'`` **1247 條測試全綠** —— `ON CONFLICT DO UPDATE` 的每個 SET 運算式都對**舊列**求值,所以第一次編輯時 `CASE` 照樣保住分類,第二次才把使用者的選擇蓋掉。既有的每一條都只編輯一次。要一條「重新分類後**連續編輯兩次**」的 PGlite 測試(`split-expense-mirrors.test.ts`「keeps that category through a second edit」),並且**要斷言 `category_source` 仍是 `'manual'`**。突變已驗:紅。
+- [x] 4.8 **`note` 不進 SET 清單也要有守門(D18)。** 加 `note: sql`excluded.note`` 全綠,因為 fixture 的 planned 與 stored note 都是 `"dinner"`,兩者分不出來。`mirror()` 的 note 改成參數,寫一條「分攤者改過 note → 付款人改分帳描述 → note 不變、金額照樣跟著走」。突變已驗:紅。
 - [x] 4.5 **`category_source` 的條件不能寫成 `DO UPDATE … WHERE`** —— 那會跳過整列,連 amount 都不更新。要寫成 SET 清單裡的 `CASE`。4.4 的金額斷言就是擋這個的。
 
 ## 5. Schema(D5)
@@ -94,6 +96,9 @@
 - [x] 7.4 **在後端擋** —— 前端在另一個 repo,API 是公開的。
 - [x] 7.5 **突變:只擋 delete 不擋 update**(以及反過來),兩個方向各要有一條測試紅。
 - [x] 7.6 **突變:改成「帶了 amount 就拒絕」**,一條「重送相同的 amount/date/currency 只改分類 → 200」的測試必須紅。
+- [x] 7.8 **`categoryChanged` 那半要有守門。** 拿掉 `&& categoryChanged`(任何 `PUT` 都標 `'manual'`)全綠 —— 但 `PUT` 是全取代,只改 note 的客戶端會重送同一個 `category_id`,那個突變會讓那筆鏡像的分類**永遠**凍住。要一條「只改 note 的 `PUT` → 付款人改分帳的分類 → 鏡像跟著走」。突變已驗:紅。
+- [x] 7.9 **值的比較擋不住比較完到寫入之間那一段(D7)。** `update-transaction.ts` 是先讀再全取代,沒有鎖也沒有版本欄位:分攤者讀到 900、付款人的編輯把它變成 1200、分攤者的 `PUT` 把 900 無條件寫回去 —— 帳本 900、分帳 1200,永久而且沒有錯誤。repository 的 `update` 多收 `expected`(`type`/`amount`/`currency`/`date`),鏡像才傳,匹配不到就答 **409 `MirroredTransactionChangedUnderneath`**(不是 400:請求當時合法,重讀再送可能成功)。**守門在應用層** —— 交錯只能在 `updateTransaction` 自己那次讀之後製造(`RacingTransactionRepository`),HTTP 層碰不到那個縫;**SQL 那半在 `test/db`**,因為 in-memory 的判斷只能跟自己一致。兩個突變都驗過:拿掉 `expected` 參數 → 紅;拿掉 adapter WHERE 裡的述詞 → 紅。**反向也要一條**「沒人來搶就照常寫入」,否則「永遠拒絕」活得下來。
+- [x] 7.10 **`deleteTransaction` 的擁有權檢查(`|| existing.userId !== userId`)在一般列上看不見** —— `repository.delete` 本來就是 owner-scoped,拿掉照樣 404。**別人的鏡像**才是差別:那會答 400 `MirroredTransactionReadOnly`,等於告訴陌生人「這個 id 存在,而且是一筆分帳」。要一條應用層測試。突變已驗:紅。
 - [x] 7.7 回應要標明這筆來自分帳(`GET` 列表也要),讓前端能把欄位鎖起來。
 
 ## 8. 零元分攤、結清、墊錢(D8、D9)

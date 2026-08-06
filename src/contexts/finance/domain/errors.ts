@@ -24,3 +24,13 @@ export class FinanceBudgetNotFound extends Error {}
  * error in this context already answers 400 through the same boundary.
  */
 export class MirroredTransactionReadOnly extends Error {}
+
+/**
+ * A mirrored transaction's split changed between the moment its facts were
+ * compared against the request and the moment the row would have been
+ * written, so the write matched nothing and was not performed (design.md D7).
+ * Mapped to 409, not 400: the request was valid when it was made and the same
+ * request re-sent against the current row may well succeed, which is the one
+ * thing a client needs to be told apart from "this edit is not allowed".
+ */
+export class MirroredTransactionChangedUnderneath extends Error {}

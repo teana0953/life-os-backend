@@ -73,11 +73,12 @@ function mirrorToRow(mirror: ShareMirrorRow) {
 }
 
 /**
- * The columns a written mirror has to hand back. `category_id` is the one that
- * can differ from what was planned — the upsert below keeps the stored value
- * while the owner has recategorised the row — and the caller's budget check
- * runs off it, so it has to come from the statement's own `RETURNING` rather
- * than from the plan.
+ * The columns a written mirror has to hand back. Two of them can differ from
+ * what was planned: `category_id`, which the upsert below keeps at its stored
+ * value while the owner has recategorised the row, and `note`, which the
+ * upsert never overwrites at all once the owner has edited it (D18). The
+ * caller's budget check runs off the category, so it has to come from the
+ * statement's own `RETURNING` rather than from the plan.
  */
 const MIRROR_RETURNING = {
   userId: financeTransaction.userId,

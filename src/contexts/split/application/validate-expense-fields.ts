@@ -59,7 +59,7 @@ export const MAX_MINOR_UNITS = 2147483647;
  * participant's own categories, and an unbounded one would let a payer write
  * an arbitrarily large string into other people's lookups.
  */
-export const MAX_CATEGORY_NAME_LENGTH = 100;
+const MAX_CATEGORY_NAME_LENGTH = 100;
 
 /**
  * An empty name means "none" — one fewer shape for callers to distinguish,

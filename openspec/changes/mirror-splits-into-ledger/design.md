@@ -167,6 +167,40 @@ finance_transaction
 
 `DELETE` 一律拒絕。**在後端擋** —— 前端在另一個 repo,API 是公開的。
 
+### 值的比較擋不住「比較完到寫入之間」那一段
+
+上面整段講的是**比較**,而 `updateTransaction` 是**先讀、再全取代**,中間沒有鎖、
+沒有版本欄位。付款人的分帳編輯可以剛好落在那個縫裡:
+
+1. 分攤者讀到鏡像 amount 900
+2. 付款人把分帳改成 2400,鏡像變成 1200(commit 了)
+3. 分攤者的 `PUT` 帶著 900 進來 —— 對他讀到的那一列來說**完全合法**,值一樣,
+   比較通過 —— 然後**無條件**把 900 寫回去
+
+結果是帳本說 900、分帳說 1200,**永久、而且沒有任何錯誤**。這正是半唯讀規則要
+消滅的那種分歧,而且是走**唯一被允許的那條編輯路徑**做出來的。比較本身修不了
+這件事:它比的是一份已經過期的快照。
+
+**決定:把比較用的那些值帶進寫入的 WHERE。** repository 的 `update` 多收一個
+`expected`(`type`/`amount`/`currency`/`date`),只有鏡像會傳;讀與寫因此變成
+同一個述詞下的一件事,中途被改過的列**匹配不到**,而不是被蓋掉。
+
+**匹配不到要答錯誤,不是靜默什麼都不做。** 兩種原因要分開:列還在(分帳動了,
+重讀再送有機會成功)→ `MirroredTransactionChangedUnderneath`,HTTP **409**;
+列不在了(分帳被刪、鏡像跟著 cascade 走了)→ 既有的 404。**409 不是 400**:
+400 說「這個編輯永遠不允許」,而這裡的請求當時是合法的,客戶端需要分得出「重讀
+再試」跟「不准」。
+
+**為什麼不用版本欄位或 `SELECT FOR UPDATE`**:`drizzle-orm/neon-http` 沒有
+`transaction()`,`FOR UPDATE` 拿到的鎖出了那一句就沒了;而版本欄位要多一個 column
+和一次 migration,換來的保證跟「把比較過的值當述詞」一樣 —— 這裡鎖住的四個欄位
+本來就是不可變的那些,它們沒變就等於沒人動過這一列的分帳事實。
+
+**這條的守門在應用層**(`transactions.test.ts`「refuses to write values the split
+has already moved past」):交錯只能在 `updateTransaction` 自己的那次讀之後、寫之前
+製造出來,HTTP 層碰不到那個縫。**SQL 那半在 `test/db`** —— in-memory 的 repository
+用 JavaScript 做同一個判斷,只能證明它跟自己一致。
+
 ## D8:零元分攤**不產生鏡像**
 
 split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓分攤裡真的不欠錢是真實情況」,CHECK 是 `amount >= 0`)。finance 要求 `amount > 0`(`validateTransactionFields:15`),而 `finance_transaction.amount` **沒有 CHECK**,所以繞過應用層的 SQL 插入會靜默寫進一筆 0 元交易。

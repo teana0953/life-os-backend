@@ -19,6 +19,13 @@ changing them in one place only would make the two views disagree. Its
 `category_id` and `note` SHALL be editable, and once edited SHALL NOT be
 overwritten by later edits to the split.
 
+An edit to a mirrored transaction SHALL be written only while those locked
+fields still hold the values the request was checked against. If the split
+changed in the meantime, the edit SHALL be refused with a conflict the caller
+can retry after re-reading, rather than applied — applying it would put the
+stale values back and leave the ledger and the split disagreeing permanently,
+with no error, through the one edit this API allows.
+
 A split expense SHALL carry an optional category name. The mirrored
 transaction's category SHALL be the share holder's own **expense** category of
 that name, falling back to their 其他 expense category — for an unnamed
@@ -141,6 +148,15 @@ This scenario is kept under its former name so the inversion is loud.
   the same amount, date and currency it already has
 - **THEN** the update succeeds — resending unchanged values is how a
   full-replace update expresses "only the category changed"
+
+#### Scenario: A split edit that lands mid-update is not silently reverted
+
+- **WHEN** a share holder's update of their mirrored transaction is checked
+  against the amount they read, and the payer's edit to the split commits
+  before that update is written
+- **THEN** the update is refused as a conflict and none of it is applied — not
+  even the category change, which alone would have been allowed — and the
+  transaction still carries the split's new amount
 
 #### Scenario: A renamed 其他 does not break someone else's split
 

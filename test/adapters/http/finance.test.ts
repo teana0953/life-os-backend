@@ -12,6 +12,7 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { FinanceTransaction } from "../../../src/contexts/finance/domain/finance-transaction";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import {
@@ -185,9 +186,32 @@ class InMemoryUserRepository implements UserRepository {
   }
 }
 
-function buildApp() {
+/**
+ * Lets `findById` hand back a snapshot and then let something else commit,
+ * which is the only way to stage the window inside `updateTransaction`: it
+ * reads the row, compares the split's facts, then writes. Nothing a request
+ * can do reaches between those two, so the interleaving has to be injected at
+ * the repository. The snapshot is taken *before* the hook runs — a real
+ * `SELECT` returns values, not a live row — or the use case's own value
+ * comparison would reject first and the case would prove nothing about the
+ * write.
+ */
+class RacingFinanceTransactionRepository extends InMemoryFinanceTransactionRepository {
+  onNextRead: (() => Promise<void>) | null = null;
+
+  override async findById(id: string): Promise<FinanceTransaction | null> {
+    const row = await super.findById(id);
+    const snapshot = row === null ? null : { ...row };
+    const hook = this.onNextRead;
+    this.onNextRead = null;
+    if (hook) await hook();
+    return snapshot;
+  }
+}
+
+function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTransactionRepository } = {}) {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
-  const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
+  const financeTransactionRepository = overrides.financeTransactionRepository ?? new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
   const financeNetWorthRepository = new InMemoryNetWorthRepository();
   const budgetAlertNotifier = new FakeBudgetAlertNotifier();
@@ -1211,6 +1235,49 @@ describe("finance HTTP routes", () => {
       expect(after?.category_id).toBe(fun);
       // The amount still follows the split — the category is frozen, not the row.
       expect(after?.amount).toBe(1200);
+    });
+
+    it("does not freeze the category when a PUT only changed the note", async () => {
+      // A `PUT` is a full replace, so a client editing only the note resends
+      // the category it already had. Marking the row `'manual'` on any `PUT`
+      // — rather than only when the category really moved — would take that
+      // mirror out of the split's hands forever, silently, on an edit that
+      // never touched the category. Only `&& categoryChanged` keeps this
+      // holder's mirror following the split.
+      const { payer, holder, splitId, mirror } = await seedMirror();
+
+      const put = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { note: "my half" })));
+      expect(put.status).toBe(200);
+      expect(await put.json()).toMatchObject({ note: "my half", category_id: mirror.category_id });
+
+      await editSplitExpenseBetween(ctx, splitId, payer, holder, 1800, "TWD", DAY, "娛樂");
+
+      const fun = await categoryIdOf(holder, "娛樂", "expense");
+      expect((await mirrorFor(ctx, holder, splitId))?.category_id).toBe(fun);
+    });
+
+    it("answers 409 when the payer's split edit lands between the read and the write", async () => {
+      // The holder read amount 900; the payer's edit makes it 1200 before the
+      // holder's PUT is written. An unconditional write would put 900 back
+      // and the two views would disagree forever, with no error — through the
+      // one edit this API allows. 409 rather than 400 because re-reading and
+      // re-sending is a sensible thing for the client to do next.
+      const racing = new RacingFinanceTransactionRepository();
+      ctx = buildApp({ financeTransactionRepository: racing });
+      const { payer, holder, splitId, mirror } = await seedMirror();
+      const fun = await categoryIdOf(holder, "娛樂", "expense");
+
+      racing.onNextRead = async () => {
+        await editSplitExpenseBetween(ctx, splitId, payer, holder, 2400, "TWD", DAY, "餐飲");
+      };
+      const res = await ctx.app.request(`/api/finance/transactions/${mirror.id}`, authed(holder, "PUT", replaceBody(mirror, { category_id: fun })));
+
+      expect(res.status).toBe(409);
+      const after = await mirrorFor(ctx, holder, splitId);
+      expect(after?.amount).toBe(1200);
+      // Not even the category landed, though on its own it would have been
+      // the one permitted edit.
+      expect(after?.category_id).toBe(mirror.category_id);
     });
 
     it("ignores a split_expense_id sent in a PUT body", async () => {

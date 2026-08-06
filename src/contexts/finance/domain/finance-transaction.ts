@@ -68,3 +68,22 @@ export interface ReplaceFinanceTransactionInput {
 export interface UpdateFinanceTransactionFields extends ReplaceFinanceTransactionInput {
   categorySource?: FinanceCategorySource;
 }
+
+/**
+ * The split's facts as the caller compared them, turned into a condition on
+ * the write itself (design.md D7).
+ *
+ * A mirror's update is read-then-full-replace, with no lock and no version
+ * column, and the payer's split edit can commit in that window: the holder
+ * reads 900, the split becomes 1200, and an unconditional write puts 900
+ * back — the ledger and the split then disagree forever, with no error, via
+ * the one edit the finance API allows. Passing the values that were compared
+ * makes the write itself the check, and matching nothing is reported rather
+ * than swallowed.
+ */
+export interface SplitFactsSnapshot {
+  type: FinanceTransactionType;
+  amount: number;
+  currency: string;
+  date: string;
+}

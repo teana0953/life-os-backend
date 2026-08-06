@@ -1,5 +1,12 @@
 import { type CheckBudgetAlertsDeps, checkBudgetAlerts } from "./check-budget-alerts";
-import { FinanceCategoryArchived, FinanceCategoryNotFound, FinanceCategoryTypeMismatch, FinanceTransactionNotFound, MirroredTransactionReadOnly } from "../domain/errors";
+import {
+  FinanceCategoryArchived,
+  FinanceCategoryNotFound,
+  FinanceCategoryTypeMismatch,
+  FinanceTransactionNotFound,
+  MirroredTransactionChangedUnderneath,
+  MirroredTransactionReadOnly,
+} from "../domain/errors";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
@@ -68,18 +75,39 @@ export async function updateTransaction(
     throw new MirroredTransactionReadOnly("a transaction mirrored from a split expense can only have its category and note changed here");
   }
 
-  const updated = await transactionRepository.update(userId, id, {
-    ...input,
-    type,
-    currency,
-    // Picking the category by hand is what takes the row out of the split's
-    // hands; from here on the payer's next edit moves the amount and leaves
-    // the category alone (design.md D6). Set only on a mirror, and only when
-    // the category really changed, so re-sending the same one is not an
-    // implicit opt-out.
-    ...(existing.splitExpenseId !== null && categoryChanged ? { categorySource: "manual" as const } : {}),
-  });
-  if (!updated) throw new FinanceTransactionNotFound();
+  // The comparison above and the write below are two statements, and the
+  // payer's split edit can commit between them: the holder read 900, the
+  // split became 1200, and an unconditional write would put 900 back with no
+  // error at all. Carrying what was compared into the write makes the write
+  // its own check (design.md D7).
+  const expected = existing.splitExpenseId === null ? undefined : { type: existing.type, amount: existing.amount, currency: existing.currency, date: existing.date };
+
+  const updated = await transactionRepository.update(
+    userId,
+    id,
+    {
+      ...input,
+      type,
+      currency,
+      // Picking the category by hand is what takes the row out of the split's
+      // hands; from here on the payer's next edit moves the amount and leaves
+      // the category alone (design.md D6). Set only on a mirror, and only when
+      // the category really changed, so re-sending the same one is not an
+      // implicit opt-out.
+      ...(existing.splitExpenseId !== null && categoryChanged ? { categorySource: "manual" as const } : {}),
+    },
+    expected,
+  );
+  if (!updated) {
+    // A guarded write that matched nothing has two causes, and answering the
+    // same for both would be a lie in one direction or the other: the split
+    // moved on (the row is still there, and re-sending against it may well
+    // succeed), or the split was deleted and the mirror cascaded away with it.
+    if (expected && (await transactionRepository.findById(id)) !== null) {
+      throw new MirroredTransactionChangedUnderneath("this transaction's split expense changed while the update was in flight; re-read it and try again");
+    }
+    throw new FinanceTransactionNotFound();
+  }
 
   if (budgetAlertDeps) {
     try {

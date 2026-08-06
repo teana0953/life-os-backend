@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
+import { DrizzleFinanceTransactionRepository } from "../../src/contexts/finance/adapters/drizzle-finance-transaction-repository";
 import { DrizzleSplitExpenseRepository } from "../../src/contexts/split/adapters/drizzle-split-expense-repository";
 import type { ShareMirrorRow } from "../../src/contexts/split/domain/shares-mirror";
 import type { CreateSplitExpenseInput, UpdateSplitExpenseFields } from "../../src/contexts/split/domain/split-expense";
@@ -40,8 +41,14 @@ const MISSING_CATEGORY = "c0000000-dead-4000-8000-000000000000";
 const DAY = "2026-04-10";
 const NOW = new Date("2026-04-10T10:00:00.000Z");
 
-function mirror(userId: string, categoryId: string, amount: number, splitExpenseId = E1): ShareMirrorRow {
-  return { userId, splitExpenseId, amount, currency: "TWD", categoryId, day: DAY, note: "dinner" };
+/**
+ * `note` is a parameter, and the cases that care about it pass a *different*
+ * one on the second write. With every planned note equal to the stored one,
+ * adding `note: excluded.note` to the upsert's SET list would be invisible —
+ * the two rows would be indistinguishable and the D18 guard unfalsifiable.
+ */
+function mirror(userId: string, categoryId: string, amount: number, splitExpenseId = E1, note = "dinner"): ShareMirrorRow {
+  return { userId, splitExpenseId, amount, currency: "TWD", categoryId, day: DAY, note };
 }
 
 function createInput(overrides: Partial<CreateSplitExpenseInput> = {}): CreateSplitExpenseInput {
@@ -141,6 +148,71 @@ describe("split expense mirrors (real Postgres)", () => {
       // Both halves are load-bearing. Without the amount, "update nothing at
       // all" passes; without the category, overwriting it unconditionally does.
       expect(row?.categoryId).toBe(FUN_B);
+      expect(row?.amount).toBe(1200);
+    });
+
+    it("keeps that category through a second edit, not just the first", async () => {
+      // `ON CONFLICT DO UPDATE` evaluates every SET expression against the
+      // *old* row, so a SET list that also wrote `category_source = 'mirror'`
+      // would still keep the category on this edit — the `CASE` reads the
+      // stored `'manual'` — and only lose it on the next one. Every other case
+      // here edits once, so that mutation survives all of them: the second
+      // edit is the whole point of this fixture.
+      await expenses.create(createInput(), [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)]);
+      await harness.db
+        .update(financeTransaction)
+        .set({ categoryId: FUN_B, categorySource: "manual" })
+        .where(and(eq(financeTransaction.userId, B), eq(financeTransaction.splitExpenseId, E1)));
+
+      await expenses.update(
+        E1,
+        updateFields({ amount: 2400, shares: [{ userId: A, amount: 1200 }, { userId: B, amount: 1200 }] }),
+        [mirror(A, FOOD_A, 1200), mirror(B, FOOD_B, 1200)],
+        NOW,
+        A,
+      );
+      await expenses.update(
+        E1,
+        updateFields({ amount: 3000, shares: [{ userId: A, amount: 1500 }, { userId: B, amount: 1500 }] }),
+        [mirror(A, FOOD_A, 1500), mirror(B, FOOD_B, 1500)],
+        NOW,
+        A,
+      );
+
+      const row = await mirrorFor(B, E1);
+      expect(row?.categoryId).toBe(FUN_B);
+      // The flag itself has to survive too, or the row is only one more edit
+      // away from losing the category anyway.
+      expect(row?.categorySource).toBe("manual");
+      // Same reason as the single-edit case: without this, "update nothing"
+      // would pass.
+      expect(row?.amount).toBe(1500);
+    });
+
+    it("leaves a note the holder wrote alone while the split's description moves on", async () => {
+      // D18: `note` is written once at creation and belongs to the owner
+      // afterwards, which is what makes it absent from the upsert's SET list.
+      // The planned note here is deliberately *not* the stored one — with the
+      // two equal, `note: excluded.note` would be a no-op and the rule would
+      // have no guard at all.
+      await expenses.create(createInput(), [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)]);
+      await harness.db
+        .update(financeTransaction)
+        .set({ note: "my half of Ben's birthday" })
+        .where(and(eq(financeTransaction.userId, B), eq(financeTransaction.splitExpenseId, E1)));
+
+      await expenses.update(
+        E1,
+        updateFields({ amount: 2400, description: "brunch", shares: [{ userId: A, amount: 1200 }, { userId: B, amount: 1200 }] }),
+        [mirror(A, FOOD_A, 1200, E1, "brunch"), mirror(B, FOOD_B, 1200, E1, "brunch")],
+        NOW,
+        A,
+      );
+
+      const row = await mirrorFor(B, E1);
+      expect(row?.note).toBe("my half of Ben's birthday");
+      // The rest of the row still follows the split — the note is frozen, not
+      // the row.
       expect(row?.amount).toBe(1200);
     });
 
@@ -288,6 +360,61 @@ describe("split expense mirrors (real Postgres)", () => {
       expect(await mirrorsOf(C)).toHaveLength(0);
       expect(await mirrorsOf(A)).toHaveLength(1);
       expect(await mirrorsOf(B)).toHaveLength(1);
+    });
+  });
+
+  describe("a guarded update of a mirror", () => {
+    // The SQL half of D7's race guard. The in-memory repository the HTTP and
+    // application cases run on applies the same condition in JavaScript, so it
+    // can only ever agree with itself; whether the predicate is really in the
+    // statement's WHERE is a question only a database answers.
+    const transactions = () => new DrizzleFinanceTransactionRepository(() => harness.db);
+
+    async function seedMirrorRow() {
+      await expenses.create(createInput(), [mirror(A, FOOD_A, 900), mirror(B, FOOD_B, 900)]);
+      const row = await mirrorFor(B, E1);
+      if (!row) throw new Error("no mirror for B");
+      return row;
+    }
+
+    it("writes nothing when the split has already moved past the values the caller compared", async () => {
+      const row = await seedMirrorRow();
+      // The payer's edit commits: B's share is 1200 now, not the 900 the
+      // caller read a moment ago.
+      await expenses.update(
+        E1,
+        updateFields({ amount: 2400, shares: [{ userId: A, amount: 1200 }, { userId: B, amount: 1200 }] }),
+        [mirror(A, FOOD_A, 1200), mirror(B, FOOD_B, 1200)],
+        NOW,
+        A,
+      );
+
+      const written = await transactions().update(
+        B,
+        row.id,
+        { type: "expense", amount: 900, currency: "TWD", categoryId: FUN_B, date: DAY, categorySource: "manual" },
+        { type: "expense", amount: 900, currency: "TWD", date: DAY },
+      );
+
+      expect(written).toBeNull();
+      const after = await mirrorFor(B, E1);
+      expect(after?.amount).toBe(1200);
+      expect(after?.categoryId).toBe(FOOD_B);
+    });
+
+    it("writes when the row still holds those values", async () => {
+      // Without this, a predicate that never matches would pass the case
+      // above and recategorising a mirror would be impossible.
+      const row = await seedMirrorRow();
+
+      const written = await transactions().update(
+        B,
+        row.id,
+        { type: "expense", amount: 900, currency: "TWD", categoryId: FUN_B, date: DAY, categorySource: "manual" },
+        { type: "expense", amount: 900, currency: "TWD", date: DAY },
+      );
+
+      expect(written).toMatchObject({ amount: 900, categoryId: FUN_B, categorySource: "manual" });
     });
   });
 
