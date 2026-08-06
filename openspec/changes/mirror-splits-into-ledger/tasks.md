@@ -15,7 +15,7 @@
 - [x] 1.2 `CreateExpenseInput`/`UpdateExpenseInput`、`validateExpenseFields`、`POST /api/split/expenses`、**`PATCH /api/split/expenses/:id`**(不是 PUT,`app.ts:478`)、`GET` 的回應都要帶。
 - [x] 1.2a `category_name` 的輸入規則要寫進 `validateExpenseFields`,並補進 split-bills 那條「其餘一律 400」的輸入契約:**空字串當成 null**、長度上限。**不做前後空白修剪** —— 規格的 scenario 寫「讀回來就是送進去的那個名字」,修剪會跟它打架,而分類名字本來就是照使用者輸入存的。**要有測試**,不是只加欄位。
 - [x] 1.2b **`PATCH` 沒帶 `category_name` = 清空**(D1)。handler 對其他欄位都是全取代,這個保持一致。**要有一條測試**(`split.test.ts`「clears the category name when a PATCH omits it」)**並且寫進 split-bills 規格**,前端在另一個 repo,不寫下來就是靠掉資料發現。突變:改成「沒帶就沿用原值」→ 那條測試紅(已驗)。
-- [ ] 1.3 **前端契約改動有三處**,全部寫進 PR:分帳建立表單多一個分類選擇;**每一筆交易的回應與列表都要帶「來自分帳」的標記**(前端才鎖得住欄位);**`GET /api/finance/split-spending` 每個幣別多一個「是否已計入交易」旗標**。前端在另一個 repo。
+- [x] 1.3 **前端契約改動有三處**,全部寫進 PR:分帳建立表單多一個分類選擇;**每一筆交易的回應與列表都要帶「來自分帳」的標記**(前端才鎖得住欄位);**`GET /api/finance/split-spending` 每個幣別多一個「是否已計入交易」旗標**。前端在另一個 repo。
 
 ## 2. `SharesMirror` port(D2)
 
@@ -129,9 +129,9 @@
 
 ## 12. 別人會動你的帳本(D13)
 
-- [ ] 12.1 付款人刪分帳 → cascade **刪掉你帳本裡一筆真的交易**;付款人改金額 → 可能把你推過預算門檻並通知你。**寫進 PR 的 Impact。**
-- [ ] 12.2 目前沒有任何通知路徑告訴你記帳頁發生了什麼(分帳動態有,記帳頁沒有)。**不在這個 change 做,開 issue。**
-- [ ] 12.3 **封存群組裡的分帳仍然可編輯**(`update-expense.ts:43` 傳 `checkArchived: false`,規格明說封存群組的支出保持可修正),所以封存群組裡的一次編輯照樣會動別人的帳本。**這是對的,但要寫出來**,否則會被當成漏洞。
+- [x] 12.1 付款人刪分帳 → cascade **刪掉你帳本裡一筆真的交易**;付款人改金額 → 可能把你推過預算門檻並通知你。**寫進 PR 的 Impact。**
+- [x] 12.2 目前沒有任何通知路徑告訴你記帳頁發生了什麼(分帳動態有,記帳頁沒有)。**不在這個 change 做 —— 已開 issue #78。**
+- [x] 12.3 **封存群組裡的分帳仍然可編輯**(`update-expense.ts:43` 傳 `checkArchived: false`,規格明說封存群組的支出保持可修正),所以封存群組裡的一次編輯照樣會動別人的帳本。**這是對的,但要寫出來**,否則會被當成漏洞。
 
 ## 13. 驗證
 
@@ -142,4 +142,4 @@
 ## 14. 不要寫的測試
 
 - [x] 14.1 **「淨值不動」不要寫成測試。** 那是 by construction 的(networth 的 adapter 根本不讀 `finance_transaction`,D12),沒有任何突變能讓它紅。split-bills 那條「真資料庫驗證」的要求**明文禁止**這種形狀:「state it where the code is instead」。**寫在註解裡**(已寫在 `drizzle-networth-repository.ts` 開頭)。
-- [ ] 14.2 同理,5.7(batch 語句順序)、8.4(結清)、10.2(回填不發警示)都已標明沒有突變驗證。**不要為了湊數補上假的。**
+- [x] 14.2 同理,5.7(batch 語句順序)、8.4(結清)、10.2(回填不發警示)都已標明沒有突變驗證。**不要為了湊數補上假的。**
