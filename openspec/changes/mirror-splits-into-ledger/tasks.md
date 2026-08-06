@@ -27,15 +27,23 @@
 - [ ] 2.7a **finance 那側的波及面**:`FinanceTransaction`、`CreateFinanceTransactionInput`、`ReplaceFinanceTransactionInput`、`FinanceTransactionRepository.update`、`transactionToJson`、`InMemoryFinanceTransactionRepository` 都要帶 `splitExpenseId` / `categorySource`。
 - [ ] 2.7b **`delete-transaction.ts` 目前沒有任何讀取**(`repository.delete(userId, id)`,五行,沒有 `findById`),**所以 7.1 的「DELETE 一律拒絕」實作不出來**。要嘛加一次讀取,要嘛在 repository 層加述詞。**同時決定回什麼狀態碼**(過濾式刪除會變 404;明確拒絕是 400/409)—— 7.5 的兩條測試需要這個答案。
 - [ ] 2.7c **`test/adapters/http/split.test.ts` 的 `financeCategoryRepository` / `financeTransactionRepository` / `financeBudgetRepository` 全是會丟錯的 `notImplemented` stub(`split.test.ts:213-235`)。** `createApp` 一旦組出 `FinanceSharesMirror`,那個檔案裡**每一條建立/編輯分帳的測試都會 500**。這是最大的波及面,而 2.7 自稱是「不要邊做邊發現」的清單。
-- [ ] 2.7d **`split_expense_id` 與 `category_source` 永遠不從請求 body 讀**(D17)。`updateTransaction:38` 是 `{...input, type, currency}` 展開 —— 欄位進了 replace input 而 handler 沒填,`PUT` 會**把連結清成 null**,鏡像瞬間解鎖;handler 若從 body 讀,客戶端就能自己掛上或拆掉。**突變:讓 `PUT` 從 body 讀 `split_expense_id`**,一條「送一個假的 `split_expense_id` 上去,交易的連結不變」的測試必須紅。
+- [ ] 2.7d **`split_expense_id` 與 `category_source` 永遠不從請求 body 讀**(D17)。`updateTransaction:38` 是 `{...input, type, currency}` 展開 —— 欄位進了 replace input 而 handler 沒填,`PUT` 會**把連結清成 null**,鏡像瞬間解鎖;handler 若從 body 讀,客戶端就能自己掛上或拆掉。**突變:讓 `PUT` 從 body 讀 `split_expense_id`**,一條「送一個假的 `split_expense_id` 上去,交易的連結不變」的測試必須紅。**這個突變不是改一行 handler**:D17 讓 `splitExpenseId` 不在 `ReplaceFinanceTransactionInput` 裡,所以突變還要把欄位加進輸入型別、`FinanceTransactionRepository.update`、以及 in-memory fake 的 `update`(它是逐欄位指派,`fakes.ts:96-106`)。**只改 handler 會型別錯誤或什麼都不做,那不叫驗證過。**
 - [ ] 2.7 split 那側的波及面:`CreateExpenseDeps`(`create-expense.ts:8`,`updateExpense` 共用)、`routes/split.ts:421` 的兩個 handler、五個 split 應用層測試檔、`stubSplitExpenseRepository`(`split-stubs.ts:26`)。**逐個列出來改,不要邊做邊發現。**
 
 ## 3. 分類解析(D4)
 
-- [ ] 3.1 同名 `type='expense'` → 「其他」`type='expense'` → **「其他」不在就 `insertDefaultsIfMissing` 再回第 2 步** → 還是不在就用 `sortOrder` 最小的 expense 分類。
-- [ ] 3.1a **第 3 步的條件是「其他不在」,不是「一個分類都沒有」。** 分類可以改名(`update-category.ts:21-26`),改名之後舊條件不觸發,解不出 `category_id`,而它是 NOT NULL —— **付款人一次合法的建立分帳,會因為一個無關的參與者改過名字而失敗。突變:把條件改回「一個分類都沒有」**,一條「分攤者把自己的『其他』改名之後,付款人仍然建得起分帳」的測試必須紅。
+- [ ] 3.1 同名 `type='expense'` → 「其他」`type='expense'` → **「其他」不在就 `insertDefaultsIfMissing` 再回第 2 步**。**只有三步** —— 不要加「退到任何一個支出分類」的第四步,見 3.1b。
+- [ ] 3.1a **第 3 步的條件是「其他不在」,不是「一個分類都沒有」。** 分類可以改名(`update-category.ts:21-26`),改名之後舊條件不觸發,解不出 `category_id`,而它是 NOT NULL —— **付款人一次合法的建立分帳,會因為一個無關的參與者改過名字而失敗。**
+- [ ] 3.1b **突變:把條件改回「一個分類都沒有」。斷言不能寫成「付款人仍然建得起分帳」** —— 改名的使用者當然還有別的分類,只要有任何退路,那個斷言在突變下照樣綠(這正是第一版加了第四步之後發生的事)。**斷言要指名落在哪:鏡像的分類名字是「其他」、`type` 是 expense,而且分攤者的支出分類數量比之前多一(代表真的重新 seed 了)。**
+- [ ] 3.1c **不要加第四步的退路。** 步驟 3 正確時它到不了,而它唯一的效果是廢掉 3.1b。
 - [ ] 3.2 **突變:拿掉 seed 那一步**,一個「參與者從沒開過記帳頁」的 fixture 必須紅。fixture 要真的讓那個使用者**一個分類都沒有** —— **不能先呼叫 `GET /api/finance/categories`**,那會把他 seed 掉,測試就永遠綠。
-- [ ] 3.3 **突變:名字解析不限定 `type`**,一個「使用者同時有 expense 與 income 的『其他』」的 fixture 必須紅。斷言鏡像的 `category_id` **等於 expense 那個的 id** —— 只斷言「有一個分類」的話,挑到 income 的突變會活下來。
+- [ ] 3.3 **突變:名字解析不限定 `type`。兩個步驟各要一條測試** —— 規格的 scenario 講的是步驟 1,而只測步驟 2 的話步驟 1 完全沒有守門。
+
+  **fixture 不能靠「指定 `sortOrder`」或「先建 income 那筆」來釘。** `findByUserTypeName` 兩個實作**都不排序**:adapter 是沒有 `ORDER BY` 的 `.limit(1)`(`drizzle-finance-category-repository.ts:41-49`),fake 是 `.find()` 照插入順序(`test/contexts/finance/fakes.ts:32-34`)。而預設 seed 把 expense 的「其他」排在 income 之前(`default-categories.ts` index 6 vs 10),所以照一般寫法,拿掉 `type` 述詞的突變**照樣撿到對的那筆,守門是死的**。
+
+  **要用「同名的只有 income 那一筆」把它釘死,不依賴任何順序:**
+  - **步驟 1**:分帳指定「餐飲」,分攤者只有 **income** 的「餐飲」,沒有 expense 的。正確的程式碼步驟 1 不中 → 退到「其他」;**突變**步驟 1 中了 income 的餐飲 → 鏡像落在收入分類上。斷言鏡像的分類是「其他」且 `type` 是 expense。
+  - **步驟 2**:分攤者的 expense「其他」被改名,而且有一個 income 的「其他」。正確的程式碼步驟 2 不中 → seed → 落在重建的 expense「其他」;**突變**步驟 2 中了 income 的「其他」。斷言同上。(這條跟 3.1b 共用 fixture。)
 - [ ] 3.4 **突變:改用付款人的 `category_id`**,一個「兩人分類 id 不同但同名」的 fixture 必須紅。**斷言方式只能是「鏡像的 `category_id` 等於分攤者自己那個 id」** —— 不要斷言「寫入失敗」:`finance_transaction.category_id` **沒有**任何把它綁到同一個 `user_id` 的約束,付款人的 id 存在,插入會成功,只是把錢記到別人的分類上。
 - [ ] 3.5 封存分類:鏡像照用。**測試同時斷言 `POST /api/finance/transactions` 選同一個分類仍然被拒**(`create-transaction.ts:28`)—— 只斷言前半的話,「乾脆把 create 的封存檢查拿掉」這個突變會活下來。兩件事都在 HTTP 層,同一條測試寫得出來。
 

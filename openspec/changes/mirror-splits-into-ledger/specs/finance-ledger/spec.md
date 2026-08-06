@@ -146,7 +146,8 @@ This scenario is kept under its former name so the inversion is loud.
 
 - **WHEN** a share holder has renamed their 其他 expense category and a split
   names a category they do not have
-- **THEN** the split is recorded and their mirror still resolves to a category
+- **THEN** their 其他 expense category is recreated and the mirror lands on
+  it — not on whatever expense category happened to be left over
 
 #### Scenario: A share holder who has never opened the ledger still gets one
 
