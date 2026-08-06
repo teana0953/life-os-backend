@@ -6,8 +6,10 @@ import type { FriendChecker } from "../../../src/contexts/split/domain/friend-ch
 import { groupSettlementDelta, personalSettlementDelta } from "../../../src/contexts/split/domain/settlement-balance";
 import type { CreateSettlementInput, Settlement } from "../../../src/contexts/split/domain/settlement";
 import type { ListSettlementsFilter, SettlementRepository } from "../../../src/contexts/split/domain/settlement-repository";
+import type { ShareMirrorRow, SharesMirror } from "../../../src/contexts/split/domain/shares-mirror";
 import type { CreateSplitExpenseInput, SplitExpense, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../../../src/contexts/split/domain/split-expense";
-import type { ListExpensesFilter, SplitExpenseRepository } from "../../../src/contexts/split/domain/split-expense-repository";
+import type { InMemoryFinanceTransactionRepository } from "../finance/fakes";
+import type { ListExpensesFilter, SplitExpenseRepository, SplitExpenseWriteResult } from "../../../src/contexts/split/domain/split-expense-repository";
 import type { SplitSpendingAmount } from "../../../src/contexts/split/domain/split-spending";
 import type { SplitSpendingRepository } from "../../../src/contexts/split/domain/split-spending-repository";
 import type { SplitActivity } from "../../../src/contexts/split/domain/split-activity";
@@ -117,6 +119,18 @@ export class InMemoryFriendChecker implements FriendChecker {
   }
 }
 
+/**
+ * A `SharesMirror` that plans nothing, for the application-layer tests that
+ * are about split's own rules. Whether a mirror really reaches a ledger is
+ * guarded at the HTTP layer instead, where `createApp` composes the real
+ * `FinanceSharesMirror` — a fake that reimplemented category resolution here
+ * would only ever agree with itself.
+ */
+export const noopSharesMirror: SharesMirror = {
+  plan: async () => [],
+  afterWrite: async () => {},
+};
+
 export class InMemorySplitExpenseRepository implements SplitExpenseRepository, SplitSpendingRepository {
   rows: SplitExpense[] = [];
 
@@ -124,11 +138,72 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
    * Needs the group repository to mirror the adapter's group-membership clause
    * in the unfiltered listing, and optionally the directory to attach the
    * display names the adapter resolves with a `users` join.
+   *
+   * [financeTransactions] is where the mirrors go — **the same object the
+   * finance endpoints read from**, not a list of this fake's own. Kept in its
+   * own list, `/api/finance/transactions`, `/summary` and `/budgets` would see
+   * nothing, which is the very problem the design moved mirror planning out of
+   * the adapter to avoid. Optional only so the many application-layer tests
+   * that predate mirrors keep constructing this with two arguments.
    */
   constructor(
     private readonly groups: InMemoryExpenseGroupRepository,
     private readonly users?: TestUserDirectory,
+    private readonly financeTransactions?: InMemoryFinanceTransactionRepository,
   ) {}
+
+  /**
+   * Stands in for the adapter's `ON CONFLICT (user_id, split_expense_id) DO
+   * UPDATE` plus the delete of anyone who no longer holds a share. It is an
+   * upsert, not an append, for the same reason the SQL is: a share holder's
+   * own recategorisation has to survive the payer's next edit, and a second
+   * row for the same (user, split) must never appear.
+   *
+   * It proves nothing about that SQL — see `test/db` for that. It exists so
+   * the HTTP-level guards can observe a mirror at all.
+   *
+   * Returns the rows **as stored**, standing in for the adapter's
+   * `RETURNING`: for a row whose owner recategorised it the stored category is
+   * not the planned one, and the caller's budget check runs off the stored
+   * one.
+   */
+  private async writeMirrors(splitExpenseId: string, mirrors: ShareMirrorRow[]): Promise<ShareMirrorRow[]> {
+    const store = this.financeTransactions;
+    // No ledger to write into (the application-layer tests that predate
+    // mirrors): nothing can have diverged, so the planned rows are the
+    // written ones.
+    if (!store) return mirrors;
+    const holders = new Set(mirrors.map((mirror) => mirror.userId));
+    store.transactions = store.transactions.filter((txn) => txn.splitExpenseId !== splitExpenseId || holders.has(txn.userId));
+
+    const written: ShareMirrorRow[] = [];
+    for (const mirror of mirrors) {
+      const existing = store.transactions.find((txn) => txn.splitExpenseId === splitExpenseId && txn.userId === mirror.userId);
+      if (existing) {
+        existing.amount = mirror.amount;
+        existing.currency = mirror.currency;
+        existing.date = mirror.day;
+        // Only while the row still follows the split; `note` is never
+        // rewritten, matching the adapter's SET list (D6/D18).
+        if (existing.categorySource === "mirror") existing.categoryId = mirror.categoryId;
+        written.push({ ...mirror, categoryId: existing.categoryId, note: existing.note });
+        continue;
+      }
+      const created = await store.create({
+        userId: mirror.userId,
+        type: "expense",
+        amount: mirror.amount,
+        currency: mirror.currency,
+        categoryId: mirror.categoryId,
+        date: mirror.day,
+        note: mirror.note,
+        splitExpenseId: mirror.splitExpenseId,
+        categorySource: "mirror",
+      });
+      written.push({ ...mirror, categoryId: created.categoryId, note: created.note });
+    }
+    return written;
+  }
 
   private withNames(shares: SplitShareInput[]): SplitShare[] {
     return shares.map((share) => ({
@@ -137,7 +212,7 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     }));
   }
 
-  async create(input: CreateSplitExpenseInput): Promise<SplitExpense> {
+  async create(input: CreateSplitExpenseInput, mirrors: ShareMirrorRow[]): Promise<SplitExpenseWriteResult> {
     const now = new Date();
     const expense: SplitExpense = {
       ...input,
@@ -147,14 +222,14 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
       updatedAt: now,
     };
     this.rows.push(expense);
-    return expense;
+    return { expense, mirrors: await this.writeMirrors(input.id, mirrors) };
   }
 
   async findById(id: string): Promise<SplitExpense | null> {
     return this.rows.find((row) => row.id === id) ?? null;
   }
 
-  async update(id: string, fields: UpdateSplitExpenseFields, now: Date, _actorUserId: string): Promise<SplitExpense | null> {
+  async update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, _actorUserId: string): Promise<SplitExpenseWriteResult | null> {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;
     row.payerUserId = fields.payerUserId;
@@ -164,15 +239,22 @@ export class InMemorySplitExpenseRepository implements SplitExpenseRepository, S
     row.description = fields.description;
     row.day = fields.day;
     row.splitMode = fields.splitMode;
+    row.categoryName = fields.categoryName;
     row.shares = this.withNames(fields.shares);
     row.updatedAt = now;
-    return row;
+    return { expense: row, mirrors: await this.writeMirrors(id, mirrors) };
   }
 
   async delete(id: string, _actorUserId: string, _now: Date): Promise<boolean> {
     const index = this.rows.findIndex((row) => row.id === id);
     if (index === -1) return false;
     this.rows.splice(index, 1);
+    // Stands in for `finance_transaction.split_expense_id`'s `on delete
+    // cascade`: the mirrors go with the expense, and no application code asks
+    // for it.
+    if (this.financeTransactions) {
+      this.financeTransactions.transactions = this.financeTransactions.transactions.filter((txn) => txn.splitExpenseId !== id);
+    }
     return true;
   }
 

@@ -5,7 +5,9 @@ import { createExpense, type CreateExpenseDeps } from "../../../../src/contexts/
 import { createGroup } from "../../../../src/contexts/split/application/create-group";
 import type { CreateExpenseInput } from "../../../../src/contexts/split/application/expense-input";
 import { DuplicateParticipant, GroupArchived, GroupNotFound, InvalidSplitInput, NotAGroupMember, NotAParticipant, NotFriends, SharesDoNotSumToAmount, SplitTooSmall } from "../../../../src/contexts/split/domain/errors";
-import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository } from "../fakes";
+import type { SharesMirror } from "../../../../src/contexts/split/domain/shares-mirror";
+import { InMemoryFinanceTransactionRepository } from "../../finance/fakes";
+import { InMemoryExpenseGroupRepository, InMemoryFriendChecker, InMemorySplitExpenseRepository, noopSharesMirror } from "../fakes";
 
 const A = "user-a";
 const B = "user-b";
@@ -21,7 +23,7 @@ beforeEach(() => {
   groups = new InMemoryExpenseGroupRepository();
   friends = new InMemoryFriendChecker();
   expenses = new InMemorySplitExpenseRepository(groups);
-  deps = { expenses, groups, friends };
+  deps = { expenses, groups, friends, mirror: noopSharesMirror };
   friends.addFriendship(A, B);
   friends.addFriendship(A, C);
 });
@@ -237,5 +239,37 @@ describe("createExpense: grouped expenses require group membership, not friendsh
     await expect(
       createExpense(deps, groupless({ groupId: group.id, split: { mode: "equal", participantUserIds: [A, B] } })),
     ).rejects.toBeInstanceOf(GroupArchived);
+  });
+});
+
+describe("createExpense: the mirror's aftermath is best-effort", () => {
+  it("returns the expense, with its mirrors written, when afterWrite throws", async () => {
+    // Deliberately a throwing *port*, not a throwing notifier:
+    // `checkBudgetAlerts` already swallows the notifier's errors, so a
+    // notifier that throws could never make this fail and the guard would be
+    // one that cannot go red. The HTTP status this protects is asserted in
+    // `finance.test.ts` — this layer cannot see it.
+    const transactions = new InMemoryFinanceTransactionRepository();
+    const expenses = new InMemorySplitExpenseRepository(groups, undefined, transactions);
+    const mirror: SharesMirror = {
+      plan: async (input) =>
+        input.shares.map((share) => ({
+          userId: share.userId,
+          splitExpenseId: input.splitExpenseId,
+          amount: share.amount,
+          currency: input.currency,
+          categoryId: `category-of-${share.userId}`,
+          day: input.day,
+          note: input.description,
+        })),
+      afterWrite: async () => {
+        throw new Error("budget alert check exploded");
+      },
+    };
+
+    const expense = await createExpense({ expenses, groups, friends, mirror }, groupless());
+
+    expect(expense.shares).toHaveLength(3);
+    expect(transactions.transactions.filter((txn) => txn.splitExpenseId === expense.id)).toHaveLength(3);
   });
 });

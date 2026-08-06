@@ -1,0 +1,303 @@
+# Design
+
+## D0:`split-into-budget` 已作廢,由這個 change 取代
+
+那個 change 走的是「查詢時多加一個來源」,只修總預算,而且明說分類預算、警示(#76)、summary(#77)都還是假的。已刪除(2026-08-06)。**兩套同時存在 = 每一筆分帳被算兩次。**
+
+## D1:分帳支出**現在沒有分類欄位**,這個 change 要加
+
+`split_expense` 沒有任何分類欄位,`CreateExpenseInput`/`UpdateExpenseInput` 沒有,`validateExpenseFields` 沒有 —— `grep -rn "categor" src/contexts/split/` **零筆**。
+
+第一版的設計整段建立在「付款人建分帳時選一個分類」上,而那個東西**不存在**。要加:
+
+- `split_expense.category_name text null` —— **存名字,不存 id**
+
+存名字而不是 id,因為分類是 per-user 的:付款人的「餐飲」id 對參與者沒有意義,而這個欄位要被所有參與者讀。存 id 會逼每次讀取都去反查名字。
+
+`null` 代表付款人沒選,鏡像退到各自的「其他」。**這也是前端契約改動**(分帳建立表單多一個分類選擇),前端在另一個 repo。
+
+**`PATCH` 沒帶 `category_name` = 清空,不是「保留原值」。** 那個 handler 對其他
+每一個欄位都是全取代(少帶就 400),`category_name` 是唯一可選的那個,做成黏著
+的會讓它變成整組欄位裡唯一的例外。代價要寫出來:前端漏送就會把每個分攤者的鏡像
+搬到他們的「其他」。**決定保留這個行為,但要有測試、而且要寫進規格**,否則前端只
+能靠掉資料發現。
+
+## D2:鏡像在**應用層**算出來,由 repository 放進 batch —— 不是在 adapter 裡拼 SQL
+
+第一版把鏡像寫成「adapter 在 batch 裡多加幾條語句」。那個形狀有兩個致命後果:
+
+**一、警示永遠不會響。** `checkBudgetAlerts` 只有 `create-transaction.ts:34` 與 `update-transaction.ts:43` 兩個呼叫點,都在**應用層**。batch 裡直接插進去的列不經過任何一個,所以 #76 不會關掉 —— 而第一版的 proposal 寫「三個一起關掉」。**這是同一個錯誤第三次出現在警示這件事上。**
+
+**二、所有守門都寫不出來。** `test/adapters/http/finance.test.ts` 用 `InMemorySplitExpenseRepository`(`fakes.ts:120`),它的 `create` 只做 `this.rows.push(expense)`。鏡像若住在 `DrizzleSplitExpenseRepository`,HTTP 套件**看不到任何鏡像**,`finance.test.ts:642` 與 `:807` 會**保持綠**,而生產行為跟它們斷言的相反。要在那層測就得在 fake 裡把鏡像邏輯再實作一次 —— 一個**跟自己一致的 fake**,正是不可能失敗的守門。
+
+### 正確的形狀
+
+在 **split 的 domain** 定義它需要的東西,由 finance 提供實作。**依賴方向是 finance → split,split 的 domain/application 不 import finance。**
+
+**但 split 的 adapter 會 import `shared/db/schema` 的 `financeTransaction`** 才能把列放進 batch。CLAUDE.md 允許 adapter 用 `shared/db`,**但這件事要寫出來**,否則之後會有人把它「修掉」。
+
+```ts
+// src/contexts/split/domain/shares-mirror.ts
+export interface ShareMirrorRow {
+  userId: string; splitExpenseId: string; amount: number; currency: string;
+  categoryId: string; day: string; note: string | null;
+}
+
+/** `plan` 需要的分帳事實。id 必須先產生 —— 見下方。 */
+export interface MirrorPlanInput {
+  splitExpenseId: string; currency: string; day: string;
+  description: string; categoryName: string | null;
+  shares: { userId: string; amount: number }[];
+}
+
+export interface SharesMirror {
+  /** 解析每個分攤者的分類、決定誰有鏡像。批次寫入前呼叫。 */
+  plan(input: MirrorPlanInput): Promise<ShareMirrorRow[]>;
+  /** 批次寫入成功後呼叫。盡力而為,失敗不影響分帳。 */
+  afterWrite(rows: ShareMirrorRow[]): Promise<void>;
+}
+```
+
+- `createExpense` / `updateExpense` **應用層**呼叫 `plan`,把結果傳給 repository(`deleteExpense` 不呼叫 —— 刪除靠 cascade,沒有東西要 plan)
+- **`id` 要從 repository 呼叫裡提出來**:現在是 `deps.expenses.create({ id: crypto.randomUUID(), … })`(`create-expense.ts:36`),而 `plan` 需要 id 才能填 `splitExpenseId`
+- repository 的簽章變成 `create(input, mirrors)` —— **它不算鏡像,只負責把拿到的列放進同一個 batch**,並且**回傳寫進去的那一組**(D19a)
+- 寫入成功後應用層呼叫 `afterWrite`,那裡面才去跑每個分攤者的預算警示
+
+### 接線:在 `createApp` 裡組,不加新 option
+
+`createApp` **已經**同時持有 `financeCategoryRepository` 與 `financeTransactionRepository`(`app.ts:191-192`)。`FinanceSharesMirror` 在 `createApp` 裡組出來即可。它需要的是 **`financeCategoryRepository`**(`plan` 解析分類)加上 **`financeBudgetRepository` + `budgetAlertNotifier`**(`afterWrite` 跑 `checkBudgetAlerts`,其 deps 是 `{ budgetRepository, categoryRepository, notifier }`)—— **不需要 `financeTransactionRepository`**,鏡像是 repository 放進 batch 的,不經過它。
+
+**不要給 `CreateAppOptions` 加 `sharesMirror`**:有 **22 個測試檔**呼叫 `createApp`,加 option 等於全部要改,而且 `finance.test.ts` 會傳一個 fake 進去 —— 那就把分類解析變回不可測。在 `createApp` 裡組,`finance.test.ts` **自動拿到真的實作**。
+
+這跟既有的 `budgetAlertDeps()`(`routes/finance.ts:143`)是同一個形狀:具體 adapter 由 `src/index.ts` 注入,`createApp` 只是把它們組成一個服務。
+
+### fake 也必須寫進 finance 讀得到的地方
+
+`InMemorySplitExpenseRepository`(`fakes.ts:120`)只有 `rows: SplitExpense[]`,而 `/api/finance/transactions`、`/summary`、`/budgets` 讀的是 **`InMemoryFinanceTransactionRepository`**(另一個物件,`test/contexts/finance/fakes.ts:69`)。
+
+**fake 若把鏡像存進自己的 list,finance 的端點一個都看不到** —— 那就是 D2 想修的那個問題往下搬一層。**fake 的建構子要收 `InMemoryFinanceTransactionRepository`,鏡像寫進去。**
+
+### 這個形狀解掉了什麼
+
+- **警示會響**:`afterWrite` 在應用層,可以呼叫 `checkBudgetAlerts`
+- **fake 不用重新實作邏輯**:`InMemorySplitExpenseRepository.create(input, mirrors)` 只是把收到的列存起來;**解析邏輯在 finance 那側的實作裡**,而 `finance.test.ts` 本來就有 in-memory 的 finance repository,可以把**真的**實作接上去 —— 分類解析因此是**真的被測到**,不是被 fake 模仿
+- **原子性保留**:鏡像仍然在同一個 `db.batch` 裡
+
+## D3:原子性只保得住寫入,`plan` 的讀寫在批次之外
+
+`drizzle-orm/neon-http` 沒有 `transaction()`,`db.batch` 是唯一的原子單位。鏡像列跟分帳列在同一個 batch,所以**寫入是原子的**。
+
+但 `plan` 在 batch 之前跑,而且它**會寫**(參與者一個分類都沒有時要 seed,見 D4)。**batch 之後 rollback 的話,那個使用者會多出 11 個分類,而那次操作從沒發生過。**
+
+這是真的漂移,只是無害的那種:seed 是 idempotent 的,而且使用者遲早會有那些分類。**明說,不要假裝原子性覆蓋了整段。**
+
+## D4:分類解析,**必須保證終止**
+
+`finance_transaction.category_id` 是 NOT NULL,解不出來就寫不進去。
+
+1. 參與者有**同名**、**`type = 'expense'`** 的分類 → 用它
+2. 沒有(或分帳沒指定分類名)→ 用他 `type = 'expense'` 的「其他」
+3. **「其他」不在**(不管是他一個分類都沒有,還是他把「其他」改名了)→ `insertDefaultsIfMissing` 之後**回第 1 步**
+
+**第 3 步要回第 1 步,不是回第 2 步。** seed 會把「餐飲」跟「其他」一起建出來 —— 從沒開過記帳頁的人被拉進一筆餐飲分帳,回第 2 步會讓鏡像落在「其他」,**而他剛剛才有了「餐飲」,那個分類就擺在那裡沒人用**。(這是實作時才發現的:原本寫回第 2 步。)
+
+**只有三步,沒有第四步的「退到任何一個支出分類」。** 加那一步會讓步驟 3 的守門變成死的:改名的使用者當然還有其他分類,有了退路之後「把觸發條件寫回一個分類都沒有」這個突變照樣建得起分帳,測試不會紅。而步驟 3 正確時第四步根本到不了 —— **它唯一的可觀察效果就是廢掉那個守門。**
+
+終止性由步驟 3 保證:`insertDefaultsIfMissing` 的去重鍵是 `(user_id, type, name)`,改名之後 `(user, 'expense', '其他')` 空著,所以那一筆一定插得進去,回到步驟 2 一定找得到。只重試一次,不是迴圈。
+
+**第 3 步的觸發條件是「其他不在」,不是「一個分類都沒有」。** 分類**可以改名**(`update-category.ts:21-26`,只有 `type` 不可變,而且永遠不會被硬刪)。分攤者把自己的「其他」改成別的名字之後,舊的條件不會觸發 —— 他分類多的是 —— 於是解不出 `category_id`,而那是 NOT NULL,**整個分帳寫入會失敗:付款人一次合法的建立,因為一個無關的參與者改過名字而炸掉。**
+
+`insertDefaultsIfMissing` 依 `(user_id, type, name)` 去重,所以改名之後它會**重新建出一個「其他」**,第 3 步因此真的能救回來。第 4 步是最後的保險。
+
+**第 1、2 步都要限定 `type = 'expense'`。**
+
+`DEFAULT_CATEGORIES` 裡「其他」**同時存在於 expense 與 income**(`default-categories.ts:11,15`),唯一索引是 `(user_id, type, name)`。挑到 income 的那個,支出會被記在收入分類上,而 `getMonthlySummaryRaw` 按分類分組 —— 那會是一個看不出來的錯。
+
+第 3 步不是防禦性程式碼:`ensureDefaultCategories` **只有** `listCategories` 一個呼叫點(`list-categories.ts:7`),而且只在使用者**一個分類都沒有**時才 seed。一個從沒開過記帳頁的朋友被拉進分帳,他的 `finance_category` 是空的。**分頁載入順序決定了資料能不能寫進去。**
+
+### 鏡像**可以**落在封存的分類上,一般的建立不行
+
+`create-transaction.ts:28` 明確擋封存分類。鏡像刻意不套這條:一般建立是**使用者在選**,擋住是為了不讓封存的東西回到選單;鏡像**不是選擇**,擋住的代價是**一筆真的花掉的錢寫不進去**。
+
+刻意的不對稱,不是疏漏。若「其他」也被封存 —— 照樣用。
+
+## D5:鏡像的身分鍵是 `(user_id, split_expense_id)`,寫法必須是 upsert
+
+不能用 share id:`update` 是**刪光所有 share 再重插一批**(`drizzle-split-expense-repository.ts:185-186`),share id 每次編輯都換一組。
+
+```
+finance_transaction
+  + split_expense_id uuid null references split_expense(id) on delete cascade
+  + category_source text not null default 'manual'
+  + unique index (user_id, split_expense_id) where split_expense_id is not null
+```
+
+**更新必須寫成 `INSERT … ON CONFLICT … DO UPDATE`,不能沿用 share 的「刪光再插」。**
+
+衝突目標要**重複索引的述詞**(部分唯一索引的規定):`onConflictDoUpdate({ target: [userId, splitExpenseId], targetWhere: sql for split_expense_id is not null, … })`。既有的 `drizzle-finance-budget-repository.ts:51-55` 就是這個形狀。
+
+「只在 `category_source = 'mirror'` 時覆寫 `category_id`」**不能寫成 `DO UPDATE … WHERE`** —— 那會跳過**整列**,連 amount 都不更新。要寫成 SET 清單裡的 `CASE`。 刪光再插會**炸掉 `category_source = 'manual'`**(D6),而且唯一索引擋不住任何東西 —— 那條索引的守門就變成不可能失敗的。
+
+**編輯後不再是分攤者的人,他的鏡像要刪掉**:batch 裡帶一條 `delete … where split_expense_id = ? and user_id not in (…)`。這是集合式的,不需要知道編輯前是誰 —— 重要,因為 adapter **刻意不讀** grouped expense 的舊分攤者(`:182-183`「Only a groupless entry freezes an audience, so a grouped expense never pays for this query」),而那個最佳化不該為了這個 change 死掉。
+
+**batch 裡的語句順序:鏡像的 insert 必須排在 `expenseInsert` 之後。** FK `finance_transaction.split_expense_id → split_expense(id)` 是立即檢查的,排前面就是外鍵錯誤。這個 repo 別的地方對順序寫得很重(`:270`「**ORDER: the insert must come BEFORE the delete, and this is not a style choice**」),這裡也一樣。
+
+**刪除分帳靠 `on delete cascade`,不靠應用層記得。** `delete` 的 batch(`:303-327`)裡只有活動列的 insert 與 `db.delete(splitExpense)`,沒有鏡像的語句 —— 資料庫保證比程式碼保證可靠。
+
+## D6:使用者改過分類之後,分帳更新不能蓋回去
+
+`category_source`:`'mirror'`(自動解析的)或 `'manual'`(使用者改過的)。
+
+**兩個方向都要有守門,而且第一版一個都沒有:**
+
+- 鏡像寫入**忘了設 `'mirror'`** → 吃預設值 `'manual'` → `CASE` 永遠不觸發 → **鏡像的分類從此再也不跟著分帳走**。只斷言「使用者改過的被保留」的測試**永遠不會紅**。
+- `PUT` **忘了設 `'manual'`** → 使用者的分類在付款人下次編輯時被靜默還原,正是這條規則存在要防的事。而在 PGlite 層寫的那條測試證不了它 —— 那裡的 `'manual'` 是測試自己寫進去的,**從來沒有經過 PUT handler**。`ON CONFLICT DO UPDATE` 只在 `category_source = 'mirror'` 時覆寫 `category_id`;`amount`/`day`/`currency` **無條件**覆寫。
+
+**不要用「分類跟預期值不同就當作使用者改過」來推斷** —— 付款人把分類從餐飲改成娛樂時,那個推斷會誤判成「使用者改過」,然後永遠不再同步。
+
+## D7:鏡像在 finance API 是半唯讀,而 `PUT` 是全取代
+
+`PUT /api/finance/transactions/:id` 是**全取代**(規格:currency「required on full-replace update」)。所以只改分類的客戶端**一定會**送 `amount`、`currency`、`date`。
+
+**規則:amount / date / currency / `type` 值不同才拒絕,不是帶了就拒絕。** 帶了就拒絕會讓「只改分類」這個唯一允許的編輯變成做不到。
+
+比較要正規化:currency 大小寫、date 用同一個 `YYYY-MM-DD` 形式。
+
+**`type` 一定要在鎖住的清單裡。** 第一版列了 amount/date/currency 就以為列完了 —— `PUT` 是全取代而 `type` 是它的一部分,分攤者可以把鏡像翻成 `income`(挑一個收入分類,`update-transaction.ts:34` 會收)。那筆錢就離開支出總額、離開每個預算的 `spent`,變成一筆收入,而分帳那邊還說他欠著 —— **用被允許的編輯路徑,做出這個 change 存在就是要消滅的那種不一致。**
+
+`DELETE` 一律拒絕。**在後端擋** —— 前端在另一個 repo,API 是公開的。
+
+### 值的比較擋不住「比較完到寫入之間」那一段
+
+上面整段講的是**比較**,而 `updateTransaction` 是**先讀、再全取代**,中間沒有鎖、
+沒有版本欄位。付款人的分帳編輯可以剛好落在那個縫裡:
+
+1. 分攤者讀到鏡像 amount 900
+2. 付款人把分帳改成 2400,鏡像變成 1200(commit 了)
+3. 分攤者的 `PUT` 帶著 900 進來 —— 對他讀到的那一列來說**完全合法**,值一樣,
+   比較通過 —— 然後**無條件**把 900 寫回去
+
+結果是帳本說 900、分帳說 1200,**永久、而且沒有任何錯誤**。這正是半唯讀規則要
+消滅的那種分歧,而且是走**唯一被允許的那條編輯路徑**做出來的。比較本身修不了
+這件事:它比的是一份已經過期的快照。
+
+**決定:把比較用的那些值帶進寫入的 WHERE。** repository 的 `update` 多收一個
+`expected`(`type`/`amount`/`currency`/`date`),只有鏡像會傳;讀與寫因此變成
+同一個述詞下的一件事,中途被改過的列**匹配不到**,而不是被蓋掉。
+
+**匹配不到要答錯誤,不是靜默什麼都不做。** 兩種原因要分開:列還在(分帳動了,
+重讀再送有機會成功)→ `MirroredTransactionChangedUnderneath`,HTTP **409**;
+列不在了(分帳被刪、鏡像跟著 cascade 走了)→ 既有的 404。**409 不是 400**:
+400 說「這個編輯永遠不允許」,而這裡的請求當時是合法的,客戶端需要分得出「重讀
+再試」跟「不准」。
+
+**為什麼不用版本欄位或 `SELECT FOR UPDATE`**:`drizzle-orm/neon-http` 沒有
+`transaction()`,`FOR UPDATE` 拿到的鎖出了那一句就沒了;而版本欄位要多一個 column
+和一次 migration,換來的保證跟「把比較過的值當述詞」一樣 —— 這裡鎖住的四個欄位
+本來就是不可變的那些,它們沒變就等於沒人動過這一列的分帳事實。
+
+**這條的守門在應用層**(`transactions.test.ts`「refuses to write values the split
+has already moved past」):交錯只能在 `updateTransaction` 自己的那次讀之後、寫之前
+製造出來,HTTP 層碰不到那個縫。**SQL 那半在 `test/db`** —— in-memory 的 repository
+用 JavaScript 做同一個判斷,只能證明它跟自己一致。
+
+**述詞裡刻意沒有 `category_id`。** 分類是持有者自己的欄位,不是分帳的事實 —— 把它放進述詞會讓「付款人改了分帳的分類」變成持有者一次合法編輯的 409,而那不是衝突。
+
+代價是一個窄的、會自癒的缺口:持有者讀取之後、寫入之前,付款人改了分帳的分類,持有者那次寫入會把舊分類寫回去,而且 `category_source` 仍然是 `'mirror'`(因為比對用的是那份過期的讀取)。**下一次付款人編輯分帳時它會自己修好** —— `CASE` 照樣適用。這不是 D7 要防的「永久對不上」。
+
+## D8:零元分攤**不產生鏡像**
+
+split 允許零元分攤(`validate-expense-fields.ts:97-99`:「有人在一頓分攤裡真的不欠錢是真實情況」,CHECK 是 `amount >= 0`)。finance 要求 `amount > 0`(`validateTransactionFields:15`),而 `finance_transaction.amount` **沒有 CHECK**,所以繞過應用層的 SQL 插入會靜默寫進一筆 0 元交易。
+
+**不欠錢就是沒花錢,不產生鏡像。**
+
+## D9:結清與墊錢不產生鏡像
+
+`split_settlement` 是還錢,不是花錢。替別人墊錢但沒分攤的付款人沒有花這筆錢(他借出了)。兩條都是 `splitSpendingForUser` 的既有語意,**不要重新發明**。
+
+## D10:白名單外的幣別寫不進 finance
+
+- split:`isValidCurrencyCode` 是 `/^[A-Z]{3}$/`,**任意合法三碼**(註解明說刻意不限制成白名單)
+- finance:`SUPPORTED_CURRENCIES` 只有 TWD/USD/JPY/EUR/CNY/KRW/GBP/HKD/AUD/CAD
+
+**泰銖、新幣、越南盾的分帳,鏡像寫不進去。**
+
+放寬 finance 白名單被否決:白名單擋的是小數位數,前端 `finance_money.dart` 對每種幣別有固定位數(TWD/JPY/KRW 是 0 位),未知幣別會用錯的位數顯示金額 —— **比看不到更糟**。收緊 split 也被否決:不限制是寫在註解裡的刻意決定。
+
+**白名單外不產生鏡像,分帳本身照樣寫成功**,並且要**明說**(見 D11)。這條路留下了一個「有些錢還是看不到」的洞,誠實地說:它從「所有分帳」縮到「白名單外幣別的分帳」,而且有東西承載它,不是靜默。
+
+## D11:`GET /api/finance/split-spending` 不能刪
+
+對白名單內的幣別,它的數字**已經包含在** summary 的月支出裡。前端目前把它當獨立的卡,**若有人把它加到月支出上就是真正的重複計算**,而且看起來很合理。
+
+對白名單外的幣別,它是那些錢**在 finance 這一側**唯一的去處(分帳那側 `GET /api/split/expenses` 和 `/api/split/balances` 當然還看得到)。
+
+所以回應要**逐幣別標明是否已計入交易**。不要只寫在文件裡。
+
+## D12:這個 change 改不到趨勢與淨值
+
+第一版的 proposal 寫「記帳列表、summary、預算、警示、趨勢、淨值全部自動一致」。**趨勢與淨值是錯的。**
+
+真正 `SUM(finance_transaction)` 的只有兩處:預算的 `spentSum` 與 `getMonthlySummaryRaw`。`drizzle-networth-repository` 只讀 `finance_networth_account` / `finance_networth_snapshot`,**不讀 `finance_transaction`**。`add-installments` 的 proposal 已經寫過同一件事,而我又寫錯一次。
+
+實際會變一致的是:**記帳列表、summary、預算、警示**。四個,不是六個。
+
+## D13:另一個使用者的動作會寫入、刪除你的帳本
+
+付款人建分帳 → 你的帳本多一筆;付款人刪分帳(`delete-expense.ts:10` 允許 creator 或 payer)→ `on delete cascade` **刪掉你帳本裡一筆真的交易**;付款人改金額 → 你的預算可能被推過門檻並發出通知。
+
+這是這個功能的本質,不是 bug。但**「別人可以動你的帳本」要寫進 Impact**,而且目前沒有任何通知路徑告訴你發生了什麼(分帳動態有,記帳頁沒有)。
+
+## D14:回填**先數再決定**
+
+回填的成本不在 SQL,在**分類解析要再實作一次**,而它在 production 只跑一次、沒有測試會再跑到它。而且它**不能寫成 migration** —— migration 是 `drizzle/*.sql`,拿不到 `SharesMirror`、拿不到任何 JS。要做就是一支一次性腳本走 D2 的 `plan`。
+
+分帳功能目前還沒有人在用。**已查(2026-08-06):`split_expense` = 0、`split_share` = 0 —— 回填不做。** 下面兩條保留,說明當初怎麼決定的:
+
+- **是 0** → 整段砍掉,PR 裡寫明「上線時分帳表是空的,沒有回填,新舊界線不存在」
+- **不是 0** → 用腳本回填,**不呼叫 `afterWrite`**(否則一次噴出一堆歷史通知),並寫明使用者會看到過去月份的預算 `spent` 變高、summary 變
+
+**不要憑「應該沒有資料」就砍掉。要數過。**
+
+## D15:`test/db` 現在沒有任何 finance 的接線
+
+`harness.ts:116` 的 `TABLES` 一張 finance 表都沒有,`test/db/` 下也沒有建構過任何 finance repository。這個 change 需要在 PGlite 層證明的東西(原子性、upsert、cascade、唯一索引)**全部需要先把那條路接起來**。
+
+好消息:`withBatchShim`(`harness.ts:100-114`)是真的 Postgres 原子性,rollback 本身被 `harness-batch.test.ts` 釘住;部分唯一索引在這個 stack 已經證明可行(`drizzle/0020_daffy_pride.sql:25`)。
+
+## D16:封存群組裡的分帳仍然可編輯,所以仍然會改寫別人的帳本
+
+`update-expense.ts:43` 傳 `checkArchived: false`,規格也明說封存群組裡的支出保持可修正。**這是對的,不改** —— 但它代表封存群組裡的一次編輯照樣會動到別人的 `finance_transaction`。沒寫下來的話會被當成漏洞。
+
+## D17:`split_expense_id` 與 `category_source` 永遠不可從 JSON 設定
+
+`updateTransaction:38` 是 `repository.update(userId, id, {...input, type, currency})`。若 `splitExpenseId` 進了 `ReplaceFinanceTransactionInput` 而 handler 沒填,`PUT` 會**把連結清成 null** —— 鏡像瞬間解鎖、唯一索引失去對象;若 handler 從 body 讀,客戶端就能自己掛上或拆掉連結。
+
+**兩個欄位都不從請求 body 讀,只由鏡像的寫入路徑設定。**
+
+## D18:`note` 的保留沒有機制,而規格答應了
+
+規格寫 `category_id` **與 `note`**「使用者改過之後不被分帳的後續編輯覆蓋」,但 `category_source` 只追蹤分類。
+
+**決定:`note` 不放進 upsert 的 SET 清單。** 鏡像建立時填一次(分帳的描述),之後只屬於使用者。這樣不需要第二個旗標,而且分帳的描述本來就會在分帳頁看得到。
+
+## D19a:`afterWrite` 必須拿到**寫進去的**列,不是 `plan` 算出來的列
+
+`plan` 算出來的 `categoryId` 跟資料庫裡的**不一定一樣**:D6 的 `CASE` 在
+`category_source = 'manual'` 時**保留原本的分類**。所以只要分攤者改過分類,
+`plan` 說「餐飲」而那一列其實在「娛樂」——拿 `plan` 的列去跑
+`checkBudgetAlerts`,查的是**那筆錢不在的那個分類**,而它**真的在的那個**永遠
+不會被查。編輯路徑上這不是邊角:D6 存在就是為了讓這兩者不一樣。
+
+所以 repository 的 `create`/`update` 回傳 `SplitExpenseWriteResult`
+(`{ expense, mirrors }`),`mirrors` 來自 upsert 的 `.returning()` —— batch 的
+結果是逐語句回來的,所以拿得到。應用層把**那一組**交給 `writeMirrorAftermath`。
+
+**port 要誠實**:`afterWrite` 的參數名義上是「鏡像列」,那就必須是資料庫裡的
+那些列,否則它的型別在說謊。
+
+## D19:編輯分帳時,警示查不到「舊分類」
+
+`afterWrite(rows)` 只拿得到現在的鏡像列,而 finance-budgets 的要求寫「更新時,分類有變就新舊兩個都查」。
+
+實務上無害:舊分類的花費只會**變少**,而警示是往上跨門檻才觸發。**但規格那句「SHALL run this same check」比 port 做得到的還寬,要說出來**,不要留一個做不到的承諾。

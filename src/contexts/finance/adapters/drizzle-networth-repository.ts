@@ -1,3 +1,12 @@
+/**
+ * Driven adapter for net worth.
+ *
+ * **This file reads only its own two tables — never `finance_transaction`.**
+ * That is why mirroring split shares into the ledger leaves net worth and its
+ * trend untouched, and why there is no test asserting so: nothing in that
+ * change could make such a test fail, and a guard that cannot fail is worse
+ * than none (`split-bills` spec: state it where the code is instead).
+ */
 import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { financeNetworthAccount, financeNetworthSnapshot } from "../../../shared/db/schema";

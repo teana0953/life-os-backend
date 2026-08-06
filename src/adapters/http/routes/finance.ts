@@ -11,7 +11,7 @@ import { updateCategory } from "../../../contexts/finance/application/update-cat
 import { updateTransaction } from "../../../contexts/finance/application/update-transaction";
 import { upsertBudget } from "../../../contexts/finance/application/upsert-budget";
 import type { BudgetAlertNotifier } from "../../../contexts/finance/domain/budget-alert-notifier";
-import { DEFAULT_CURRENCY } from "../../../contexts/finance/domain/currency";
+import { DEFAULT_CURRENCY, isSupportedCurrency } from "../../../contexts/finance/domain/currency";
 import { createNetWorthAccount } from "../../../contexts/finance/application/create-networth-account";
 import { getMonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
 import { getNetWorthTrend } from "../../../contexts/finance/application/get-networth-trend";
@@ -25,6 +25,8 @@ import {
   FinanceCategoryTypeMismatch,
   FinanceTransactionNotFound,
   InvalidFinanceInputError,
+  MirroredTransactionChangedUnderneath,
+  MirroredTransactionReadOnly,
 } from "../../../contexts/finance/domain/errors";
 import {
   NetWorthAccountArchived,
@@ -68,8 +70,9 @@ export interface FinanceHandlerOptions {
  * Maps this route's typed domain errors to the app's error boundary
  * primitives (same pattern as the menstrual route's `InvalidPeriodError`
  * catch): NotFound errors become an explicit 404 `{ "error": "not_found" }`;
- * every other typed error becomes a `BadRequestError`, which the app's
- * central `onError` turns into 400.
+ * a lost race against a split edit becomes an explicit 409
+ * `{ "error": "conflict" }`; every other typed error becomes a
+ * `BadRequestError`, which the app's central `onError` turns into 400.
  */
 function mapFinanceError(err: unknown, c: Context): Response {
   if (
@@ -80,10 +83,17 @@ function mapFinanceError(err: unknown, c: Context): Response {
   ) {
     return c.json({ error: "not_found" }, 404);
   }
+  // 409, not 400: the request was valid when it was made, and re-sending it
+  // against the row as it now stands may well succeed. A client cannot tell
+  // "retry with fresh data" from "this edit is never allowed" if both are 400.
+  if (err instanceof MirroredTransactionChangedUnderneath) {
+    return c.json({ error: "conflict" }, 409);
+  }
   if (
     err instanceof FinanceCategoryArchived ||
     err instanceof FinanceCategoryTypeMismatch ||
     err instanceof InvalidFinanceInputError ||
+    err instanceof MirroredTransactionReadOnly ||
     err instanceof NetWorthAccountArchived ||
     err instanceof NetWorthAccountNameConflict ||
     err instanceof NetWorthInvalidKind
@@ -102,6 +112,11 @@ function transactionToJson(txn: FinanceTransaction) {
     category_id: txn.categoryId,
     date: txn.date,
     note: txn.note,
+    // Present on every transaction, not just mirrored ones, so a client can
+    // tell them apart without a second call and lock the fields the finance
+    // API will refuse to change anyway.
+    split_expense_id: txn.splitExpenseId,
+    category_source: txn.categorySource,
   };
 }
 
@@ -298,8 +313,17 @@ export function createGetSummaryHandler(options: FinanceHandlerOptions) {
   };
 }
 
+/**
+ * `counted_in_transactions` says whether this currency's shares are already
+ * in the caller's transactions, i.e. in the monthly summary and every budget
+ * (design.md D11). It is per currency because that is where the two answers
+ * diverge: a whitelisted currency is mirrored and adding this figure to the
+ * summary would double-count it, while an unwhitelisted one is *only* here.
+ * Stating it in the response rather than in a document is the point — a
+ * client cannot infer finance's whitelist.
+ */
 function splitSpendingAmountToJson(amount: SplitSpendingAmount) {
-  return { currency: amount.currency, amount: amount.amount };
+  return { currency: amount.currency, amount: amount.amount, counted_in_transactions: isSupportedCurrency(amount.currency) };
 }
 
 /**

@@ -7,7 +7,12 @@ import type {
   UpdateFinanceCategoryPatch,
 } from "../../../src/contexts/finance/domain/finance-category";
 import type { FinanceTransactionRepository } from "../../../src/contexts/finance/domain/finance-transaction-repository";
-import type { CreateFinanceTransactionInput, FinanceTransaction, ReplaceFinanceTransactionInput } from "../../../src/contexts/finance/domain/finance-transaction";
+import type {
+  CreateFinanceTransactionInput,
+  FinanceTransaction,
+  SplitFactsSnapshot,
+  UpdateFinanceTransactionFields,
+} from "../../../src/contexts/finance/domain/finance-transaction";
 import type { FinanceBudget, UpsertFinanceBudgetInput } from "../../../src/contexts/finance/domain/finance-budget";
 import type { BudgetWithSpent, FinanceBudgetRepository, TryRecordAlertInput } from "../../../src/contexts/finance/domain/finance-budget-repository";
 import type { MonthlySummaryRaw } from "../../../src/contexts/finance/domain/monthly-summary";
@@ -80,6 +85,8 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
       categoryId: input.categoryId,
       date: input.date,
       note: input.note ?? null,
+      splitExpenseId: input.splitExpenseId ?? null,
+      categorySource: input.categorySource ?? "manual",
     };
     this.transactions.push(txn);
     return txn;
@@ -95,15 +102,25 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
       .sort((a, b) => a.date.localeCompare(b.date));
   }
 
-  async update(userId: string, id: string, input: ReplaceFinanceTransactionInput): Promise<FinanceTransaction | null> {
+  async update(userId: string, id: string, input: UpdateFinanceTransactionFields, expected?: SplitFactsSnapshot): Promise<FinanceTransaction | null> {
     const txn = this.transactions.find((t) => t.id === id && t.userId === userId);
     if (!txn) return null;
+    // The adapter folds these into the statement's WHERE; here they are the
+    // same condition on the same row. Not matching means a split edit landed
+    // between the caller's read and this write (D7).
+    if (expected && (txn.type !== expected.type || txn.amount !== expected.amount || txn.currency !== expected.currency || txn.date !== expected.date)) {
+      return null;
+    }
     txn.type = input.type;
     txn.amount = input.amount;
     txn.currency = input.currency;
     txn.categoryId = input.categoryId;
     txn.date = input.date;
     txn.note = input.note ?? null;
+    // `splitExpenseId` is deliberately never assigned: the real adapter leaves
+    // that column out of its SET list too (D17). `categorySource` follows the
+    // adapter the other way — written only when the use case supplies it.
+    if (input.categorySource !== undefined) txn.categorySource = input.categorySource;
     return txn;
   }
 

@@ -2,7 +2,13 @@ import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { financeTransaction } from "../../../shared/db/schema";
 import type { FinanceCategoryType } from "../domain/finance-category";
-import type { CreateFinanceTransactionInput, FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
+import type {
+  CreateFinanceTransactionInput,
+  FinanceCategorySource,
+  FinanceTransaction,
+  SplitFactsSnapshot,
+  UpdateFinanceTransactionFields,
+} from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import type { MonthlySummaryRaw } from "../domain/monthly-summary";
 
@@ -18,6 +24,8 @@ function toDomain(row: FinanceTransactionRow): FinanceTransaction {
     categoryId: row.categoryId,
     date: row.day,
     note: row.note,
+    splitExpenseId: row.splitExpenseId,
+    categorySource: row.categorySource as FinanceCategorySource,
   };
 }
 
@@ -37,6 +45,8 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         categoryId: input.categoryId,
         day: input.date,
         note: input.note ?? null,
+        splitExpenseId: input.splitExpenseId ?? null,
+        categorySource: input.categorySource ?? "manual",
       })
       .returning();
     if (!row) throw new Error("failed to create finance transaction");
@@ -59,9 +69,20 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
     return rows.map(toDomain);
   }
 
-  async update(userId: string, id: string, input: ReplaceFinanceTransactionInput): Promise<FinanceTransaction | null> {
+  async update(userId: string, id: string, input: UpdateFinanceTransactionFields, expected?: SplitFactsSnapshot): Promise<FinanceTransaction | null> {
     const db = this.getDb();
-    // `updatedAt` has `defaultNow()` but that only fires on insert; every update sets it explicitly.
+    // `updatedAt` has `defaultNow()` but that only fires on insert; every
+    // update sets it explicitly. `splitExpenseId` is absent from the SET list
+    // on purpose: a full-replace update must not be able to unlink a mirror
+    // from its split (design.md D17). `categorySource` is written only when
+    // the use case asks for it — the owner just picked a category by hand —
+    // and never comes from a request body.
+    //
+    // `expected` becomes part of the WHERE, so the read the caller compared
+    // against and the write are one statement's worth of atomicity: a split
+    // edit that committed in between leaves the predicate matching nothing
+    // instead of being silently overwritten (D7). The predicate is applied
+    // whenever it is supplied, which is only ever for a mirrored row.
     const [row] = await db
       .update(financeTransaction)
       .set({
@@ -71,9 +92,23 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         categoryId: input.categoryId,
         day: input.date,
         note: input.note ?? null,
+        ...(input.categorySource !== undefined ? { categorySource: input.categorySource } : {}),
         updatedAt: new Date(),
       })
-      .where(and(eq(financeTransaction.id, id), eq(financeTransaction.userId, userId)))
+      .where(
+        and(
+          eq(financeTransaction.id, id),
+          eq(financeTransaction.userId, userId),
+          ...(expected
+            ? [
+                eq(financeTransaction.type, expected.type),
+                eq(financeTransaction.amount, expected.amount),
+                eq(financeTransaction.currency, expected.currency),
+                eq(financeTransaction.day, expected.date),
+              ]
+            : []),
+        ),
+      )
       .returning();
     return row ? toDomain(row) : null;
   }

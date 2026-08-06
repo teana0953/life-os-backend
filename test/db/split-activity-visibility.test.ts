@@ -119,12 +119,13 @@ describe("DrizzleSplitActivityRepository.listForUser visibility (real Postgres)"
       description: "Hotel",
       day: "2026-03-10",
       splitMode: "exact",
+      categoryName: null,
       shares: [
         { userId: A, amount: 300 },
         { userId: B, amount: 300 },
         { userId: C, amount: 300 },
       ],
-    });
+    }, []);
     await settlements.create({ id: SG, groupId: g2.id, fromUserId: A, toUserId: D, amount: 500, currency: "JPY", day: "2026-03-11", note: null, createdByUserId: D });
 
     await expenses.create({
@@ -137,11 +138,13 @@ describe("DrizzleSplitActivityRepository.listForUser visibility (real Postgres)"
       description: "Dinner",
       day: "2026-03-12",
       splitMode: "exact",
+      categoryName: null,
       shares: [{ userId: B, amount: 300 }],
-    });
+    }, []);
     await expenses.update(
       EP,
-      { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner", day: "2026-03-12", splitMode: "exact", shares: [{ userId: C, amount: 300 }] },
+      { payerUserId: A, amount: 300, currency: "TWD", description: "Dinner", day: "2026-03-12", splitMode: "exact", categoryName: null, shares: [{ userId: C, amount: 300 }] },
+      [],
       NOW,
       A,
     );
@@ -156,8 +159,9 @@ describe("DrizzleSplitActivityRepository.listForUser visibility (real Postgres)"
       description: "Taxi",
       day: "2026-03-13",
       splitMode: "exact",
+      categoryName: null,
       shares: [{ userId: C, amount: 400 }],
-    });
+    }, []);
     await expenses.delete(EQ, B, NOW);
 
     await settlements.create({ id: SP, groupId: null, fromUserId: C, toUserId: D, amount: 200, currency: "JPY", day: "2026-03-14", note: null, createdByUserId: C });

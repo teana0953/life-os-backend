@@ -9,6 +9,8 @@ export interface CreateExpenseInput {
   currency: string;
   description: string;
   day: string;
+  /** Optional; absent is the same as `null`. Validated (and empty-string-normalized) by `validateExpenseFields`. */
+  categoryName?: unknown;
   split: SplitInput;
 }
 
@@ -25,6 +27,8 @@ export interface UpdateExpenseInput {
   currency: string;
   description: string;
   day: string;
+  /** Optional; absent is the same as `null`. Validated (and empty-string-normalized) by `validateExpenseFields`. */
+  categoryName?: unknown;
   split: SplitInput;
   groupId?: string | null;
 }

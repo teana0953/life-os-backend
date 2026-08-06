@@ -40,6 +40,7 @@ import type { Settlement } from "../../../contexts/split/domain/settlement";
 import type { SplitActivity } from "../../../contexts/split/domain/split-activity";
 import type { SplitActivityRepository } from "../../../contexts/split/domain/split-activity-repository";
 import type { ListSettlementsFilter, SettlementRepository } from "../../../contexts/split/domain/settlement-repository";
+import type { SharesMirror } from "../../../contexts/split/domain/shares-mirror";
 import type { SplitExpense } from "../../../contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../contexts/split/domain/split-expense-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -55,6 +56,7 @@ export interface SplitHandlerOptions {
   friendChecker: FriendChecker;
   settlementRepository: SettlementRepository;
   splitActivityRepository: SplitActivityRepository;
+  sharesMirror: SharesMirror;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -133,6 +135,7 @@ function expenseToJson(expense: SplitExpense) {
     description: expense.description,
     day: expense.day,
     split_mode: expense.splitMode,
+    category_name: expense.categoryName,
     shares: expense.shares.map((share) => ({ user_id: share.userId, display_name: share.displayName, amount: share.amount })),
     created_at: expense.createdAt.toISOString(),
     updated_at: expense.updatedAt.toISOString(),
@@ -256,6 +259,7 @@ interface ExpenseFieldsFromBody {
   currency: string;
   description: string;
   day: string;
+  categoryName: unknown;
   split: SplitInput;
 }
 
@@ -266,6 +270,10 @@ function expenseFieldsFromBody(body: Record<string, unknown>): ExpenseFieldsFrom
     currency: requireString(body.currency, "currency"),
     description: requireString(body.description, "description"),
     day: requireDay(body.day, "day"),
+    // Passed through unchecked: `validateExpenseFields` owns every rule about
+    // it (type, empty-means-none, length cap), so creating and editing can
+    // never disagree about what a category name may be.
+    categoryName: body.category_name,
     split: parseSplitInput(body.split),
   };
 }
@@ -352,7 +360,7 @@ export function createCreateExpenseHandler(options: SplitHandlerOptions) {
 
     try {
       const expense = await createExpense(
-        { expenses: options.splitExpenseRepository, groups: options.expenseGroupRepository, friends: options.friendChecker },
+        { expenses: options.splitExpenseRepository, groups: options.expenseGroupRepository, friends: options.friendChecker, mirror: options.sharesMirror },
         { callerUserId: userId, groupId, ...fields },
       );
       return c.json(expenseToJson(expense), 201);
@@ -418,7 +426,7 @@ export function createUpdateExpenseHandler(options: SplitHandlerOptions) {
 
     try {
       const expense = await updateExpense(
-        { expenses: options.splitExpenseRepository, groups: options.expenseGroupRepository, friends: options.friendChecker },
+        { expenses: options.splitExpenseRepository, groups: options.expenseGroupRepository, friends: options.friendChecker, mirror: options.sharesMirror },
         userId,
         expenseId,
         { ...fields, groupId },

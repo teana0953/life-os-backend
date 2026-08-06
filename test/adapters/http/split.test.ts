@@ -14,6 +14,12 @@ import {
   InMemorySplitExpenseRepository,
   TestUserDirectory,
 } from "../../contexts/split/fakes";
+import {
+  FakeBudgetAlertNotifier,
+  InMemoryFinanceBudgetRepository,
+  InMemoryFinanceCategoryRepository,
+  InMemoryFinanceTransactionRepository,
+} from "../../contexts/finance/fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 
 function notImplemented(): never {
@@ -102,6 +108,8 @@ let friends: InMemoryFriendChecker;
 let balances: InMemoryBalanceRepository;
 let settlements: InMemorySettlementRepository;
 let activity: InMemorySplitActivityRepository;
+let financeCategories: InMemoryFinanceCategoryRepository;
+let financeTransactions: InMemoryFinanceTransactionRepository;
 let app: ReturnType<typeof createApp>;
 
 /** Resolves `identity`'s internal uuid by calling a cheap authenticated endpoint. */
@@ -115,7 +123,12 @@ beforeEach(() => {
   const directory = new TestUserDirectory();
   userRepository = new InMemoryUserRepository(directory);
   groups = new InMemoryExpenseGroupRepository(directory);
-  expenses = new InMemorySplitExpenseRepository(groups, directory);
+  // Real in-memory finance fakes, not throwing stubs: `createApp` composes a
+  // `FinanceSharesMirror` out of them, so every expense written here resolves
+  // a category and writes a mirror for real.
+  financeCategories = new InMemoryFinanceCategoryRepository();
+  financeTransactions = new InMemoryFinanceTransactionRepository();
+  expenses = new InMemorySplitExpenseRepository(groups, directory, financeTransactions);
   friends = new InMemoryFriendChecker();
   settlements = new InMemorySettlementRepository(groups, directory);
   activity = new InMemorySplitActivityRepository(groups);
@@ -210,30 +223,9 @@ beforeEach(() => {
       listByUserAndDateRange: notImplemented,
       upsert: notImplemented,
     },
-    financeCategoryRepository: {
-      listByUser: notImplemented,
-      findById: notImplemented,
-      findByUserTypeName: notImplemented,
-      create: notImplemented,
-      update: notImplemented,
-      insertDefaultsIfMissing: notImplemented,
-    },
-    financeTransactionRepository: {
-      create: notImplemented,
-      listByUserAndRange: notImplemented,
-      findById: notImplemented,
-      update: notImplemented,
-      delete: notImplemented,
-      getMonthlySummaryRaw: notImplemented,
-    },
-    financeBudgetRepository: {
-      upsert: notImplemented,
-      findByUserAndCategory: notImplemented,
-      delete: notImplemented,
-      listWithSpent: notImplemented,
-      getSpent: notImplemented,
-      tryRecordAlert: notImplemented,
-    },
+    financeCategoryRepository: financeCategories,
+    financeTransactionRepository: financeTransactions,
+    financeBudgetRepository: new InMemoryFinanceBudgetRepository(financeTransactions),
     financeNetWorthRepository: {
       listAccounts: notImplemented,
       findAccountById: notImplemented,
@@ -247,7 +239,7 @@ beforeEach(() => {
       findPreviousSnapshotMonth: notImplemented,
       getTrend: notImplemented,
     },
-    budgetAlertNotifier: { notify: notImplemented },
+    budgetAlertNotifier: new FakeBudgetAlertNotifier(),
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,
     expenseGroupRepository: groups,
@@ -278,22 +270,26 @@ interface ExpenseSpec {
   currency?: string;
   description?: string;
   day?: string;
+  /** Sent only when the key is present, so "no `category_name` at all" stays testable — `undefined` would be indistinguishable from `null` after `JSON.stringify`. */
+  categoryName?: unknown;
   split: { mode: "equal"; participant_user_ids: string[] } | { mode: "exact"; shares: { user_id: string; amount: number }[] };
 }
 
 async function createExpenseAs(identity: Identity, spec: ExpenseSpec): Promise<Response> {
+  const body: Record<string, unknown> = {
+    group_id: spec.groupId ?? null,
+    payer_user_id: spec.payerUserId,
+    amount: spec.amount,
+    currency: spec.currency ?? "TWD",
+    description: spec.description ?? "dinner",
+    day: spec.day ?? "2026-08-01",
+    split: spec.split,
+  };
+  if ("categoryName" in spec) body.category_name = spec.categoryName;
   return app.request("/api/split/expenses", {
     method: "POST",
     headers: await authHeader(identity),
-    body: JSON.stringify({
-      group_id: spec.groupId ?? null,
-      payer_user_id: spec.payerUserId,
-      amount: spec.amount,
-      currency: spec.currency ?? "TWD",
-      description: spec.description ?? "dinner",
-      day: spec.day ?? "2026-08-01",
-      split: spec.split,
-    }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -552,6 +548,50 @@ describe("expenses: creation and visibility", () => {
     expect(stringShareAmount.status).toBe(400);
   });
 
+  it("stores a category name verbatim, treats an empty one as none, and defaults to none", async () => {
+    // The name is what every participant's mirror resolves against, and it is
+    // stored exactly as typed: trimming it would contradict "reading them back
+    // returns the name that was given" and finance category names are
+    // themselves stored as the user typed them.
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+    const split = { mode: "equal" as const, participant_user_ids: [aliceId, bobId] };
+
+    const named = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, categoryName: " 餐飲 ", split });
+    expect(named.status).toBe(201);
+    expect(await named.json<{ category_name: string | null }>()).toMatchObject({ category_name: " 餐飲 " });
+
+    const empty = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, categoryName: "", split });
+    expect(empty.status).toBe(201);
+    expect(await empty.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+
+    const absent = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, split });
+    expect(absent.status).toBe(201);
+    const created = await absent.json<{ id: string; category_name: string | null }>();
+    expect(created.category_name).toBeNull();
+
+    // And it survives the read path, not just the write's echo.
+    const read = await app.request(`/api/split/expenses/${created.id}`, { headers: await authHeader(BOB) });
+    expect(await read.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+  });
+
+  it("rejects a category name that is not a string or is longer than the cap", async () => {
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+    const split = { mode: "equal" as const, participant_user_ids: [aliceId, bobId] };
+
+    const notAString = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, categoryName: 7, split });
+    expect(notAString.status).toBe(400);
+
+    const atCap = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, categoryName: "餐".repeat(100), split });
+    expect(atCap.status).toBe(201);
+
+    const overCap = await createExpenseAs(ALICE, { payerUserId: aliceId, amount: 900, categoryName: "餐".repeat(101), split });
+    expect(overCap.status).toBe(400);
+  });
+
   it("answers 404 for a malformed expense id and 400 for a malformed share id in the body", async () => {
     const aliceId = await idOf(ALICE);
 
@@ -596,6 +636,84 @@ describe("expenses: editing and deleting", () => {
 
     const deleted = await app.request(`/api/split/expenses/${expense.id}`, { method: "DELETE", headers: await authHeader(BOB) });
     expect(deleted.status).toBe(200);
+  });
+
+  it("edits the category name through PATCH, including clearing it with an empty string", async () => {
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await createExpenseAs(ALICE, {
+      payerUserId: aliceId,
+      amount: 900,
+      categoryName: "餐飲",
+      split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+    });
+    const expense = await created.json<{ id: string }>();
+
+    const patch = async (categoryName: unknown) =>
+      app.request(`/api/split/expenses/${expense.id}`, {
+        method: "PATCH",
+        headers: await authHeader(ALICE),
+        body: JSON.stringify({
+          payer_user_id: aliceId,
+          amount: 900,
+          currency: "TWD",
+          description: "dinner",
+          day: "2026-08-01",
+          category_name: categoryName,
+          split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+        }),
+      });
+
+    const changed = await patch("娛樂");
+    expect(changed.status).toBe(200);
+    expect(await changed.json<{ category_name: string | null }>()).toMatchObject({ category_name: "娛樂" });
+
+    const cleared = await patch("");
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+
+    expect((await patch("餐".repeat(101))).status).toBe(400);
+  });
+
+  it("clears the category name when a PATCH omits it, like every other field it omits", async () => {
+    // `PATCH` here is a full replacement, not a partial one: it already
+    // requires payer, amount, currency, description, day and split on every
+    // call, and an omitted one is not "keep what was there". `category_name`
+    // follows that rule rather than being the single sticky field, so a
+    // client that leaves it out clears it — and every share holder's mirror
+    // moves to their 其他 with it. Written down because it is the kind of
+    // thing a frontend discovers by losing data.
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await createExpenseAs(ALICE, {
+      payerUserId: aliceId,
+      amount: 900,
+      categoryName: "餐飲",
+      split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+    });
+    const expense = await created.json<{ id: string }>();
+
+    const res = await app.request(`/api/split/expenses/${expense.id}`, {
+      method: "PATCH",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        payer_user_id: aliceId,
+        amount: 900,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "equal", participant_user_ids: [aliceId, bobId] },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
+    const read = await app.request(`/api/split/expenses/${expense.id}`, { headers: await authHeader(BOB) });
+    expect(await read.json<{ category_name: string | null }>()).toMatchObject({ category_name: null });
   });
 });
 

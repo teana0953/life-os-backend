@@ -2,6 +2,7 @@ import { ExpenseNotFound, InvalidSplitInput } from "../domain/errors";
 import type { SplitExpense } from "../domain/split-expense";
 import type { CreateExpenseDeps } from "./create-expense";
 import type { UpdateExpenseInput } from "./expense-input";
+import { writeMirrorAftermath } from "./mirror-aftermath";
 import { validateExpenseFields } from "./validate-expense-fields";
 
 /**
@@ -39,12 +40,30 @@ export async function updateExpense(deps: CreateExpenseDeps, callerUserId: strin
       currency: input.currency,
       description: input.description,
       day: input.day,
+      categoryName: input.categoryName,
       split: input.split,
       checkArchived: false,
     },
   );
 
-  const updated = await deps.expenses.update(expenseId, validated, now, caller);
-  if (!updated) throw new ExpenseNotFound();
-  return updated;
+  // Planned before the write, like `createExpense`: the mirrors travel in the
+  // same batch as the expense, so they must exist before it is built.
+  const mirrors = await deps.mirror.plan({
+    splitExpenseId: expenseId,
+    currency: validated.currency,
+    day: validated.day,
+    description: validated.description,
+    categoryName: validated.categoryName,
+    shares: validated.shares,
+  });
+
+  const written = await deps.expenses.update(expenseId, validated, mirrors, now, caller);
+  if (!written) throw new ExpenseNotFound();
+
+  // The stored rows, not the planned ones. An edit keeps the category of a
+  // mirror its owner recategorised, so on this path the two routinely differ —
+  // and checking the planned category would check a budget the row does not
+  // count towards while never checking the one it does.
+  await writeMirrorAftermath(deps.mirror, written.mirrors);
+  return written.expense;
 }

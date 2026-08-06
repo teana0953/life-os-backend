@@ -1,9 +1,45 @@
 import { type CheckBudgetAlertsDeps, checkBudgetAlerts } from "./check-budget-alerts";
-import { FinanceCategoryArchived, FinanceCategoryNotFound, FinanceCategoryTypeMismatch, FinanceTransactionNotFound } from "../domain/errors";
+import {
+  FinanceCategoryArchived,
+  FinanceCategoryNotFound,
+  FinanceCategoryTypeMismatch,
+  FinanceTransactionNotFound,
+  MirroredTransactionChangedUnderneath,
+  MirroredTransactionReadOnly,
+} from "../domain/errors";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import { validateTransactionFields } from "./validate-transaction-fields";
+
+/**
+ * Which of a mirror's fields a full-replace update would actually rewrite.
+ *
+ * **The comparison is by value, not by presence.** `PUT` is a full replace,
+ * so a client changing only the category *must* resend `amount`, `currency`
+ * and `date`; refusing whatever was carried would make the one permitted edit
+ * impossible (design.md D7). Both sides are already normalized by the time
+ * this runs — `validateTransactionFields` uppercases the currency and
+ * `requireDay` pins the date to `YYYY-MM-DD` — so a plain comparison is the
+ * normalized one.
+ *
+ * **`type` belongs in this list as much as the amount does.** It is part of a
+ * full replace, and flipping an expense to income takes the money out of every
+ * budget's `spent` and out of the expense total while the split still says it
+ * is owed: the very disagreement this feature exists to remove, reached
+ * through an edit the API allows.
+ */
+function rewritesTheSplitsFacts(
+  existing: FinanceTransaction,
+  incoming: { type: FinanceTransaction["type"]; amount: number; currency: string; date: string },
+): boolean {
+  return (
+    existing.type !== incoming.type ||
+    existing.amount !== incoming.amount ||
+    existing.currency !== incoming.currency ||
+    existing.date !== incoming.date
+  );
+}
 
 /**
  * Use case: full-replace update of an owned transaction. `category_id` must
@@ -35,8 +71,43 @@ export async function updateTransaction(
   const categoryChanged = input.categoryId !== existing.categoryId;
   if (category.archived && categoryChanged) throw new FinanceCategoryArchived();
 
-  const updated = await transactionRepository.update(userId, id, { ...input, type, currency });
-  if (!updated) throw new FinanceTransactionNotFound();
+  if (existing.splitExpenseId !== null && rewritesTheSplitsFacts(existing, { type, amount: input.amount, currency, date: input.date })) {
+    throw new MirroredTransactionReadOnly("a transaction mirrored from a split expense can only have its category and note changed here");
+  }
+
+  // The comparison above and the write below are two statements, and the
+  // payer's split edit can commit between them: the holder read 900, the
+  // split became 1200, and an unconditional write would put 900 back with no
+  // error at all. Carrying what was compared into the write makes the write
+  // its own check (design.md D7).
+  const expected = existing.splitExpenseId === null ? undefined : { type: existing.type, amount: existing.amount, currency: existing.currency, date: existing.date };
+
+  const updated = await transactionRepository.update(
+    userId,
+    id,
+    {
+      ...input,
+      type,
+      currency,
+      // Picking the category by hand is what takes the row out of the split's
+      // hands; from here on the payer's next edit moves the amount and leaves
+      // the category alone (design.md D6). Set only on a mirror, and only when
+      // the category really changed, so re-sending the same one is not an
+      // implicit opt-out.
+      ...(existing.splitExpenseId !== null && categoryChanged ? { categorySource: "manual" as const } : {}),
+    },
+    expected,
+  );
+  if (!updated) {
+    // A guarded write that matched nothing has two causes, and answering the
+    // same for both would be a lie in one direction or the other: the split
+    // moved on (the row is still there, and re-sending against it may well
+    // succeed), or the split was deleted and the mirror cascaded away with it.
+    if (expected && (await transactionRepository.findById(id)) !== null) {
+      throw new MirroredTransactionChangedUnderneath("this transaction's split expense changed while the update was in flight; re-read it and try again");
+    }
+    throw new FinanceTransactionNotFound();
+  }
 
   if (budgetAlertDeps) {
     try {
