@@ -1,4 +1,4 @@
-import { localMinute, localParts } from "../domain/reminder-clock";
+import { localMinute, localParts } from "../../../shared/reminder-clock";
 import { isActiveOn } from "../domain/care-schedule";
 import type { CareItem, CareItemRepository, CareSchedule } from "../domain/care-item";
 import type { CareLogRepository } from "../domain/care-log";

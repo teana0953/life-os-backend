@@ -1,3 +1,10 @@
+/**
+ * Timezone-aware local-date/time calendar math. Originally
+ * `notifications/domain/reminder-clock.ts`; promoted here (add-installments
+ * design.md D5) once finance became its second consumer — no financial use
+ * case had ever read `users.timezone` before, and the three existing callers
+ * were already all inside notifications, which made the move cheap.
+ */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface LocalParts {

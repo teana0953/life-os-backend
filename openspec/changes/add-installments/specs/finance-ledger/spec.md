@@ -100,3 +100,17 @@ what changing or settling the plan costs.
 
 - **WHEN** a single instalment's amount is edited
 - **THEN** no other instalment's amount changes
+
+### Requirement: Reading a plan
+
+A user SHALL be able to read a plan's period count, creation mode (whether its
+amounts were divided from a total or given per instalment), and start month —
+not merely which transactions belong to it — so that a client can render an
+instalment's position ("3 of 12") and know whether settling a plan should
+prompt for an amount.
+
+#### Scenario: A plan's schedule is readable, not just its transactions
+
+- **WHEN** a plan is read
+- **THEN** its period count, creation mode, and start month are returned
+  alongside the transactions it produced

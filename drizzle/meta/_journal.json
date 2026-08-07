@@ -197,6 +197,13 @@
       "when": 1786003222795,
       "tag": "0027_mirror-splits-into-ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786085741933,
+      "tag": "0028_add-installments",
+      "breakpoints": true
     }
   ]
 }

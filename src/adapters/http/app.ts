@@ -6,6 +6,7 @@ import type { BudgetAlertNotifier } from "../../contexts/finance/domain/budget-a
 import type { FinanceBudgetRepository } from "../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../contexts/finance/domain/finance-category-repository";
 import type { FinanceTransactionRepository } from "../../contexts/finance/domain/finance-transaction-repository";
+import type { InstallmentPlanRepository } from "../../contexts/finance/domain/installment-plan-repository";
 import type { NetWorthRepository } from "../../contexts/finance/domain/networth-repository";
 import type { BodyProfileRepository } from "../../contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../contexts/health/domain/bowel-repository";
@@ -106,11 +107,13 @@ import {
 } from "./routes/care";
 import {
   createCreateCategoryHandler,
+  createCreateInstallmentPlanHandler,
   createCreateNetWorthAccountHandler,
   createCreateTransactionHandler,
   createDeleteBudgetHandler,
   createDeleteTransactionHandler,
   createGetBudgetsHandler,
+  createGetInstallmentPlanHandler,
   createGetNetWorthHandler,
   createGetNetWorthTrendHandler,
   createGetSplitSpendingHandler,
@@ -119,7 +122,9 @@ import {
   createListNetWorthAccountsHandler,
   createListTransactionsHandler,
   createReorderNetWorthAccountsHandler,
+  createSettleInstallmentPlanHandler,
   createUpdateCategoryHandler,
+  createUpdateInstallmentPlanHandler,
   createUpdateNetWorthAccountHandler,
   createUpdateTransactionHandler,
   createUpsertBudgetHandler,
@@ -194,6 +199,7 @@ export interface CreateAppOptions {
   financeTransactionRepository: FinanceTransactionRepository;
   financeBudgetRepository: FinanceBudgetRepository;
   financeNetWorthRepository: NetWorthRepository;
+  installmentPlanRepository: InstallmentPlanRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
   friendshipRepository: FriendshipRepository;
   friendInviteRepository: FriendInviteRepository;
@@ -414,6 +420,7 @@ export function createApp(options: CreateAppOptions) {
     financeTransactionRepository: options.financeTransactionRepository,
     financeBudgetRepository: options.financeBudgetRepository,
     financeNetWorthRepository: options.financeNetWorthRepository,
+    installmentPlanRepository: options.installmentPlanRepository,
     budgetAlertNotifier: options.budgetAlertNotifier,
     splitSpendingRepository: options.splitSpendingRepository,
   };
@@ -421,6 +428,10 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/finance/transactions", authMiddleware, createCreateTransactionHandler(financeOptions));
   app.put("/api/finance/transactions/:id", authMiddleware, createUpdateTransactionHandler(financeOptions));
   app.delete("/api/finance/transactions/:id", authMiddleware, createDeleteTransactionHandler(financeOptions));
+  app.post("/api/finance/installment-plans", authMiddleware, createCreateInstallmentPlanHandler(financeOptions));
+  app.get("/api/finance/installment-plans/:id", authMiddleware, createGetInstallmentPlanHandler(financeOptions));
+  app.put("/api/finance/installment-plans/:id", authMiddleware, createUpdateInstallmentPlanHandler(financeOptions));
+  app.post("/api/finance/installment-plans/:id/settle", authMiddleware, createSettleInstallmentPlanHandler(financeOptions));
   app.get("/api/finance/categories", authMiddleware, createListCategoriesHandler(financeOptions));
   app.post("/api/finance/categories", authMiddleware, createCreateCategoryHandler(financeOptions));
   app.put("/api/finance/categories/:id", authMiddleware, createUpdateCategoryHandler(financeOptions));

@@ -87,6 +87,8 @@ export class InMemoryFinanceTransactionRepository implements FinanceTransactionR
       note: input.note ?? null,
       splitExpenseId: input.splitExpenseId ?? null,
       categorySource: input.categorySource ?? "manual",
+      planId: input.planId ?? null,
+      installmentNo: input.installmentNo ?? null,
     };
     this.transactions.push(txn);
     return txn;

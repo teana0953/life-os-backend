@@ -21,6 +21,7 @@ import {
   InMemoryFinanceCategoryRepository,
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
+import { InMemoryInstallmentPlanRepository } from "../../contexts/finance/installment-fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
 import {
   InMemoryExpenseGroupRepository,
@@ -214,6 +215,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
   const financeTransactionRepository = overrides.financeTransactionRepository ?? new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
   const financeNetWorthRepository = new InMemoryNetWorthRepository();
+  const installmentPlanRepository = new InMemoryInstallmentPlanRepository(financeTransactionRepository);
   const budgetAlertNotifier = new FakeBudgetAlertNotifier();
   // Real (in-memory) split fakes, not stubs: the split-spending and
   // budget-non-interference tests below need to actually create a split
@@ -272,6 +274,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
     financeTransactionRepository,
     financeBudgetRepository,
     financeNetWorthRepository,
+    installmentPlanRepository,
     budgetAlertNotifier,
     vapidPublicKey: "",
     friendshipRepository: stubFriendshipRepository,
@@ -292,6 +295,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
     financeTransactionRepository,
     financeBudgetRepository,
     financeNetWorthRepository,
+    installmentPlanRepository,
     budgetAlertNotifier,
     expenseGroupRepository,
     splitExpenseRepository,

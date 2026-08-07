@@ -3,6 +3,7 @@ import type { FinanceBudget } from "../domain/finance-budget";
 import type { FinanceBudgetRepository } from "../domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { FinanceTransactionType } from "../domain/finance-transaction";
+import { localParts } from "../../../shared/reminder-clock";
 
 const THRESHOLDS = [80, 100] as const;
 
@@ -10,6 +11,14 @@ export interface CheckBudgetAlertsDeps {
   budgetRepository: FinanceBudgetRepository;
   categoryRepository: FinanceCategoryRepository;
   notifier: BudgetAlertNotifier;
+  /**
+   * add-installments (design.md D4b): alerts fire only for transaction months
+   * ≤ the user's own today — a future-month write must not burn that month's
+   * one (budget, month, threshold) alert row. Both are needed to know the
+   * user's today; when absent the check behaves as before.
+   */
+  now?: () => Date;
+  getUserTimezone?: (userId: string) => Promise<string>;
 }
 
 export interface CheckBudgetAlertsInput {
@@ -82,6 +91,19 @@ export async function checkBudgetAlerts(deps: CheckBudgetAlertsDeps, input: Chec
   if (input.type !== "expense" || input.currency !== "TWD") return;
 
   const month = monthOf(input.date);
+
+  // add-installments design.md D4b: a write dated in a month that has not
+  // arrived yet must not raise (and so dedup-burn) that month's alert. Gated
+  // on both `now`/`getUserTimezone` being supplied — when either is absent
+  // this behaves exactly as before (every existing caller that doesn't pass
+  // them keeps the old, ungated behavior). "≤ the user's today", not
+  // "backdated/plan writes never alert": the latter would also silence an
+  // early settlement's today-dated transaction, which is the largest single
+  // expense this feature can produce.
+  if (deps.now && deps.getUserTimezone) {
+    const today = localParts(deps.now(), await deps.getUserTimezone(input.userId)).date;
+    if (month > monthOf(today)) return;
+  }
   const categoryIds = new Set<string | null>([null, input.categoryId]);
   if (input.previousCategoryId !== undefined && input.previousCategoryId !== input.categoryId) {
     categoryIds.add(input.previousCategoryId);
