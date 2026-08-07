@@ -308,6 +308,7 @@ function buildApp(options: { userRepository: UserRepository; foodDictionaryRepos
         findAccountByUserKindName: notImplemented,
         createAccount: notImplemented,
         updateAccount: notImplemented,
+        reorderAccounts: notImplemented,
         insertDefaultAccountsIfMissing: notImplemented,
         upsertSnapshot: notImplemented,
         listMonthValues: notImplemented,

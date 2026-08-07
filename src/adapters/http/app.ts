@@ -118,6 +118,7 @@ import {
   createListCategoriesHandler,
   createListNetWorthAccountsHandler,
   createListTransactionsHandler,
+  createReorderNetWorthAccountsHandler,
   createUpdateCategoryHandler,
   createUpdateNetWorthAccountHandler,
   createUpdateTransactionHandler,
@@ -431,6 +432,8 @@ export function createApp(options: CreateAppOptions) {
 
   app.get("/api/finance/networth/accounts", authMiddleware, createListNetWorthAccountsHandler(financeOptions));
   app.post("/api/finance/networth/accounts", authMiddleware, createCreateNetWorthAccountHandler(financeOptions));
+  // Must be registered before PUT /accounts/:id, or "order" matches that route as id="order".
+  app.put("/api/finance/networth/accounts/order", authMiddleware, createReorderNetWorthAccountsHandler(financeOptions));
   app.put("/api/finance/networth/accounts/:id", authMiddleware, createUpdateNetWorthAccountHandler(financeOptions));
   app.put("/api/finance/networth/snapshots", authMiddleware, createUpsertNetWorthSnapshotHandler(financeOptions));
   app.get("/api/finance/networth/trend", authMiddleware, createGetNetWorthTrendHandler(financeOptions));

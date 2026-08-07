@@ -88,6 +88,27 @@ export class DrizzleNetWorthRepository implements NetWorthRepository {
     return row ? accountToDomain(row) : null;
   }
 
+  /**
+   * All-or-nothing: one `db.batch` of per-account `UPDATE`s setting `sortOrder`
+   * to each id's index in `orderedIds`, scoped to `(userId, kind)` on every
+   * statement as defense in depth (the `reorderNetWorthAccounts` use case is
+   * what actually validates `orderedIds` against the owned set). `drizzle-orm/
+   * neon-http` has no `transaction()`, so `db.batch` — one READ COMMITTED
+   * round trip — is the only atomic unit available (see
+   * `drizzle-split-expense-repository.ts` for the same pattern).
+   */
+  async reorderAccounts(userId: string, kind: NetWorthKind, orderedIds: string[]): Promise<void> {
+    if (orderedIds.length === 0) return;
+    const db = this.getDb();
+    const [first, ...rest] = orderedIds.map((id, index) =>
+      db
+        .update(financeNetworthAccount)
+        .set({ sortOrder: index, updatedAt: new Date() })
+        .where(and(eq(financeNetworthAccount.id, id), eq(financeNetworthAccount.userId, userId), eq(financeNetworthAccount.kind, kind))),
+    );
+    await db.batch([first, ...rest]);
+  }
+
   async insertDefaultAccountsIfMissing(defaults: CreateNetWorthAccountInput[]): Promise<void> {
     if (defaults.length === 0) return;
     const db = this.getDb();

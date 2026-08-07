@@ -16,6 +16,14 @@ export interface NetWorthRepository {
   /** Owner-scoped partial update (name/sort_order/archived; kind immutable); returns null when not owned/found. */
   updateAccount(userId: string, id: string, patch: UpdateNetWorthAccountPatch): Promise<NetWorthAccount | null>;
   /**
+   * Atomically sets `sortOrder` for every account in `orderedIds` to its index
+   * in that array (0-based), all-or-nothing. Callers (the `reorderNetWorthAccounts`
+   * use case) are responsible for validating that `orderedIds` is exactly the
+   * set of the user's account ids of `kind` (including archived ones) before
+   * calling this — the port itself does not re-check ownership or kind.
+   */
+  reorderAccounts(userId: string, kind: NetWorthKind, orderedIds: string[]): Promise<void>;
+  /**
    * Idempotently inserts the given defaults for `userId`, ignoring any that
    * already exist (the `(user_id, kind, name)` unique index is the concurrency
    * guard behind `ensureDefaultAccounts`' "seed only if the user has none").

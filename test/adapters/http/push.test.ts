@@ -276,6 +276,7 @@ function buildApp(vapidPublicKey = "test-vapid-public-key") {
         findAccountByUserKindName: notImplemented,
         createAccount: notImplemented,
         updateAccount: notImplemented,
+        reorderAccounts: notImplemented,
         insertDefaultAccountsIfMissing: notImplemented,
         upsertSnapshot: notImplemented,
         listMonthValues: notImplemented,

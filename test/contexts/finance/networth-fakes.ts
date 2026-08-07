@@ -64,6 +64,13 @@ export class InMemoryNetWorthRepository implements NetWorthRepository {
     return account;
   }
 
+  async reorderAccounts(userId: string, kind: NetWorthKind, orderedIds: string[]): Promise<void> {
+    orderedIds.forEach((id, index) => {
+      const account = this.accounts.find((a) => a.id === id && a.userId === userId && a.kind === kind);
+      if (account) account.sortOrder = index;
+    });
+  }
+
   async insertDefaultAccountsIfMissing(defaults: CreateNetWorthAccountInput[]): Promise<void> {
     for (const d of defaults) {
       const exists = this.accounts.some((a) => a.userId === d.userId && a.kind === d.kind && a.name === d.name);

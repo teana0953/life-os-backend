@@ -128,6 +128,8 @@ const TABLES = [
   "finance_budget_alert",
   "finance_budget",
   "finance_category",
+  // CASCADE also truncates finance_networth_snapshot (FK onDelete: cascade).
+  "finance_networth_account",
   "expense_group_member",
   "expense_group",
   "users",

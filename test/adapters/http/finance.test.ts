@@ -1684,5 +1684,103 @@ describe("finance HTTP routes", () => {
       const token = await validToken();
       expect((await app.request("/api/finance/networth/trend?from=nope&to=2026-08", authed(token))).status).toBe(400);
     });
+
+    describe("PUT /api/finance/networth/accounts/order (batch reorder, issue #80)", () => {
+      // Accounts are seeded via POST only — never GET /accounts here, because
+      // GET lazily seeds the 10 defaults and would silently widen "全部科目"
+      // beyond what these fixtures control. State is asserted directly on the
+      // in-memory fake for the same reason: "拒絕而且不寫入任何一筆" must mean
+      // no account object changed, not just that a later GET looks plausible.
+      async function seedOrdered(token: string, kind: "asset" | "liability", name: string, sortOrder: number) {
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts",
+          authed(token, "POST", { kind, name, sort_order: sortOrder }),
+        );
+        expect(res.status).toBe(200);
+        return (await res.json()) as { id: string };
+      }
+
+      function sortOrderOf(id: string): number | undefined {
+        return ctx.financeNetWorthRepository.accounts.find((a) => a.id === id)?.sortOrder;
+      }
+
+      it("rejects ids missing one of the user's accounts of that kind (400) and writes nothing", async () => {
+        const token = await validToken("uid-owner");
+        const stock = await seedOrdered(token, "asset", "股票", 10);
+        const cash = await seedOrdered(token, "asset", "現金", 20);
+
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(token, "PUT", { kind: "asset", ids: [stock.id] }),
+        );
+        expect(res.status).toBe(400);
+        expect(sortOrderOf(stock.id)).toBe(10);
+        expect(sortOrderOf(cash.id)).toBe(20);
+      });
+
+      it("rejects ids containing an extra unknown id (400) and writes nothing", async () => {
+        const token = await validToken("uid-owner");
+        const stock = await seedOrdered(token, "asset", "股票", 10);
+        const cash = await seedOrdered(token, "asset", "現金", 20);
+
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(token, "PUT", { kind: "asset", ids: [cash.id, stock.id, "00000000-0000-0000-0000-0000000000ff"] }),
+        );
+        expect(res.status).toBe(400);
+        expect(sortOrderOf(stock.id)).toBe(10);
+        expect(sortOrderOf(cash.id)).toBe(20);
+      });
+
+      it("rejects ids smuggling in another user's or another kind's account (400) and writes nothing", async () => {
+        const owner = await validToken("uid-owner");
+        const other = await validToken("uid-other");
+        const stock = await seedOrdered(owner, "asset", "股票", 10);
+        const cash = await seedOrdered(owner, "asset", "現金", 20);
+        const loan = await seedOrdered(owner, "liability", "學貸", 30);
+        const foreign = await seedOrdered(other, "asset", "外人資產", 40);
+
+        // Both fixtures keep the LENGTH equal to the owner's asset count (2),
+        // so an implementation that only checks length passes them — and both
+        // make exactly one of {ownership, kind} the failing check, so an
+        // implementation that checks only the other one passes them too.
+        const wrongUser = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(owner, "PUT", { kind: "asset", ids: [stock.id, foreign.id] }),
+        );
+        expect(wrongUser.status).toBe(400);
+
+        const wrongKind = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(owner, "PUT", { kind: "asset", ids: [stock.id, loan.id] }),
+        );
+        expect(wrongKind.status).toBe(400);
+
+        expect(sortOrderOf(stock.id)).toBe(10);
+        expect(sortOrderOf(cash.id)).toBe(20);
+        expect(sortOrderOf(loan.id)).toBe(30);
+        expect(sortOrderOf(foreign.id)).toBe(40);
+      });
+
+      it("reorders archived accounts in the same ordering space: the archived id must be given and gets its own sortOrder", async () => {
+        const token = await validToken("uid-owner");
+        const stock = await seedOrdered(token, "asset", "股票", 10);
+        const cash = await seedOrdered(token, "asset", "現金", 20);
+        const archive = await ctx.app.request(`/api/finance/networth/accounts/${cash.id}`, authed(token, "PUT", { archived: true }));
+        expect(archive.status).toBe(200);
+
+        // The archived account is in ids (an implementation that drops
+        // archived from the validation scope sees it as "extra" and 400s) and
+        // lands FIRST (an implementation that skips writing archived leaves
+        // its sortOrder at 20 while still returning 200).
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(token, "PUT", { kind: "asset", ids: [cash.id, stock.id] }),
+        );
+        expect(res.status).toBe(200);
+        expect(sortOrderOf(cash.id)).toBe(0);
+        expect(sortOrderOf(stock.id)).toBe(1);
+      });
+    });
   });
 });
