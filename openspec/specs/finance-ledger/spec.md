@@ -183,7 +183,9 @@ user-created one, because the mirror is not a choice and refusing it would
 drop a real expense.
 
 The payer SHALL be mirrored only for their own share; fronting money for
-others is not spending. A repayment SHALL NOT be mirrored. A zero share SHALL
+others is not spending. A repayment SHALL NOT be mirrored — with one
+exception, below, where the repayment schedule is mirrored *instead of* the
+share, never as well as it. A zero share SHALL
 NOT be mirrored: owing nothing is not spending, and a finance transaction's
 amount must be positive.
 
@@ -197,6 +199,26 @@ report, per month and per currency, what the user personally owed on split
 expenses, and SHALL mark each currency as to whether it is already counted in
 the user's transactions, so that a caller can neither double-count a mirrored
 currency nor silently lose an unmirrored one.
+
+A shared expense MAY carry a repayment schedule: a period count and a per-period
+amount that the share holders pay the payer over time, rather than at once.
+When a share is repaid on a schedule, that holder's ledger SHALL receive one
+transaction per period instead of a single transaction for the whole share,
+because each period is what they actually pay that month.
+
+This is an exception to "a repayment is not mirrored", and it SHALL remain an
+exclusive one: the schedule replaces the lump mirror, never joins it. Writing
+both would record the same money twice — a 6,000 share plus twelve 500s is
+18,000 of spending for 6,000 of expense.
+
+What is owed SHALL NOT change because of a schedule. A schedule says when the
+money moves, not whether the debt exists; the debt is whole from the moment the
+payer paid. A balance that counted only the periods already due would report a
+brand-new plan as nothing owed at all, since a zero balance is reported as an
+absent one — indistinguishable from a settled debt.
+
+Scheduled periods SHALL NOT be recorded as repayments. A period is a plan to
+pay; a repayment is a payment. Only the latter reduces what is owed.
 
 #### Scenario: A user's own shares are summed per currency
 
@@ -328,6 +350,35 @@ currency nor silently lose an unmirrored one.
 - **THEN** the split-spending report shows TWD marked as already counted in
   the user's transactions, so adding it to the summary total would
   double-count
+
+#### Scenario: A scheduled share reaches the ledger one period at a time
+
+- **WHEN** a share of 6000 is repaid over twelve periods of 500
+- **THEN** the holder's ledger has twelve transactions of 500, one per period,
+  and no transaction for the 6000
+
+#### Scenario: The schedule replaces the share, never joins it
+
+- **WHEN** a scheduled share is recorded
+- **THEN** the holder's total mirrored spending for that expense is the share,
+  not the share plus the periods
+
+#### Scenario: An unscheduled share is unchanged
+
+- **WHEN** a share carries no repayment schedule
+- **THEN** it is mirrored as one transaction, exactly as before
+
+#### Scenario: Scheduling does not change what is owed
+
+- **WHEN** a share is put on a twelve-period schedule and none of it has been
+  repaid yet
+- **THEN** the balance still says the whole share is owed, and the debt is
+  reported rather than omitted as if nothing were owed
+
+#### Scenario: A scheduled period is not a repayment
+
+- **WHEN** a period's date arrives and the holder has not actually paid
+- **THEN** the balance is unchanged — only a recorded repayment moves it
 
 ### Requirement: Instalment plans
 
