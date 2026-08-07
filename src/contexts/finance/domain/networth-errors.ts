@@ -9,3 +9,6 @@ export class NetWorthAccountNameConflict extends Error {}
 
 /** An account create supplied a `kind` outside the fixed `"asset" | "liability"` set (route maps this to 400). */
 export class NetWorthInvalidKind extends Error {}
+
+/** A batch reorder's `ids` were not exactly the user's account ids of that `kind` (missing, extra, wrong owner, or wrong kind) (route maps this to 400). */
+export class NetWorthAccountOrderMismatch extends Error {}

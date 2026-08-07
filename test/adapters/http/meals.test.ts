@@ -599,6 +599,9 @@ function buildApp() {
       updateAccount: async () => {
         throw new Error("not implemented in this test's fakes");
       },
+      reorderAccounts: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
       insertDefaultAccountsIfMissing: async () => {
         throw new Error("not implemented in this test's fakes");
       },

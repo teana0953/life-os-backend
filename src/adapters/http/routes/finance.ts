@@ -16,6 +16,7 @@ import { createNetWorthAccount } from "../../../contexts/finance/application/cre
 import { getMonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
 import { getNetWorthTrend } from "../../../contexts/finance/application/get-networth-trend";
 import { listNetWorthAccounts } from "../../../contexts/finance/application/list-networth-accounts";
+import { reorderNetWorthAccounts } from "../../../contexts/finance/application/reorder-networth-accounts";
 import { updateNetWorthAccount } from "../../../contexts/finance/application/update-networth-account";
 import { upsertNetWorthSnapshot } from "../../../contexts/finance/application/upsert-networth-snapshot";
 import {
@@ -32,6 +33,7 @@ import {
   NetWorthAccountArchived,
   NetWorthAccountNameConflict,
   NetWorthAccountNotFound,
+  NetWorthAccountOrderMismatch,
   NetWorthInvalidKind,
 } from "../../../contexts/finance/domain/networth-errors";
 import type { NetWorthAccount } from "../../../contexts/finance/domain/networth-account";
@@ -54,7 +56,7 @@ import type { SplitSpendingRepository } from "../../../contexts/split/domain/spl
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
-import { BadRequestError, requireDay, requireFiniteNumber, requireMonth, requireString } from "../validation";
+import { BadRequestError, requireDay, requireFiniteNumber, requireMonth, requireString, requireStringArray } from "../validation";
 
 export interface FinanceHandlerOptions {
   userRepository: UserRepository;
@@ -96,6 +98,7 @@ function mapFinanceError(err: unknown, c: Context): Response {
     err instanceof MirroredTransactionReadOnly ||
     err instanceof NetWorthAccountArchived ||
     err instanceof NetWorthAccountNameConflict ||
+    err instanceof NetWorthAccountOrderMismatch ||
     err instanceof NetWorthInvalidKind
   ) {
     throw new BadRequestError(err.message);
@@ -455,6 +458,29 @@ export function createUpdateNetWorthAccountHandler(options: FinanceHandlerOption
         archived: typeof body.archived === "boolean" ? body.archived : undefined,
       });
       return c.json(networthAccountToJson(account));
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/**
+ * Protected `PUT /api/finance/networth/accounts/order`: atomically reorder all
+ * of the user's accounts of one `kind` (issue #80). `ids` must be exactly the
+ * user's account ids of that `kind`, including archived ones; must be
+ * registered before `PUT /accounts/:id` or `/accounts/order` matches that
+ * route with `id="order"`.
+ */
+export function createReorderNetWorthAccountsHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const kind = requireString(body.kind, "kind") as NetWorthAccount["kind"];
+      const ids = requireStringArray(body.ids, "ids");
+      await reorderNetWorthAccounts(options.financeNetWorthRepository, userId, kind, ids);
+      return c.json({ reordered: true });
     } catch (err) {
       return mapFinanceError(err, c);
     }
