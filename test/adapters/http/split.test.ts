@@ -647,6 +647,40 @@ describe("expenses: creation and visibility", () => {
     ]);
   });
 
+  it("gives a scheduled share back in the same spelling it accepts", async () => {
+    // The round trip is the point: an edit sends the whole share list, so a
+    // schedule the client cannot read is a schedule the next edit deletes.
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    const created = await app.request("/api/split/expenses", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        group_id: null,
+        payer_user_id: aliceId,
+        amount: 3000,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "exact", shares: [{ user_id: bobId, amount: 3000, schedule: { periods: 6, per_period_amount: 500 } }] },
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { id } = await created.json<{ id: string }>();
+
+    const read = await app.request(`/api/split/expenses/${id}`, { headers: await authHeader(ALICE) });
+    const body = await read.json<{ shares: Array<Record<string, unknown>> }>();
+
+    expect(body.shares[0]).toEqual({
+      user_id: bobId,
+      display_name: expect.any(String),
+      amount: 3000,
+      schedule: { periods: 6, per_period_amount: 500 },
+    });
+  });
+
   it("rejects a repayment schedule when periods * per_period_amount does not equal the share amount", async () => {
     await makeFriends(ALICE, BOB);
     const aliceId = await idOf(ALICE);

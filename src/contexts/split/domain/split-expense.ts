@@ -1,3 +1,14 @@
+/**
+ * A repayment schedule: this holder repays in `periods` monthly instalments of
+ * `perPeriodAmount` each. `periods * perPeriodAmount` always equals the
+ * share's amount — the HTTP layer rejects anything else, so no client ever has
+ * to reconcile two figures that disagree.
+ */
+export interface ShareSchedule {
+  periods: number;
+  perPeriodAmount: number;
+}
+
 /** A share as written: identity plus what is owed. Names are a read concern. */
 export interface SplitShareInput {
   userId: string;
@@ -10,7 +21,7 @@ export interface SplitShareInput {
    * whole share regardless — a schedule says when the money moves, not
    * whether the debt exists.
    */
-  schedule?: { periods: number; perPeriodAmount: number };
+  schedule?: ShareSchedule;
 }
 
 /**

@@ -137,7 +137,17 @@ function expenseToJson(expense: SplitExpense) {
     day: expense.day,
     split_mode: expense.splitMode,
     category_name: expense.categoryName,
-    shares: expense.shares.map((share) => ({ user_id: share.userId, display_name: share.displayName, amount: share.amount })),
+    shares: expense.shares.map((share) => ({
+      user_id: share.userId,
+      display_name: share.displayName,
+      amount: share.amount,
+      // Absent for an unscheduled share, and present in the same spelling the
+      // write side accepts: an edit re-sends what it read, and a client that
+      // could not read the schedule would necessarily drop it.
+      ...(share.schedule
+        ? { schedule: { periods: share.schedule.periods, per_period_amount: share.schedule.perPeriodAmount } }
+        : {}),
+    })),
     created_at: expense.createdAt.toISOString(),
     updated_at: expense.updatedAt.toISOString(),
   };
