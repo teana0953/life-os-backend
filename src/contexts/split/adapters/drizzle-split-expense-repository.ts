@@ -387,31 +387,49 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
     // Shortening a schedule leaves the dropped periods with nothing to
     // conflict on, so an upsert alone cannot remove them — they would survive
     // as orphans and keep charging the holder for periods that no longer
-    // exist. Set-based like the delete above: the highest surviving period
-    // number is all it needs, never the shape of the edit.
-    const highestPeriod = periodMirrors.reduce((max, mirror) => Math.max(max, mirror.installmentNo ?? 0), 0);
-    const droppedPeriodDelete = db
-      .delete(financeTransaction)
-      .where(
-        and(
-          eq(financeTransaction.splitExpenseId, id),
-          sql`${financeTransaction.installmentNo} is not null`,
-          sql`${financeTransaction.installmentNo} > ${highestPeriod}`,
-        ),
-      );
+    // exist. Must track the highest surviving period **per holder** (not
+    // globally), because one expense can have multiple independently-scheduled
+    // holders with different period counts. Delete per holder, not globally.
+    const highestPeriodPerHolder = new Map<string, number>();
+    for (const mirror of periodMirrors) {
+      const current = highestPeriodPerHolder.get(mirror.userId) ?? 0;
+      highestPeriodPerHolder.set(mirror.userId, Math.max(current, mirror.installmentNo ?? 0));
+    }
+    // Build a list of delete conditions, one per holder: delete this holder's
+    // periods that exceed their own highest surviving period.
+    const dropConditions = Array.from(highestPeriodPerHolder.entries()).map(([holderId, highest]) =>
+      and(
+        eq(financeTransaction.userId, holderId),
+        eq(financeTransaction.splitExpenseId, id),
+        sql`${financeTransaction.installmentNo} is not null`,
+        sql`${financeTransaction.installmentNo} > ${highest}`,
+      ),
+    );
+    // Execute a separate delete for each holder (or none if no periods), so
+    // each holder's orphaned periods are deleted correctly.
+    const droppedPeriodDeletes = dropConditions.map((condition) =>
+      db.delete(financeTransaction).where(condition),
+    );
     // Same reason as `create`: two spelled-out batches rather than a spread,
     // so the upsert's returned rows have a known position.
     let written: ShareMirrorRow[] = [];
     const head = [deleteShares, insertShares, updateExpense] as const;
-    const tail = [mirrorDelete, droppedPeriodDelete, activityInsert] as const;
+    const tail = [mirrorDelete, ...droppedPeriodDeletes, activityInsert] as const;
     if (lumpMirrors.length > 0 && periodMirrors.length > 0) {
-      const [, , , lumpRows, periodRows] = await db.batch([...head, lumpUpsert(), periodUpsert(), ...tail]);
+      const result = await db.batch([...head, lumpUpsert(), periodUpsert(), ...tail]);
+      // Position 0-2: head; 3: lumpUpsert; 4: periodUpsert; 5+: tail (droppedPeriodDeletes + activityInsert)
+      const lumpRows = result[3];
+      const periodRows = result[4];
       written = [...writtenMirrors(id, lumpRows), ...writtenMirrors(id, periodRows)];
     } else if (lumpMirrors.length > 0) {
-      const [, , , lumpRows] = await db.batch([...head, lumpUpsert(), ...tail]);
+      const result = await db.batch([...head, lumpUpsert(), ...tail]);
+      // Position 0-2: head; 3: lumpUpsert; 4+: tail (droppedPeriodDeletes + activityInsert)
+      const lumpRows = result[3];
       written = writtenMirrors(id, lumpRows);
     } else if (periodMirrors.length > 0) {
-      const [, , , periodRows] = await db.batch([...head, periodUpsert(), ...tail]);
+      const result = await db.batch([...head, periodUpsert(), ...tail]);
+      // Position 0-2: head; 3: periodUpsert; 4+: tail (droppedPeriodDeletes + activityInsert)
+      const periodRows = result[3];
       written = writtenMirrors(id, periodRows);
     } else {
       await db.batch([...head, ...tail]);

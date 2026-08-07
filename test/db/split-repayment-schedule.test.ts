@@ -36,10 +36,12 @@ import { createTestDb, insertCategory, insertUser, type TestDb } from "./harness
 const A = "11111111-1111-1111-1111-111111111111"; // payer
 const B = "22222222-2222-2222-2222-222222222222"; // holder on a schedule
 const C = "33333333-3333-3333-3333-333333333333"; // holder with no schedule
+const D = "44444444-4444-4444-4444-444444444444"; // holder on a different schedule
 const E1 = "e1111111-1111-1111-1111-111111111111";
 const E2 = "e2222222-2222-2222-2222-222222222222";
 const CAT_B = "cb000001-0000-0000-0000-000000000000";
 const CAT_C = "cc000001-0000-0000-0000-000000000000";
+const CAT_D = "cd000001-0000-0000-0000-000000000000";
 
 /** A share on a repayment schedule. The cast is the red-phase seam: `schedule` does not exist on `SplitShareInput` yet. */
 function scheduledShare(userId: string, amount: number, periods: number, perPeriodAmount: number): SplitShareInput {
@@ -126,8 +128,10 @@ beforeEach(async () => {
   await insertUser(harness.db, A, "a@example.com", "Ann");
   await insertUser(harness.db, B, "b@example.com", "Ben");
   await insertUser(harness.db, C, "c@example.com", "Cid");
+  await insertUser(harness.db, D, "d@example.com", "Dan");
   await insertCategory(harness.db, { id: CAT_B, userId: B, name: "其他" });
   await insertCategory(harness.db, { id: CAT_C, userId: C, name: "其他" });
+  await insertCategory(harness.db, { id: CAT_D, userId: D, name: "其他" });
   statements.length = 0;
 });
 
@@ -138,7 +142,7 @@ describe("the balance ignores the schedule (3.2, 3.3)", () => {
       expenses.create(createInput({}), installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 })),
     ).resolves.toBeTruthy();
 
-    const row = (await balances.balancesForUser(A)).find((balance) => balance.userId === B);
+    const row = (await balances.balancesForUser(A, "2029-12-31")).find((balance) => balance.userId === B);
     // Existence first: under "count only the due periods" this nets to zero
     // and HAVING drops the whole row — "not listed" must redden, not read as
     // some amount being wrong.
@@ -159,7 +163,7 @@ describe("the balance ignores the schedule (3.2, 3.3)", () => {
       ),
     ).resolves.toBeTruthy();
 
-    const row = (await balances.balancesForUser(A)).find((balance) => balance.userId === B);
+    const row = (await balances.balancesForUser(A, "2029-12-31")).find((balance) => balance.userId === B);
     expect(row).toBeDefined();
     expect(row?.balances).toHaveLength(1);
     // No split_settlement rows exist, so nothing has been repaid: scheduled
@@ -179,7 +183,7 @@ describe("schedule progress rides alongside the balance (4.3)", () => {
       [{ userId: C, splitExpenseId: E2, amount: 700, currency: "TWD", categoryId: CAT_C, day: "2026-05-10", note: "lunch" }],
     );
 
-    const rows = await balances.balancesForUser(A);
+    const rows = await balances.balancesForUser(A, "2029-12-31");
     const rowB = rows.find((balance) => balance.userId === B);
     const rowC = rows.find((balance) => balance.userId === C);
 
@@ -188,6 +192,10 @@ describe("schedule progress rides alongside the balance (4.3)", () => {
     expect(rowB?.balances[0]).toMatchObject({
       currency: "TWD",
       amount: 6000,
+      // `nextPeriod` 1, because "today" is before the first period's date.
+      // The date is a parameter now, not `CURRENT_DATE` — which is what makes
+      // this assertion mean anything: with the date decided inside SQL, the
+      // expected value would drift with the wall clock.
       schedule: { nextPeriod: 1, totalPeriods: 12, periodAmount: 500 },
     });
     // The unscheduled row must NOT carry the field — absent, not zeroed.
@@ -280,5 +288,77 @@ describe("statement count is independent of the period count (5.4)", () => {
 
     const rows = await mirrorsOf(B, E1);
     expect(rows).toHaveLength(6);
+  });
+
+  it("when multiple holders have different schedules, shortening one does not orphan the other's periods", async () => {
+    // The critical case: holder B on 12 periods, holder D on 6 periods, same
+    // expense. The old code computed highestPeriod as a global max across all
+    // holders (12), so when shortening D from 6 to 3 periods, it would compare
+    // D's periods 4-6 against the global max of 12 and leave them as orphans.
+    // The fix tracks the max per holder, so D's periods 4-6 are correctly
+    // deleted while B's 12 survive.
+    const amount12b = 6000;
+    const amount6d = 3000;
+    await expenses.create(
+      createInput({
+        amount: amount12b + amount6d,
+        day: "2030-01-15",
+        shares: [scheduledShare(B, amount12b, 12, 500), scheduledShare(D, amount6d, 6, 500)],
+      }),
+      [...installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }), ...installmentMirrors(D, CAT_D, E1, { periods: 6, amount: 500, startYear: 2030 })],
+    );
+
+    // Verify setup: B has 12 periods, D has 6
+    let bRows = await mirrorsOf(B, E1);
+    let dRows = await mirrorsOf(D, E1);
+    expect(bRows).toHaveLength(12);
+    expect(dRows).toHaveLength(6);
+
+    // Now shorten D's schedule from 6 to 3 periods
+    await expenses.update(
+      E1,
+      {
+        payerUserId: A,
+        amount: amount12b + 1500,
+        currency: "TWD",
+        description: "annual fee",
+        day: "2030-01-15",
+        splitMode: "exact",
+        categoryName: null,
+        shares: [scheduledShare(B, amount12b, 12, 500), scheduledShare(D, 1500, 3, 500)],
+      },
+      [...installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }), ...installmentMirrors(D, CAT_D, E1, { periods: 3, amount: 500, startYear: 2030 })],
+      new Date("2030-02-01T00:00:00Z"),
+      A,
+    );
+
+    // After the edit: B's 12 periods survive, D's orphaned 4-6 are deleted
+    bRows = await mirrorsOf(B, E1);
+    dRows = await mirrorsOf(D, E1);
+    expect(bRows).toHaveLength(12);
+    expect(dRows).toHaveLength(3);
+    // Verify the periods are the right ones (1-3, not 4-6)
+    expect(dRows.every((r) => r.installmentNo && r.installmentNo <= 3)).toBe(true);
+  });
+
+
+  it("due periods follow the date it is where the caller is", async () => {
+    // The whole reason the date is a parameter. A period dated 2030-01-15 is
+    // due for a caller whose local date is the 15th and not due for one whose
+    // local date is still the 14th — the eight hours a Taipei user is a day
+    // ahead of UTC. With the date decided inside SQL there was no way to
+    // express either side of that boundary, and the spelling that looked like
+    // a fix (`CURRENT_DATE AT TIME ZONE tz`) returned a timestamp that
+    // compared against a `date` by implicit cast: no error, wrong answer.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+    );
+
+    const dayBefore = await balances.balancesForUser(A, "2030-01-14");
+    const dayOf = await balances.balancesForUser(A, "2030-01-15");
+
+    expect(dayBefore[0]?.balances[0]?.schedule?.nextPeriod).toBe(1);
+    expect(dayOf[0]?.balances[0]?.schedule?.nextPeriod).toBe(2);
   });
 });

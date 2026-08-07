@@ -600,6 +600,60 @@ describe("expenses: creation and visibility", () => {
     expect(overCap.status).toBe(400);
   });
 
+  it("rejects a repayment schedule when periods * per_period_amount does not equal the share amount", async () => {
+    await makeFriends(ALICE, BOB);
+    const aliceId = await idOf(ALICE);
+    const bobId = await idOf(BOB);
+
+    // Valid schedule: 6 periods × 500 = 3000
+    const validRes = await app.request("/api/split/expenses", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        group_id: null,
+        payer_user_id: aliceId,
+        amount: 3000,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "exact", shares: [{ user_id: bobId, amount: 3000, schedule: { periods: 6, per_period_amount: 500 } }] },
+      }),
+    });
+    expect(validRes.status).toBe(201);
+
+    // Invalid: 6 periods × 500 = 3000, but share amount is 3100
+    const invalidTooHigh = await app.request("/api/split/expenses", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        group_id: null,
+        payer_user_id: aliceId,
+        amount: 3100,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "exact", shares: [{ user_id: bobId, amount: 3100, schedule: { periods: 6, per_period_amount: 500 } }] },
+      }),
+    });
+    expect(invalidTooHigh.status).toBe(400);
+
+    // Invalid: 12 periods × 500 = 6000, but share amount is 5000
+    const invalidTooLow = await app.request("/api/split/expenses", {
+      method: "POST",
+      headers: await authHeader(ALICE),
+      body: JSON.stringify({
+        group_id: null,
+        payer_user_id: aliceId,
+        amount: 5000,
+        currency: "TWD",
+        description: "dinner",
+        day: "2026-08-01",
+        split: { mode: "exact", shares: [{ user_id: bobId, amount: 5000, schedule: { periods: 12, per_period_amount: 500 } }] },
+      }),
+    });
+    expect(invalidTooLow.status).toBe(400);
+  });
+
   it("answers 404 for a malformed expense id and 400 for a malformed share id in the body", async () => {
     const aliceId = await idOf(ALICE);
 

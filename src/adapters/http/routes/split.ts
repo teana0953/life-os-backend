@@ -44,6 +44,7 @@ import type { SharesMirror } from "../../../contexts/split/domain/shares-mirror"
 import type { SplitExpense } from "../../../contexts/split/domain/split-expense";
 import type { ListExpensesFilter, SplitExpenseRepository } from "../../../contexts/split/domain/split-expense-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
+import { localParts } from "../../../shared-kernel/reminder-clock";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
 import { BadRequestError, requireDay, requireString } from "../validation";
@@ -259,6 +260,15 @@ function parseSplitInput(value: unknown): SplitInput {
       if (!UUID_RE.test(userId)) throw new BadRequestError(`split.shares[${index}].user_id must be a uuid`);
       const amount = requireAmountNumber(share.amount, `split.shares[${index}].amount`);
       const schedule = parseShareSchedule(share.schedule, `split.shares[${index}].schedule`);
+      // If a schedule is provided, validate that periods * per_period_amount equals the share amount
+      if (schedule) {
+        const scheduledTotal = schedule.periods * schedule.perPeriodAmount;
+        if (scheduledTotal !== amount) {
+          throw new BadRequestError(
+            `split.shares[${index}].schedule: periods (${schedule.periods}) × per_period_amount (${schedule.perPeriodAmount}) = ${scheduledTotal}, but share amount is ${amount}`,
+          );
+        }
+      }
       return { userId, amount, schedule };
     });
     return { mode: "exact", shares };
@@ -511,7 +521,11 @@ export function createListActivityHandler(options: SplitHandlerOptions) {
 export function createGetBalancesHandler(options: SplitHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const balances = await getBalances(options.balanceRepository, userId);
+    // The caller's own date, resolved here rather than in SQL — see
+    // `BalanceRepository.balancesForUser`. Same shape finance uses for its
+    // own date-sensitive gates.
+    const timezone = (await options.userRepository.getById(userId))?.timezone ?? "Asia/Taipei";
+    const balances = await getBalances(options.balanceRepository, userId, localParts(new Date(), timezone).date);
     return c.json({ balances: balances.map(balanceToJson) });
   };
 }

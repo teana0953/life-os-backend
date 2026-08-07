@@ -89,7 +89,7 @@ export class DrizzleBalanceRepository implements BalanceRepository {
    * share. Grouped and netted per currency; currencies that cancel out (or
    * pairs with none at all) never appear.
    */
-  async balancesForUser(userId: string): Promise<Balance[]> {
+  async balancesForUser(userId: string, today: string): Promise<Balance[]> {
     const me = userId.toLowerCase();
     const result = await this.getDb().execute<NetRow>(sql`
       WITH net AS (
@@ -126,7 +126,7 @@ export class DrizzleBalanceRepository implements BalanceRepository {
       HAVING SUM(net.signed_amount) != 0
     `);
     const balances = rowsToBalances(result.rows);
-    attachSchedules(balances, await this.scheduleProgressForUser(me));
+    attachSchedules(balances, await this.scheduleProgressForUser(me, today));
     return balances;
   }
 
@@ -146,15 +146,34 @@ export class DrizzleBalanceRepository implements BalanceRepository {
    * Grouped by (counterpart, currency) rather than by expense: this repo's
    * feature set never gives one counterpart two live schedules in the same
    * currency, so the ambiguity that grouping would hide never arises here.
+   *
+   * **Known gap**: nothing enforces this constraint. A user could create two
+   * separate split expenses with the same counterpart, both scheduled, both TWD.
+   * If this happens, the query silently merges both schedules: `total_periods`
+   * becomes the sum of two unrelated schedules, and `period_amount` becomes the
+   * MAX — producing incorrect schedule progress. This should be prevented either
+   * at the DB level (uniqueness constraint on counterpart/currency for scheduled
+   * splits) or in the application layer during expense creation.
+   *
+   * `(now() AT TIME ZONE tz)::date`, **not** `CURRENT_DATE AT TIME ZONE tz` —
+   * the latter reads as "today's midnight, interpreted as a Taipei wall clock"
+   * and comes back a timestamp (`2026-08-07 00:00:00`), which then compares
+   * against a `date` by implicit cast: no error, just the wrong answer. Only
+   * the first form asks "what is the date where the user is".
+   *
+   * The due_periods filter uses the current date in the user's own timezone, not
+   * UTC: a period scheduled for "today" in the user's zone should count as due
+   * today, not wait until UTC reaches that date (shared-kernel/reminder-clock.ts
+   * precedent for timezone-aware date logic).
    */
-  private async scheduleProgressForUser(me: string): Promise<ProgressRow[]> {
+  private async scheduleProgressForUser(me: string, today: string): Promise<ProgressRow[]> {
     const result = await this.getDb().execute<ProgressRow>(sql`
       SELECT
         CASE WHEN se.payer_user_id = ${me}::uuid THEN ft.user_id ELSE se.payer_user_id END AS counterpart_id,
         ft.currency AS currency,
         COUNT(*)::int AS total_periods,
         MAX(ft.amount)::int AS period_amount,
-        COUNT(*) FILTER (WHERE ft.day <= CURRENT_DATE)::int AS due_periods
+        COUNT(*) FILTER (WHERE ft.day <= ${today}::date)::int AS due_periods
         FROM finance_transaction ft
         JOIN split_expense se ON se.id = ft.split_expense_id
        WHERE ft.installment_no IS NOT NULL

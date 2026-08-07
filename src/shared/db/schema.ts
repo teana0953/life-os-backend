@@ -439,6 +439,13 @@ export const financeTransaction = pgTable(
     uniqueIndex("finance_transaction_split_mirror_period_idx")
       .on(t.userId, t.splitExpenseId, t.installmentNo)
       .where(sql`split_expense_id is not null and installment_no is not null`),
+    // A row is either from a plan (plan_id is not null, split_expense_id is null)
+    // or from a split mirror (split_expense_id is not null, plan_id is null), never both.
+    // This is the same pattern as split_activity_audience_xor_group.
+    check(
+      "finance_transaction_plan_split_xor",
+      sql`(plan_id is null) <> (split_expense_id is null)`,
+    ),
   ],
 );
 
