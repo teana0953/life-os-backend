@@ -11,7 +11,7 @@ import type { Db } from "../../../shared/db/client";
 import { expenseGroupMember, financeTransaction, splitActivity, splitExpense, splitShare, users } from "../../../shared/db/schema";
 import { grouplessAudience } from "./split-activity-audience";
 import type { ShareMirrorRow } from "../domain/shares-mirror";
-import type { CreateSplitExpenseInput, SplitExpense, SplitMode, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../domain/split-expense";
+import type { CreateSplitExpenseInput, ShareSchedule, SplitExpense, SplitMode, SplitShare, SplitShareInput, UpdateSplitExpenseFields } from "../domain/split-expense";
 import { splitDisplayName } from "../domain/display-name";
 import type { ListExpensesFilter, SplitExpenseRepository, SplitExpenseWriteResult } from "../domain/split-expense-repository";
 import type { SplitSpendingAmount } from "../domain/split-spending";
@@ -25,11 +25,25 @@ type SplitShareRow = typeof splitShare.$inferSelect;
  * holder can see co-participants who are neither their friend nor in any
  * group they belong to, so nothing else on the client can resolve them.
  */
-function toShare(row: SplitShareRow, name: string): SplitShare {
-  return { userId: row.userId, amount: row.amount, displayName: name };
+function toShare(row: SplitShareRow, name: string, schedule: ShareSchedule | undefined): SplitShare {
+  // Spread rather than `schedule: undefined`, so an unscheduled share has no
+  // such key at all — the same absent-not-zeroed rule the balance's progress
+  // field follows, and what lets a client tell "no schedule" from "a schedule
+  // that finished".
+  return { userId: row.userId, amount: row.amount, displayName: name, ...(schedule ? { schedule } : {}) };
 }
 
-function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<string, string>): SplitExpense {
+/** Keys a derived schedule by the (expense, holder) pair it belongs to. */
+function scheduleKey(expenseId: string, userId: string): string {
+  return `${expenseId}:${userId}`;
+}
+
+function toExpense(
+  row: SplitExpenseRow,
+  shareRows: SplitShareRow[],
+  names: Map<string, string>,
+  schedules: Map<string, ShareSchedule>,
+): SplitExpense {
   return {
     id: row.id,
     groupId: row.groupId,
@@ -42,7 +56,9 @@ function toExpense(row: SplitExpenseRow, shareRows: SplitShareRow[], names: Map<
     day: row.day,
     splitMode: row.splitMode as SplitMode,
     categoryName: row.categoryName,
-    shares: shareRows.map((share) => toShare(share, names.get(share.userId) ?? share.userId)),
+    shares: shareRows.map((share) =>
+      toShare(share, names.get(share.userId) ?? share.userId, schedules.get(scheduleKey(share.expenseId, share.userId))),
+    ),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -233,7 +249,12 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
     if (!row) return null;
     const shares = await db.select().from(splitShare).where(eq(splitShare.expenseId, id));
     // The payer is included deliberately: they need not hold a share.
-    return toExpense(row, shares, await this.namesFor([row.payerUserId, ...shares.map((share) => share.userId)]));
+    return toExpense(
+      row,
+      shares,
+      await this.namesFor([row.payerUserId, ...shares.map((share) => share.userId)]),
+      await this.schedulesFor([id]),
+    );
   }
 
   /**
@@ -384,29 +405,44 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
           ),
         ),
       );
-    // Shortening a schedule leaves the dropped periods with nothing to
-    // conflict on, so an upsert alone cannot remove them — they would survive
-    // as orphans and keep charging the holder for periods that no longer
-    // exist. Must track the highest surviving period **per holder** (not
-    // globally), because one expense can have multiple independently-scheduled
-    // holders with different period counts. Delete per holder, not globally.
+    // The upserts alone are not a replace: whatever the new mirrors have no
+    // conflict target for survives alongside them, and there are three ways
+    // for that to happen — a shortened schedule's dropped periods, a schedule
+    // that went away (its periods have no lump row to conflict with), and a
+    // lump that became a schedule (the old lump row has no period to conflict
+    // with). All three charged the holder twice; the second and third are
+    // reachable by editing any split without re-sending the schedule.
+    //
+    // So: one condition per holder in the new mirror list, saying "delete
+    // everything of this holder's for this expense that the new set does not
+    // account for". Per holder, never per expense — one expense can carry
+    // several independently-scheduled holders, and a per-expense delete would
+    // take the untouched ones with it. `periodMirrors` may be empty for a
+    // holder, and `highest` is then 0, which makes the scheduled branch's
+    // `installment_no > 0` unreachable — hence the explicit kind test rather
+    // than leaning on the number.
     const highestPeriodPerHolder = new Map<string, number>();
     for (const mirror of periodMirrors) {
       const current = highestPeriodPerHolder.get(mirror.userId) ?? 0;
       highestPeriodPerHolder.set(mirror.userId, Math.max(current, mirror.installmentNo ?? 0));
     }
-    // Build a list of delete conditions, one per holder: delete this holder's
-    // periods that exceed their own highest surviving period.
-    const dropConditions = Array.from(highestPeriodPerHolder.entries()).map(([holderId, highest]) =>
-      and(
-        eq(financeTransaction.userId, holderId),
-        eq(financeTransaction.splitExpenseId, id),
-        sql`${financeTransaction.installmentNo} is not null`,
-        sql`${financeTransaction.installmentNo} > ${highest}`,
-      ),
-    );
-    // Execute a separate delete for each holder (or none if no periods), so
-    // each holder's orphaned periods are deleted correctly.
+    const holderIds = [...new Set(mirrors.map((mirror) => mirror.userId))];
+    const dropConditions = holderIds.map((holderId) => {
+      const highest = highestPeriodPerHolder.get(holderId);
+      const staleRows =
+        highest === undefined
+          ? // Unscheduled now: every period row of theirs is stale.
+            sql`${financeTransaction.installmentNo} is not null`
+          : // Scheduled now: the lump row is stale, and so is any period past
+            // the new last one.
+            // Parenthesised: `AND` binds tighter than `OR`, so without them
+            // the holder and expense predicates only guard the first branch
+            // and the second deletes that period across the whole table.
+            sql`(${financeTransaction.installmentNo} is null or ${financeTransaction.installmentNo} > ${highest})`;
+      return and(eq(financeTransaction.userId, holderId), eq(financeTransaction.splitExpenseId, id), staleRows);
+    });
+    // One delete per holder — the statement count follows the holder count,
+    // never the period count (`db.batch`'s limit is undocumented).
     const droppedPeriodDeletes = dropConditions.map((condition) =>
       db.delete(financeTransaction).where(condition),
     );
@@ -552,6 +588,40 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
    * grouped expenses they can see through membership alone, so the
    * unfiltered listing and the `group_id=` listing agree on what is visible.
    */
+  /**
+   * Each (expense, holder) pair's repayment schedule, derived from the mirror
+   * rows rather than stored a second time on `split_share`: the mirrors are
+   * what the schedule *is*, and a stored copy could disagree with them after
+   * any edit. Reads other users' `finance_transaction` rows, which is safe
+   * here for the same reason the balance's progress query does it — this runs
+   * server-side over an expense the caller already has access to, and only
+   * period counts and per-period amounts come back out.
+   */
+  private async schedulesFor(expenseIds: string[]): Promise<Map<string, ShareSchedule>> {
+    if (expenseIds.length === 0) return new Map();
+    const rows = await this.getDb()
+      .select({
+        expenseId: financeTransaction.splitExpenseId,
+        userId: financeTransaction.userId,
+        periods: sql<number>`count(*)::int`,
+        perPeriodAmount: sql<number>`max(${financeTransaction.amount})::int`,
+      })
+      .from(financeTransaction)
+      .where(
+        and(
+          inArray(financeTransaction.splitExpenseId, expenseIds),
+          sql`${financeTransaction.installmentNo} is not null`,
+        ),
+      )
+      .groupBy(financeTransaction.splitExpenseId, financeTransaction.userId);
+    return new Map(
+      rows.map((row) => [
+        scheduleKey(row.expenseId ?? "", row.userId),
+        { periods: row.periods, perPeriodAmount: row.perPeriodAmount },
+      ]),
+    );
+  }
+
   async listForUser(userId: string, filter: ListExpensesFilter): Promise<SplitExpense[]> {
     const db = this.getDb();
 
@@ -578,7 +648,8 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
       sharesByExpense.set(share.expenseId, list);
     }
     const names = await this.namesFor([...rows.map((row) => row.payerUserId), ...shares.map((share) => share.userId)]);
-    return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? [], names));
+    const schedules = await this.schedulesFor(rows.map((row) => row.id));
+    return rows.map((row) => toExpense(row, sharesByExpense.get(row.id) ?? [], names, schedules));
   }
 
   /**

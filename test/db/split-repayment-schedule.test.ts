@@ -77,6 +77,19 @@ function installmentMirrors(
   });
 }
 
+/// The single mirror row an unscheduled share produces.
+function lumpMirror(userId: string, categoryId: string, splitExpenseId: string, amount: number): ShareMirrorRow {
+  return {
+    userId,
+    splitExpenseId,
+    amount,
+    currency: "TWD",
+    categoryId,
+    day: "2030-01-15",
+    note: "annual fee",
+  } as ShareMirrorRow;
+}
+
 /// Every mirror row a holder has for one expense, in period order.
 async function mirrorsOf(userId: string, expenseId: string) {
   const rows = await harness.db
@@ -258,6 +271,132 @@ describe("statement count is independent of the period count (5.4)", () => {
     const rows = await mirrorsOf(B, E1);
     expect(rows).toHaveLength(12);
     expect(rows.every((r) => r.amount === 600)).toBe(true);
+  });
+
+  it("dropping a schedule removes the periods it used to have", async () => {
+    // The mirror rewrite has to be a **replace**, and switching kind is the
+    // case neither existing delete covered: `mirrorDelete` only removes
+    // holders who left the expense, and the dropped-period delete only
+    // removes periods above the holder's own new highest — a holder who is
+    // still here and now unscheduled matches neither. What survived was all
+    // twelve periods plus a fresh lump row: 13 rows charging 12,000 for a
+    // 6,000 share, reachable by editing any scheduled split without
+    // re-sending its schedule.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+    );
+
+    await expenses.update(
+      E1,
+      {
+        payerUserId: A,
+        amount: 6000,
+        currency: "TWD",
+        description: "annual fee",
+        day: "2030-01-15",
+        splitMode: "exact",
+        categoryName: null,
+        shares: [{ userId: B, amount: 6000 }],
+      },
+      [lumpMirror(B, CAT_B, E1, 6000)],
+      new Date("2030-02-01T00:00:00Z"),
+      A,
+    );
+
+    const rows = await mirrorsOf(B, E1);
+    expect(rows).toEqual([expect.objectContaining({ amount: 6000, installmentNo: null })]);
+  });
+
+  it("adding a schedule removes the lump row it replaces", async () => {
+    // The same hole from the other side: the lump row has no period to
+    // conflict with, so the period upsert cannot reach it, and it was left
+    // alongside the twelve new periods — again 13 rows, again 12,000.
+    await expenses.create(
+      createInput({ shares: [{ userId: B, amount: 6000 }] }),
+      [lumpMirror(B, CAT_B, E1, 6000)],
+    );
+
+    await expenses.update(
+      E1,
+      {
+        payerUserId: A,
+        amount: 6000,
+        currency: "TWD",
+        description: "annual fee",
+        day: "2030-01-15",
+        splitMode: "exact",
+        categoryName: null,
+        shares: [scheduledShare(B, 6000, 12, 500)],
+      },
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+      new Date("2030-02-01T00:00:00Z"),
+      A,
+    );
+
+    const rows = await mirrorsOf(B, E1);
+    expect(rows).toHaveLength(12);
+    expect(rows.reduce((sum, row) => sum + row.amount, 0)).toBe(6000);
+    expect(rows.every((row) => row.installmentNo != null)).toBe(true);
+  });
+
+  it("switching one holder's kind leaves the other holder's mirrors alone", async () => {
+    // The delete is per holder, and the fix widens which holders get one —
+    // widening it into a per-expense delete would take D's periods with it.
+    await expenses.create(
+      createInput({
+        amount: 9000,
+        shares: [scheduledShare(B, 6000, 12, 500), scheduledShare(D, 3000, 6, 500)],
+      }),
+      [
+        ...installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+        ...installmentMirrors(D, CAT_D, E1, { periods: 6, amount: 500, startYear: 2030 }),
+      ],
+    );
+
+    await expenses.update(
+      E1,
+      {
+        payerUserId: A,
+        amount: 9000,
+        currency: "TWD",
+        description: "annual fee",
+        day: "2030-01-15",
+        splitMode: "exact",
+        categoryName: null,
+        shares: [{ userId: B, amount: 6000 }, scheduledShare(D, 3000, 6, 500)],
+      },
+      [
+        lumpMirror(B, CAT_B, E1, 6000),
+        ...installmentMirrors(D, CAT_D, E1, { periods: 6, amount: 500, startYear: 2030 }),
+      ],
+      new Date("2030-02-01T00:00:00Z"),
+      A,
+    );
+
+    expect(await mirrorsOf(B, E1)).toHaveLength(1);
+    expect(await mirrorsOf(D, E1)).toHaveLength(6);
+  });
+
+  it("reads a share's schedule back, so an edit can re-send it", async () => {
+    // Without this the read shape has no schedule in it, and every client
+    // editing a scheduled split necessarily drops the schedule — it cannot
+    // send back what it was never told. `split_share` has no schedule
+    // columns; the mirror rows are the schedule, so the read derives it from
+    // them rather than keeping a second copy that can disagree.
+    await expenses.create(
+      createInput({ shares: [scheduledShare(B, 6000, 12, 500), { userId: C, amount: 700 }], amount: 6700 }),
+      [
+        ...installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+        { userId: C, splitExpenseId: E1, amount: 700, currency: "TWD", categoryId: CAT_C, day: "2030-01-15", note: "annual fee" } as ShareMirrorRow,
+      ],
+    );
+
+    for (const expense of [await expenses.findById(E1), (await expenses.listForUser(A, {}))[0]]) {
+      expect(expense?.shares.find((share) => share.userId === B)?.schedule).toEqual({ periods: 12, perPeriodAmount: 500 });
+      // Absent, not zeroed — same reason as the balance's progress field.
+      expect(expense?.shares.find((share) => share.userId === C)).not.toHaveProperty("schedule");
+    }
   });
 
   it("shortening a schedule drops the periods that no longer exist", async () => {
