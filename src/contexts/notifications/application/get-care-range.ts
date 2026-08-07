@@ -1,5 +1,5 @@
 import { isActiveOn } from "../domain/care-schedule";
-import { localMinute, localParts, nextLocalDate } from "../../../shared/reminder-clock";
+import { localMinute, localParts, nextLocalDate } from "../../../shared-kernel/reminder-clock";
 import type { CareItemRepository } from "../domain/care-item";
 import type { CareLogRepository } from "../domain/care-log";
 import type { UserRepository } from "../../user/domain/user-repository";

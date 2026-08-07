@@ -3,7 +3,7 @@ import type { FinanceBudget } from "../domain/finance-budget";
 import type { FinanceBudgetRepository } from "../domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { FinanceTransactionType } from "../domain/finance-transaction";
-import { localParts } from "../../../shared/reminder-clock";
+import { localParts } from "../../../shared-kernel/reminder-clock";
 
 const THRESHOLDS = [80, 100] as const;
 

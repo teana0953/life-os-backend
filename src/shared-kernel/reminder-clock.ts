@@ -1,21 +1,25 @@
 /**
- * Timezone-aware local-date/time calendar math. Originally
- * `notifications/domain/reminder-clock.ts`; promoted here (add-installments
- * design.md D5) once finance became its second consumer — no financial use
- * case had ever read `users.timezone` before, and the three existing callers
- * were already all inside notifications, which made the move cheap.
+ * Timezone-aware local-date/time calendar math, shared by the contexts that
+ * need it (notifications, finance). Originally
+ * `notifications/domain/reminder-clock.ts`, moved out once finance became its
+ * second consumer — no financial use case had ever read `users.timezone`
+ * before (add-installments design.md D5).
  *
- * **Architecture note:** This violates the normal rule that domain/application
- * may not import from `shared/`. Exception granted because:
- * 1. This is pure calendar math with no I/O or infrastructure dependencies.
- * 2. Moving it into each context that uses it (notifications, finance) creates
- *    unwarranted duplication of identical logic.
- * 3. Making each context re-import from the other's domain crosses a stricter
- *    boundary than importing from `shared/`.
+ * **Why `shared-kernel/` and not `shared/`.** In this repo `shared/` means
+ * cross-context *infrastructure* — it holds exactly `db/` and `auth/`, and
+ * CLAUDE.md's dependency rule forbids `domain`/`application` from importing
+ * it. This file is the opposite kind of thing: pure calendar math, no I/O, no
+ * infrastructure, nothing to inject. Putting it in `shared/` made seven
+ * domain/application files read as breaking that rule when nothing about the
+ * dependency direction was actually wrong.
  *
- * This remains an exception: shared/ should not accumulate infrastructure
- * like shared/db or shared/auth, or business logic. Only pure utility
- * functions with cross-context use belong here.
+ * A shared kernel (the DDD term for a small model two bounded contexts agree
+ * to share) sits at domain level, so importing it points inward, not outward.
+ * The rule stays literally true and needs no exception.
+ *
+ * **What belongs here:** pure, dependency-free logic that more than one
+ * context genuinely needs. Not infrastructure (that is `shared/`), and not
+ * business rules belonging to one context (those stay in that context).
  */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

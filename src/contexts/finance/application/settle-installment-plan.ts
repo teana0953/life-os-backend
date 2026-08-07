@@ -1,7 +1,7 @@
 import { type CheckBudgetAlertsDeps, checkBudgetAlerts } from "./check-budget-alerts";
 import type { InstallmentDeps } from "./create-installment-plan";
 import { InstallmentPlanNotFound, InvalidFinanceInputError } from "../domain/errors";
-import { localParts } from "../../../shared/reminder-clock";
+import { localParts } from "../../../shared-kernel/reminder-clock";
 
 export interface SettleInstallmentPlanInput {
   userId: string;

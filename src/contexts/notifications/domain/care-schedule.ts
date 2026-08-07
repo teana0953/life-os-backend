@@ -1,4 +1,4 @@
-import { weekdayOf, weeksSince } from "../../../shared/reminder-clock";
+import { weekdayOf, weeksSince } from "../../../shared-kernel/reminder-clock";
 import type { CareSchedule } from "./care-item";
 
 /**

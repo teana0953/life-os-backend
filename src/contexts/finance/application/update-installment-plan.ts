@@ -3,7 +3,7 @@ import type { InstallmentDeps } from "./create-installment-plan";
 import { InstallmentPlanNotFound, InvalidFinanceInputError } from "../domain/errors";
 import type { InstallmentRow } from "../domain/installment-plan";
 import { addMonthsAnchored, assertValidPeriods, divideEvenly } from "./installment-support";
-import { localParts } from "../../../shared/reminder-clock";
+import { localParts } from "../../../shared-kernel/reminder-clock";
 
 export interface UpdateInstallmentPlanInput {
   userId: string;
