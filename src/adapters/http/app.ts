@@ -474,10 +474,15 @@ export function createApp(options: CreateAppOptions) {
   // Composed here rather than injected as an option (design.md D2): every
   // `createApp` caller — including `finance.test.ts` — then gets the real
   // category resolution instead of a fake that would agree with itself.
+  // budget alert gating (add-installments design.md D4b) is enabled by passing
+  // now/getUserTimezone so split mirrors are subject to the same D4b month gate
+  // as direct expense transactions.
   const sharesMirror = new FinanceSharesMirror({
     categories: options.financeCategoryRepository,
     budgets: options.financeBudgetRepository,
     notifier: options.budgetAlertNotifier,
+    now: () => new Date(),
+    getUserTimezone: async (userId: string) => (await options.userRepository.getById(userId))?.timezone ?? "Asia/Taipei",
   });
   const splitOptions = {
     userRepository: options.userRepository,

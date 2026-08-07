@@ -4,6 +4,18 @@
  * design.md D5) once finance became its second consumer — no financial use
  * case had ever read `users.timezone` before, and the three existing callers
  * were already all inside notifications, which made the move cheap.
+ *
+ * **Architecture note:** This violates the normal rule that domain/application
+ * may not import from `shared/`. Exception granted because:
+ * 1. This is pure calendar math with no I/O or infrastructure dependencies.
+ * 2. Moving it into each context that uses it (notifications, finance) creates
+ *    unwarranted duplication of identical logic.
+ * 3. Making each context re-import from the other's domain crosses a stricter
+ *    boundary than importing from `shared/`.
+ *
+ * This remains an exception: shared/ should not accumulate infrastructure
+ * like shared/db or shared/auth, or business logic. Only pure utility
+ * functions with cross-context use belong here.
  */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
