@@ -333,28 +333,39 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
     // build: when nobody gets a mirror there is nothing to upsert, only the
     // delete below.
     //
-    // **KNOWN GAP (split-installments task 5.3, deliberately not done this
-    // round): this upsert only arbitrates the lump-mirror index.** It is
-    // correct for every mirror this repo's tests ever hand it, because none
-    // of them edit a share that carries a schedule. A future edit to a
-    // scheduled share's periods needs its own upsert against
-    // `finance_transaction_split_mirror_period_idx` — not a mechanical
-    // extension of this one, since edits that add, remove or reflow periods
-    // have no single row to conflict on.
-    const mirrorUpsert = () =>
+    // Two upserts, not one: `ON CONFLICT` takes a single target, and a mirror
+    // is arbitrated by one of two partial indexes depending on whether it is a
+    // lump (`installment_no is null`) or a period. Sending period rows at the
+    // lump target does not merely miss — the period index then raises an
+    // unhandled unique violation and the whole edit fails, which is what
+    // editing any scheduled expense used to do.
+    const MIRROR_SET = {
+      amount: sql`excluded.amount`,
+      currency: sql`excluded.currency`,
+      day: sql`excluded.day`,
+      categoryId: sql`case when ${financeTransaction.categorySource} = 'mirror' then excluded.category_id else ${financeTransaction.categoryId} end`,
+      updatedAt: now,
+    };
+    const lumpMirrors = mirrors.filter((mirror) => mirror.installmentNo == null);
+    const periodMirrors = mirrors.filter((mirror) => mirror.installmentNo != null);
+    const lumpUpsert = () =>
       db
         .insert(financeTransaction)
-        .values(mirrors.map(mirrorToRow))
+        .values(lumpMirrors.map(mirrorToRow))
         .onConflictDoUpdate({
           target: [financeTransaction.userId, financeTransaction.splitExpenseId],
           targetWhere: sql`split_expense_id is not null and installment_no is null`,
-          set: {
-            amount: sql`excluded.amount`,
-            currency: sql`excluded.currency`,
-            day: sql`excluded.day`,
-            categoryId: sql`case when ${financeTransaction.categorySource} = 'mirror' then excluded.category_id else ${financeTransaction.categoryId} end`,
-            updatedAt: now,
-          },
+          set: MIRROR_SET,
+        })
+        .returning(MIRROR_RETURNING);
+    const periodUpsert = () =>
+      db
+        .insert(financeTransaction)
+        .values(periodMirrors.map(mirrorToRow))
+        .onConflictDoUpdate({
+          target: [financeTransaction.userId, financeTransaction.splitExpenseId, financeTransaction.installmentNo],
+          targetWhere: sql`split_expense_id is not null and installment_no is not null`,
+          set: MIRROR_SET,
         })
         .returning(MIRROR_RETURNING);
     // Anyone who is no longer a share holder loses their mirror. Set-based on
@@ -373,14 +384,37 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
           ),
         ),
       );
+    // Shortening a schedule leaves the dropped periods with nothing to
+    // conflict on, so an upsert alone cannot remove them — they would survive
+    // as orphans and keep charging the holder for periods that no longer
+    // exist. Set-based like the delete above: the highest surviving period
+    // number is all it needs, never the shape of the edit.
+    const highestPeriod = periodMirrors.reduce((max, mirror) => Math.max(max, mirror.installmentNo ?? 0), 0);
+    const droppedPeriodDelete = db
+      .delete(financeTransaction)
+      .where(
+        and(
+          eq(financeTransaction.splitExpenseId, id),
+          sql`${financeTransaction.installmentNo} is not null`,
+          sql`${financeTransaction.installmentNo} > ${highestPeriod}`,
+        ),
+      );
     // Same reason as `create`: two spelled-out batches rather than a spread,
     // so the upsert's returned rows have a known position.
     let written: ShareMirrorRow[] = [];
-    if (mirrors.length > 0) {
-      const [, , , mirrorRows] = await db.batch([deleteShares, insertShares, updateExpense, mirrorUpsert(), mirrorDelete, activityInsert]);
-      written = writtenMirrors(id, mirrorRows);
+    const head = [deleteShares, insertShares, updateExpense] as const;
+    const tail = [mirrorDelete, droppedPeriodDelete, activityInsert] as const;
+    if (lumpMirrors.length > 0 && periodMirrors.length > 0) {
+      const [, , , lumpRows, periodRows] = await db.batch([...head, lumpUpsert(), periodUpsert(), ...tail]);
+      written = [...writtenMirrors(id, lumpRows), ...writtenMirrors(id, periodRows)];
+    } else if (lumpMirrors.length > 0) {
+      const [, , , lumpRows] = await db.batch([...head, lumpUpsert(), ...tail]);
+      written = writtenMirrors(id, lumpRows);
+    } else if (periodMirrors.length > 0) {
+      const [, , , periodRows] = await db.batch([...head, periodUpsert(), ...tail]);
+      written = writtenMirrors(id, periodRows);
     } else {
-      await db.batch([deleteShares, insertShares, updateExpense, mirrorDelete, activityInsert]);
+      await db.batch([...head, ...tail]);
     }
 
     const expense = await this.findById(id);

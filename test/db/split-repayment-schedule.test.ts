@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { DrizzleBalanceRepository } from "../../src/contexts/split/adapters/drizzle-balance-repository";
 import { DrizzleSplitExpenseRepository } from "../../src/contexts/split/adapters/drizzle-split-expense-repository";
 import type { ShareMirrorRow } from "../../src/contexts/split/domain/shares-mirror";
@@ -73,6 +73,15 @@ function installmentMirrors(
       installmentNo: i + 1,
     } as ShareMirrorRow;
   });
+}
+
+/// Every mirror row a holder has for one expense, in period order.
+async function mirrorsOf(userId: string, expenseId: string) {
+  const rows = await harness.db
+    .select()
+    .from(financeTransaction)
+    .where(and(eq(financeTransaction.userId, userId), eq(financeTransaction.splitExpenseId, expenseId)));
+  return rows.sort((x, y) => (x.installmentNo ?? 0) - (y.installmentNo ?? 0));
 }
 
 function createInput(overrides: Partial<CreateSplitExpenseInput>): CreateSplitExpenseInput {
@@ -205,5 +214,71 @@ describe("statement count is independent of the period count (5.4)", () => {
     // ONE multi-row INSERT (#82's shape) — one statement per period is what
     // this forbids, and 360 is what makes the fixture able to see it.
     expect(statements.filter((sql) => touchesTransactions(sql) && isInsert(sql))).toHaveLength(1);
+  });
+
+
+  it("editing a scheduled expense rewrites its periods instead of failing", async () => {
+    // Reachable, not hypothetical: `schedule` is wired through
+    // `PATCH /api/split/expenses/:id`, so a user can create a scheduled split
+    // and then edit it. Before this was handled the edit raised a unique
+    // violation on the period index — every scheduled expense was editable
+    // exactly once, at creation, and any correction afterwards was a 500.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+    );
+
+    await expect(
+      expenses.update(
+        E1,
+        {
+          payerUserId: A,
+          amount: 7200,
+          currency: "TWD",
+          description: "annual fee",
+          day: "2030-01-15",
+          splitMode: "exact",
+          categoryName: null,
+          shares: [scheduledShare(B, 7200, 12, 600)],
+        },
+        installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 600, startYear: 2030 }),
+        new Date("2030-02-01T00:00:00Z"),
+        A,
+      ),
+    ).resolves.toBeTruthy();
+
+    const rows = await mirrorsOf(B, E1);
+    expect(rows).toHaveLength(12);
+    expect(rows.every((r) => r.amount === 600)).toBe(true);
+  });
+
+  it("shortening a schedule drops the periods that no longer exist", async () => {
+    // The half an upsert alone cannot do: rows 7..12 have nothing to conflict
+    // with, so without an explicit delete they survive as orphans and the
+    // holder's ledger keeps charging them for periods that were removed.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+    );
+
+    await expenses.update(
+      E1,
+      {
+        payerUserId: A,
+        amount: 3000,
+        currency: "TWD",
+        description: "annual fee",
+        day: "2030-01-15",
+        splitMode: "exact",
+        categoryName: null,
+        shares: [scheduledShare(B, 3000, 6, 500)],
+      },
+      installmentMirrors(B, CAT_B, E1, { periods: 6, amount: 500, startYear: 2030 }),
+      new Date("2030-02-01T00:00:00Z"),
+      A,
+    );
+
+    const rows = await mirrorsOf(B, E1);
+    expect(rows).toHaveLength(6);
   });
 });
