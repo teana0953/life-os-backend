@@ -15,6 +15,16 @@ user's same kind. An archived account SHALL NOT accept new snapshots but its
 existing snapshots SHALL remain readable. Accounts SHALL be scoped to the
 user (another user's account is a 404).
 
+A user SHALL be able to reorder all of their accounts of one `kind` in a
+single request, `PUT /api/finance/networth/accounts/order` with body
+`{ kind, ids[] }`, which SHALL atomically set each account's `sort_order` to
+its index in `ids` (0-based). `ids` SHALL be exactly the set of the user's
+account ids of that `kind` — including archived accounts, which share the
+same ordering space — never a subset, a superset, nor containing another
+user's or another kind's id. Any mismatch SHALL reject the whole request
+with 400 and SHALL write nothing. The write SHALL be all-or-nothing: if any
+part of the batch fails, no account's `sort_order` SHALL change.
+
 #### Scenario: First list seeds defaults idempotently
 
 - **WHEN** a user with no accounts calls GET accounts twice
@@ -30,6 +40,26 @@ user (another user's account is a 404).
 - **WHEN** a user tries to change an account's kind, or acts on another
   user's account
 - **THEN** the kind change is not applied, and another user's account is 404
+
+#### Scenario: Reordering writes every account's new position atomically
+
+- **WHEN** a user PUTs `ids` in a new order that is exactly their full set of
+  asset (or liability) account ids
+- **THEN** each account's `sort_order` becomes its index in `ids`, and if any
+  one of those writes fails none of them take effect
+
+#### Scenario: An incomplete or foreign id set is rejected without writing
+
+- **WHEN** `ids` omits one of the user's accounts of that `kind`, includes an
+  id that is not one of the user's accounts, or includes another user's or
+  another kind's account id
+- **THEN** the request fails with 400 and no account's `sort_order` changes
+
+#### Scenario: Archived accounts share the ordering space
+
+- **WHEN** a user reorders a kind that includes an archived account
+- **THEN** the archived account must be present in `ids` and receives its own
+  `sort_order` like any other account
 
 ### Requirement: Monthly market-value snapshots overwrite
 
