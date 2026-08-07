@@ -69,6 +69,12 @@ function mirrorToRow(mirror: ShareMirrorRow) {
     note: mirror.note,
     splitExpenseId: mirror.splitExpenseId,
     categorySource: "mirror",
+    // 1-based period position for a scheduled mirror, null for an ordinary
+    // lump one — the third component of the identity key (split-installments
+    // tasks 0.1/5.1). `?? null` rather than leaving the key out: an
+    // explicit `undefined` value here would be ambiguous with "column not
+    // specified" depending on the driver, and the column has no default.
+    installmentNo: mirror.installmentNo ?? null,
   };
 }
 
@@ -87,13 +93,14 @@ const MIRROR_RETURNING = {
   categoryId: financeTransaction.categoryId,
   day: financeTransaction.day,
   note: financeTransaction.note,
+  installmentNo: financeTransaction.installmentNo,
 } as const;
 
-type WrittenMirrorRow = { userId: string; amount: number; currency: string; categoryId: string; day: string; note: string | null };
+type WrittenMirrorRow = { userId: string; amount: number; currency: string; categoryId: string; day: string; note: string | null; installmentNo: number | null };
 
 /** `split_expense_id` is not read back: every one of these rows belongs to the expense being written. */
 function writtenMirrors(splitExpenseId: string, rows: WrittenMirrorRow[]): ShareMirrorRow[] {
-  return rows.map((row) => ({ ...row, splitExpenseId }));
+  return rows.map((row) => ({ ...row, splitExpenseId, installmentNo: row.installmentNo ?? undefined }));
 }
 
 /**
@@ -325,13 +332,22 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
     // Built lazily because `.values([])` is not a statement drizzle will
     // build: when nobody gets a mirror there is nothing to upsert, only the
     // delete below.
+    //
+    // **KNOWN GAP (split-installments task 5.3, deliberately not done this
+    // round): this upsert only arbitrates the lump-mirror index.** It is
+    // correct for every mirror this repo's tests ever hand it, because none
+    // of them edit a share that carries a schedule. A future edit to a
+    // scheduled share's periods needs its own upsert against
+    // `finance_transaction_split_mirror_period_idx` — not a mechanical
+    // extension of this one, since edits that add, remove or reflow periods
+    // have no single row to conflict on.
     const mirrorUpsert = () =>
       db
         .insert(financeTransaction)
         .values(mirrors.map(mirrorToRow))
         .onConflictDoUpdate({
           target: [financeTransaction.userId, financeTransaction.splitExpenseId],
-          targetWhere: sql`split_expense_id is not null`,
+          targetWhere: sql`split_expense_id is not null and installment_no is null`,
           set: {
             amount: sql`excluded.amount`,
             currency: sql`excluded.currency`,

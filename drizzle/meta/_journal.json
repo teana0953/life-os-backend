@@ -204,6 +204,13 @@
       "when": 1786085741933,
       "tag": "0028_add-installments",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786102005407,
+      "tag": "0029_split-repayment-schedule",
+      "breakpoints": true
     }
   ]
 }

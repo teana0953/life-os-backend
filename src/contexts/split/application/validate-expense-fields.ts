@@ -102,7 +102,7 @@ export async function validateExpenseFields(deps: ValidateExpenseFieldsDeps, inp
   }
   const categoryName = normalizeCategoryName(input.categoryName);
 
-  const shares = computeShares(input.amount, input.split).map((share) => ({ userId: share.userId.toLowerCase(), amount: share.amount }));
+  const shares = computeShares(input.amount, input.split).map((share) => ({ userId: share.userId.toLowerCase(), amount: share.amount, schedule: share.schedule }));
   const payerUserId = input.payerUserId.toLowerCase();
   const callerUserId = input.callerUserId.toLowerCase();
 

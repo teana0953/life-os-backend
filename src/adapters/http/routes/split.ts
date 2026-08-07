@@ -146,7 +146,14 @@ function balanceToJson(balance: Balance) {
   return {
     user_id: balance.userId,
     display_name: balance.displayName,
-    balances: balance.balances.map((b) => ({ currency: b.currency, amount: b.amount })),
+    balances: balance.balances.map((b) => ({
+      currency: b.currency,
+      amount: b.amount,
+      // Absent, not zeroed, when nothing behind this figure is on a schedule
+      // (split-installments tasks 4.1/4.2) — a zeroed value would be
+      // indistinguishable from "the schedule finished".
+      ...(b.schedule ? { schedule: { next_period: b.schedule.nextPeriod, total_periods: b.schedule.totalPeriods, period_amount: b.schedule.periodAmount } } : {}),
+    })),
   };
 }
 
@@ -206,10 +213,27 @@ function optionalNoteField(body: Record<string, unknown>): string | null {
 }
 
 /**
+ * Reads an exact share's optional repayment schedule (split-installments
+ * proposal.md): `{ periods, per_period_amount }`. Absent or `null` -> no
+ * schedule; anything else must be a well-shaped object, so a caller's typo
+ * fails loudly here rather than silently mirroring as an ordinary lump share.
+ */
+function parseShareSchedule(value: unknown, field: string): { periods: number; perPeriodAmount: number } | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object") throw new BadRequestError(`${field} must be an object or null`);
+  const schedule = value as Record<string, unknown>;
+  const periods = requireAmountNumber(schedule.periods, `${field}.periods`);
+  if (!Number.isInteger(periods) || periods <= 0) throw new BadRequestError(`${field}.periods must be a positive integer`);
+  const perPeriodAmount = requireAmountNumber(schedule.per_period_amount, `${field}.per_period_amount`);
+  if (!Number.isInteger(perPeriodAmount) || perPeriodAmount <= 0) throw new BadRequestError(`${field}.per_period_amount must be a positive integer`);
+  return { periods, perPeriodAmount };
+}
+
+/**
  * Reads `split` out of the request body: `{ mode: "equal", participant_user_ids: [...] }`
- * or `{ mode: "exact", shares: [{ user_id, amount }] }`. Every user id inside
- * is checked against `UUID_RE` here — a malformed one in the body is a `400`
- * (design.md), not a `500` from Postgres' uuid cast further down.
+ * or `{ mode: "exact", shares: [{ user_id, amount, schedule? }] }`. Every user
+ * id inside is checked against `UUID_RE` here — a malformed one in the body
+ * is a `400` (design.md), not a `500` from Postgres' uuid cast further down.
  */
 function parseSplitInput(value: unknown): SplitInput {
   if (typeof value !== "object" || value === null) throw new BadRequestError("split is required");
@@ -234,7 +258,8 @@ function parseSplitInput(value: unknown): SplitInput {
       const userId = requireString(share.user_id, `split.shares[${index}].user_id`);
       if (!UUID_RE.test(userId)) throw new BadRequestError(`split.shares[${index}].user_id must be a uuid`);
       const amount = requireAmountNumber(share.amount, `split.shares[${index}].amount`);
-      return { userId, amount };
+      const schedule = parseShareSchedule(share.schedule, `split.shares[${index}].schedule`);
+      return { userId, amount, schedule };
     });
     return { mode: "exact", shares };
   }

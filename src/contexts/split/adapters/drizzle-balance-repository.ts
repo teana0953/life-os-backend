@@ -21,6 +21,14 @@ type NetRow = {
   net: string;
 };
 
+type ProgressRow = {
+  counterpart_id: string;
+  currency: string;
+  total_periods: number;
+  period_amount: number;
+  due_periods: number;
+};
+
 /** Groups the SQL's already-netted, already-non-zero rows into the outward `Balance[]` shape, one entry per counterpart. */
 function rowsToBalances(rows: NetRow[]): Balance[] {
   const byUser = new Map<string, { displayName: string; balances: CurrencyBalance[] }>();
@@ -33,6 +41,33 @@ function rowsToBalances(rows: NetRow[]): Balance[] {
     entry.balances.push({ currency: row.currency, amount: Number(row.net) });
   }
   return [...byUser.entries()].map(([userId, entry]) => ({ userId, displayName: entry.displayName, balances: entry.balances }));
+}
+
+/** `attachSchedule`'s lookup key — counterpart and currency, the same grain a `CurrencyBalance` entry is at. */
+function progressKey(counterpartId: string, currency: string): string {
+  return `${counterpartId}:${currency}`;
+}
+
+/**
+ * Mutates `balances` in place, attaching each `CurrencyBalance` entry's
+ * schedule progress when `progressRows` has one for that (counterpart,
+ * currency) pair — absent otherwise, never zeroed (split-installments tasks
+ * 4.1/4.2).
+ */
+function attachSchedules(balances: Balance[], progressRows: ProgressRow[]): void {
+  if (progressRows.length === 0) return;
+  const byKey = new Map(progressRows.map((row) => [progressKey(row.counterpart_id, row.currency), row]));
+  for (const balance of balances) {
+    for (const currencyBalance of balance.balances) {
+      const progress = byKey.get(progressKey(balance.userId, currencyBalance.currency));
+      if (!progress) continue;
+      currencyBalance.schedule = {
+        nextPeriod: Math.min(progress.due_periods + 1, progress.total_periods),
+        totalPeriods: progress.total_periods,
+        periodAmount: progress.period_amount,
+      };
+    }
+  }
 }
 
 /**
@@ -90,7 +125,44 @@ export class DrizzleBalanceRepository implements BalanceRepository {
        GROUP BY net.counterpart_id, u.display_name, u.email, net.currency
       HAVING SUM(net.signed_amount) != 0
     `);
-    return rowsToBalances(result.rows);
+    const balances = rowsToBalances(result.rows);
+    attachSchedules(balances, await this.scheduleProgressForUser(me));
+    return balances;
+  }
+
+  /**
+   * Repayment-schedule progress for every (counterpart, currency) pair
+   * `me` has a scheduled share in, either direction (split-installments
+   * tasks 4.1–4.3). A mirror row is "on a schedule" when its
+   * `installment_no` is not null (`FinanceSharesMirror.plan`'s condition
+   * inversion never leaves one on an ordinary lump row). Deliberately
+   * calendar-based, not settlement-based: "which period is next" is a
+   * question about the schedule's own dates, answered by `ft.day`, never by
+   * `split_settlement` — a period's date arriving is not a repayment, and
+   * counting it as one would double as the exact mistake `balancesForUser`'s
+   * `net` CTE above refuses to make (design.md, spec `finance-ledger`
+   * "A scheduled period is not a repayment").
+   *
+   * Grouped by (counterpart, currency) rather than by expense: this repo's
+   * feature set never gives one counterpart two live schedules in the same
+   * currency, so the ambiguity that grouping would hide never arises here.
+   */
+  private async scheduleProgressForUser(me: string): Promise<ProgressRow[]> {
+    const result = await this.getDb().execute<ProgressRow>(sql`
+      SELECT
+        CASE WHEN se.payer_user_id = ${me}::uuid THEN ft.user_id ELSE se.payer_user_id END AS counterpart_id,
+        ft.currency AS currency,
+        COUNT(*)::int AS total_periods,
+        MAX(ft.amount)::int AS period_amount,
+        COUNT(*) FILTER (WHERE ft.day <= CURRENT_DATE)::int AS due_periods
+        FROM finance_transaction ft
+        JOIN split_expense se ON se.id = ft.split_expense_id
+       WHERE ft.installment_no IS NOT NULL
+         AND ((se.payer_user_id = ${me}::uuid AND ft.user_id != ${me}::uuid)
+           OR (ft.user_id = ${me}::uuid AND se.payer_user_id != ${me}::uuid))
+       GROUP BY counterpart_id, ft.currency
+    `);
+    return result.rows;
   }
 
   /**

@@ -1,4 +1,5 @@
 import { checkBudgetAlerts } from "../application/check-budget-alerts";
+import { addMonthsAnchored } from "../application/installment-support";
 import type { BudgetAlertNotifier } from "../domain/budget-alert-notifier";
 import { isSupportedCurrency } from "../domain/currency";
 import { DEFAULT_CATEGORIES, FALLBACK_CATEGORY_NAME } from "../domain/default-categories";
@@ -62,6 +63,16 @@ export class FinanceSharesMirror implements SharesMirror {
    * payer too: fronting money for other people is lending, not spending, so a
    * payer holding no share gets nothing, and one holding a share gets that
    * share rather than the bill.
+   *
+   * **A share on a repayment schedule (split-installments proposal.md) is a
+   * condition inversion, not an addition.** Without a schedule, a share is
+   * mirrored as before: one lump row for the whole amount. With one, it is
+   * mirrored as `schedule.periods` rows of `schedule.perPeriodAmount` each,
+   * anchored on the split's day via `addMonthsAnchored` (the same
+   * never-drift-off-the-original-day rule #82 established), and the lump row
+   * is **not** also written — that would record the same money twice (6,000
+   * + 12×500 = 18,000 of spending for 6,000 of expense). Each period row
+   * carries a 1-based `installmentNo`; the lump path leaves it unset.
    */
   async plan(input: MirrorPlanInput): Promise<ShareMirrorRow[]> {
     if (!isSupportedCurrency(input.currency)) return [];
@@ -69,12 +80,29 @@ export class FinanceSharesMirror implements SharesMirror {
     const rows: ShareMirrorRow[] = [];
     for (const share of input.shares) {
       if (share.amount <= 0) continue;
+      const categoryId = await this.resolveCategoryId(share.userId, input.categoryName);
+      if (share.schedule) {
+        for (let period = 1; period <= share.schedule.periods; period++) {
+          if (share.schedule.perPeriodAmount <= 0) continue;
+          rows.push({
+            userId: share.userId,
+            splitExpenseId: input.splitExpenseId,
+            amount: share.schedule.perPeriodAmount,
+            currency: input.currency,
+            categoryId,
+            day: addMonthsAnchored(input.day, period - 1),
+            note: input.description,
+            installmentNo: period,
+          });
+        }
+        continue;
+      }
       rows.push({
         userId: share.userId,
         splitExpenseId: input.splitExpenseId,
         amount: share.amount,
         currency: input.currency,
-        categoryId: await this.resolveCategoryId(share.userId, input.categoryName),
+        categoryId,
         day: input.day,
         // The split's description is the only text there is; from here on the
         // note belongs to the owner and later split edits leave it alone.

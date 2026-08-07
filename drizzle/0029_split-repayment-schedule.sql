@@ -1,0 +1,3 @@
+DROP INDEX "finance_transaction_user_split_expense_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "finance_transaction_split_mirror_lump_idx" ON "finance_transaction" USING btree ("user_id","split_expense_id") WHERE split_expense_id is not null and installment_no is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "finance_transaction_split_mirror_period_idx" ON "finance_transaction" USING btree ("user_id","split_expense_id","installment_no") WHERE split_expense_id is not null and installment_no is not null;

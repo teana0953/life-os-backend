@@ -403,6 +403,13 @@ export const financeTransaction = pgTable(
     // the single settlement transaction an early payoff inserts — it is not
     // "the Nth of N", so it is deliberately not numbered as one (design.md D6,
     // tasks 5.3).
+    //
+    // Also reused, independently of `plan_id`, by a split-mirror row that is
+    // one period of a share's repayment schedule (split-installments
+    // proposal.md) — 1-based there too, null for an ordinary lump mirror.
+    // The two uses never collide: a plan-generated row always has
+    // `split_expense_id is null` and a split-mirror row always has
+    // `plan_id is null`.
     installmentNo: integer("installment_no"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -412,15 +419,26 @@ export const financeTransaction = pgTable(
     // Backs both `listInstallments` and the plan-scoped DELETE that clears
     // upcoming instalments (design.md D3b).
     index("finance_transaction_plan_idx").on(t.planId),
-    // At most one mirror per (user, split expense) — the identity key an edit
-    // upserts on. It cannot be the share id: an edit deletes every share and
-    // reinserts them, so share ids change on every edit (D5). Partial so it
-    // covers only mirrors — and the predicate must be repeated in the
-    // `ON CONFLICT` target, the same way `finance_budget`'s two partial
-    // indexes are matched with `targetWhere`.
-    uniqueIndex("finance_transaction_user_split_expense_idx")
+    // At most one mirror per (user, split expense, period) — the identity key
+    // an edit upserts on. It cannot be the share id: an edit deletes every
+    // share and reinserts them, so share ids change on every edit (D5).
+    //
+    // split-installments tasks 0.1/5.1: a share on a repayment schedule
+    // writes one mirror per period, so "one row per (user, split expense)"
+    // stopped holding — the identity key gained `installment_no`. Two
+    // partial indexes, not a plain 3-column one, the same way
+    // `finance_budget`'s two partial indexes avoid a nullable column
+    // breaking a plain unique constraint (NULLs don't collide under standard
+    // Postgres uniqueness, and an ordinary lump mirror's `installment_no` is
+    // null): one arbitrates the lump case, the other the scheduled case.
+    // Each predicate must be repeated in the matching `ON CONFLICT` target,
+    // the same way `finance_budget`'s are matched with `targetWhere`.
+    uniqueIndex("finance_transaction_split_mirror_lump_idx")
       .on(t.userId, t.splitExpenseId)
-      .where(sql`split_expense_id is not null`),
+      .where(sql`split_expense_id is not null and installment_no is null`),
+    uniqueIndex("finance_transaction_split_mirror_period_idx")
+      .on(t.userId, t.splitExpenseId, t.installmentNo)
+      .where(sql`split_expense_id is not null and installment_no is not null`),
   ],
 );
 
