@@ -70,8 +70,8 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
   it("nets an expense as positive for the payer and negative for the share holder", async () => {
     await insertExpense(harness.db, { id: EXPENSE_1, payerUserId: A, amount: 450, shares: [{ userId: B, amount: 450 }] });
 
-    expect(await repo.balancesForUser(A)).toEqual([{ userId: B, displayName: "Ben", balances: [{ currency: "TWD", amount: 450 }] }]);
-    expect(amountAgainst(await repo.balancesForUser(B), A)).toBe(-450);
+    expect(await repo.balancesForUser(A, "2030-01-15")).toEqual([{ userId: B, displayName: "Ben", balances: [{ currency: "TWD", amount: 450 }] }]);
+    expect(amountAgainst(await repo.balancesForUser(B, "2030-01-15"), A)).toBe(-450);
   });
 
   // The mirror of the group-scoping case below: that one proves
@@ -93,8 +93,8 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
     });
     await insertSettlement(harness.db, { id: SETTLEMENT_1, groupId: G, fromUserId: B, toUserId: A, amount: 300 });
 
-    expect(amountAgainst(await repo.balancesForUser(A), B)).toBe(150);
-    expect(amountAgainst(await repo.balancesForUser(B), A)).toBe(-150);
+    expect(amountAgainst(await repo.balancesForUser(A, "2030-01-15"), B)).toBe(150);
+    expect(amountAgainst(await repo.balancesForUser(B, "2030-01-15"), A)).toBe(-150);
   });
 
   // 3.2 — the settlement direction, personal (groupless) query.
@@ -106,22 +106,22 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
     it("leaves 150 after B repays 300 of 450", async () => {
       await insertSettlement(harness.db, { id: SETTLEMENT_1, fromUserId: B, toUserId: A, amount: 300 });
 
-      expect(amountAgainst(await repo.balancesForUser(A), B)).toBe(150);
-      expect(amountAgainst(await repo.balancesForUser(B), A)).toBe(-150);
+      expect(amountAgainst(await repo.balancesForUser(A, "2030-01-15"), B)).toBe(150);
+      expect(amountAgainst(await repo.balancesForUser(B, "2030-01-15"), A)).toBe(-150);
     });
 
     it("drops the pair entirely once repaid in full", async () => {
       await insertSettlement(harness.db, { id: SETTLEMENT_1, fromUserId: B, toUserId: A, amount: 450 });
 
-      expect(await repo.balancesForUser(A)).toEqual([]);
-      expect(await repo.balancesForUser(B)).toEqual([]);
+      expect(await repo.balancesForUser(A, "2030-01-15")).toEqual([]);
+      expect(await repo.balancesForUser(B, "2030-01-15")).toEqual([]);
     });
 
     it("flips the sign when B overpays", async () => {
       await insertSettlement(harness.db, { id: SETTLEMENT_1, fromUserId: B, toUserId: A, amount: 600 });
 
-      expect(amountAgainst(await repo.balancesForUser(A), B)).toBe(-150);
-      expect(amountAgainst(await repo.balancesForUser(B), A)).toBe(150);
+      expect(amountAgainst(await repo.balancesForUser(A, "2030-01-15"), B)).toBe(-150);
+      expect(amountAgainst(await repo.balancesForUser(B, "2030-01-15"), A)).toBe(150);
     });
   });
 
@@ -221,7 +221,7 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
       ],
     });
 
-    const balances = await repo.balancesForUser(A);
+    const balances = await repo.balancesForUser(A, "2030-01-15");
     expect(balances.map((balance) => balance.userId)).toEqual([B]);
     expect(amountAgainst(balances, B)).toBe(150);
   });
@@ -231,7 +231,7 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
     await insertExpense(harness.db, { id: EXPENSE_1, payerUserId: A, amount: 300, currency: "TWD", shares: [{ userId: B, amount: 300 }] });
     await insertExpense(harness.db, { id: EXPENSE_2, payerUserId: A, amount: 50, currency: "USD", shares: [{ userId: B, amount: 50 }] });
 
-    const before = await repo.balancesForUser(A);
+    const before = await repo.balancesForUser(A, "2030-01-15");
     expect(amountAgainst(before, B, "TWD")).toBe(300);
     expect(amountAgainst(before, B, "USD")).toBe(50);
 
@@ -243,11 +243,11 @@ describe("DrizzleBalanceRepository (real Postgres)", () => {
     // A's leaves the `from_user_id = me` leg unexercised.
     await insertSettlement(harness.db, { id: SETTLEMENT_1, fromUserId: B, toUserId: A, amount: 50, currency: "USD" });
 
-    const after = await repo.balancesForUser(A);
+    const after = await repo.balancesForUser(A, "2030-01-15");
     expect(amountAgainst(after, B, "USD")).toBeUndefined();
     expect(amountAgainst(after, B, "TWD")).toBe(300);
 
-    const fromB = await repo.balancesForUser(B);
+    const fromB = await repo.balancesForUser(B, "2030-01-15");
     expect(amountAgainst(fromB, A, "USD")).toBeUndefined();
     expect(amountAgainst(fromB, A, "TWD")).toBe(-300);
   });

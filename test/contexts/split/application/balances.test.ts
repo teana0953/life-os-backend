@@ -60,7 +60,7 @@ describe("getBalances: per-currency, never converted", () => {
     await createExpense(deps, groupless({ split: { mode: "equal", participantUserIds: [A, B] } }));
     await createExpense(deps, groupless({ currency: "USD", amount: 100, split: { mode: "equal", participantUserIds: [A, B] } }));
 
-    const result = await getBalances(balances, B);
+    const result = await getBalances(balances, B, "2030-01-15");
 
     const withA = result.find((b) => b.userId === A)!;
     expect(withA.balances.sort((x, y) => x.currency.localeCompare(y.currency))).toEqual([
@@ -73,7 +73,7 @@ describe("getBalances: per-currency, never converted", () => {
     await createExpense(deps, groupless({ amount: 100, split: { mode: "exact", shares: [{ userId: A, amount: 0 }, { userId: B, amount: 100 }] } }));
     await createExpense(deps, groupless({ payerUserId: B, amount: 100, split: { mode: "exact", shares: [{ userId: A, amount: 100 }, { userId: B, amount: 0 }] } }));
 
-    const result = await getBalances(balances, A);
+    const result = await getBalances(balances, A, "2030-01-15");
 
     expect(result.find((b) => b.userId === B)).toBeUndefined();
   });
@@ -81,7 +81,7 @@ describe("getBalances: per-currency, never converted", () => {
   it("excludes the payer's own share from both sides", async () => {
     await createExpense(deps, groupless({ amount: 900, split: { mode: "equal", participantUserIds: [A, B, C] } }));
 
-    const result = await getBalances(balances, A);
+    const result = await getBalances(balances, A, "2030-01-15");
 
     // Nobody owes themselves.
     expect(result.find((b) => b.userId === A)).toBeUndefined();
@@ -93,7 +93,7 @@ describe("getBalances: per-currency, never converted", () => {
   it("owes a pure advance in full", async () => {
     await createExpense(deps, groupless({ amount: 200, payerUserId: A, split: { mode: "exact", shares: [{ userId: B, amount: 200 }] } }));
 
-    const result = await getBalances(balances, A);
+    const result = await getBalances(balances, A, "2030-01-15");
 
     expect(result.find((b) => b.userId === B)?.balances).toEqual([{ currency: "TWD", amount: 200 }]);
   });
@@ -220,7 +220,7 @@ describe("getGroupBalances", () => {
       split: { mode: 'equal', participantUserIds: [A, B] },
     } as CreateExpenseInput);
 
-    const before = await getBalances(balances, A);
+    const before = await getBalances(balances, A, "2030-01-15");
     expect(before.find((entry) => entry.userId === B)?.balances).toEqual([{ currency: 'TWD', amount: 450 }]);
 
     await createSettlement(
@@ -230,11 +230,11 @@ describe("getGroupBalances", () => {
 
     // 450 owed, 300 repaid -> 150 owed. Not 750, which is what the inverted
     // sign would produce, silently.
-    const afterA = await getBalances(balances, A);
+    const afterA = await getBalances(balances, A, "2030-01-15");
     expect(afterA.find((entry) => entry.userId === B)?.balances).toEqual([{ currency: 'TWD', amount: 150 }]);
 
     // And the same fact from B's side, with the opposite sign.
-    const afterB = await getBalances(balances, B);
+    const afterB = await getBalances(balances, B, "2030-01-15");
     expect(afterB.find((entry) => entry.userId === A)?.balances).toEqual([{ currency: 'TWD', amount: -150 }]);
   });
 
@@ -254,7 +254,7 @@ describe("getGroupBalances", () => {
       { callerUserId: B, groupId: null, fromUserId: B, toUserId: A, amount: 450, currency: 'TWD', day: '2026-08-02', note: null },
     );
 
-    expect((await getBalances(balances, A)).find((entry) => entry.userId === B)).toBeUndefined();
+    expect((await getBalances(balances, A, "2030-01-15")).find((entry) => entry.userId === B)).toBeUndefined();
   });
 
   it('overpaying flips the balance rather than being refused', async () => {
@@ -273,7 +273,7 @@ describe("getGroupBalances", () => {
       { callerUserId: B, groupId: null, fromUserId: B, toUserId: A, amount: 600, currency: 'TWD', day: '2026-08-02', note: null },
     );
 
-    expect((await getBalances(balances, A)).find((entry) => entry.userId === B)?.balances).toEqual([
+    expect((await getBalances(balances, A, "2030-01-15")).find((entry) => entry.userId === B)?.balances).toEqual([
       { currency: 'TWD', amount: -150 },
     ]);
   });

@@ -21,6 +21,15 @@ type NetRow = {
   net: string;
 };
 
+type ProgressRow = {
+  counterpart_id: string;
+  currency: string;
+  expense_id: string;
+  total_periods: number;
+  period_amount: number;
+  due_periods: number;
+};
+
 /** Groups the SQL's already-netted, already-non-zero rows into the outward `Balance[]` shape, one entry per counterpart. */
 function rowsToBalances(rows: NetRow[]): Balance[] {
   const byUser = new Map<string, { displayName: string; balances: CurrencyBalance[] }>();
@@ -33,6 +42,38 @@ function rowsToBalances(rows: NetRow[]): Balance[] {
     entry.balances.push({ currency: row.currency, amount: Number(row.net) });
   }
   return [...byUser.entries()].map(([userId, entry]) => ({ userId, displayName: entry.displayName, balances: entry.balances }));
+}
+
+/** `attachSchedule`'s lookup key — counterpart and currency, the same grain a `CurrencyBalance` entry is at. */
+function progressKey(counterpartId: string, currency: string): string {
+  return `${counterpartId}:${currency}`;
+}
+
+/**
+ * Mutates `balances` in place, attaching each `CurrencyBalance` entry's
+ * schedule progress when `progressRows` has one for that (counterpart,
+ * currency) pair — absent otherwise, never zeroed (split-installments tasks
+ * 4.1/4.2).
+ */
+function attachSchedules(balances: Balance[], progressRows: ProgressRow[]): void {
+  if (progressRows.length === 0) return;
+  const byKey = new Map<string, ProgressRow[]>();
+  for (const row of progressRows) {
+    const key = progressKey(row.counterpart_id, row.currency);
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
+  }
+  for (const balance of balances) {
+    for (const currencyBalance of balance.balances) {
+      const rows = byKey.get(progressKey(balance.userId, currencyBalance.currency));
+      if (!rows || rows.length === 0) continue;
+      currencyBalance.schedules = rows.map((progress) => ({
+        expenseId: progress.expense_id,
+        nextPeriod: Math.min(progress.due_periods + 1, progress.total_periods),
+        totalPeriods: progress.total_periods,
+        periodAmount: progress.period_amount,
+      }));
+    }
+  }
 }
 
 /**
@@ -54,7 +95,7 @@ export class DrizzleBalanceRepository implements BalanceRepository {
    * share. Grouped and netted per currency; currencies that cancel out (or
    * pairs with none at all) never appear.
    */
-  async balancesForUser(userId: string): Promise<Balance[]> {
+  async balancesForUser(userId: string, today: string): Promise<Balance[]> {
     const me = userId.toLowerCase();
     const result = await this.getDb().execute<NetRow>(sql`
       WITH net AS (
@@ -90,7 +131,60 @@ export class DrizzleBalanceRepository implements BalanceRepository {
        GROUP BY net.counterpart_id, u.display_name, u.email, net.currency
       HAVING SUM(net.signed_amount) != 0
     `);
-    return rowsToBalances(result.rows);
+    const balances = rowsToBalances(result.rows);
+    attachSchedules(balances, await this.scheduleProgressForUser(me, today));
+    return balances;
+  }
+
+  /**
+   * Repayment-schedule progress for every (counterpart, currency) pair
+   * `me` has a scheduled share in, either direction (split-installments
+   * tasks 4.1–4.3). A mirror row is "on a schedule" when its
+   * `installment_no` is not null (`FinanceSharesMirror.plan`'s condition
+   * inversion never leaves one on an ordinary lump row). Deliberately
+   * calendar-based, not settlement-based: "which period is next" is a
+   * question about the schedule's own dates, answered by `ft.day`, never by
+   * `split_settlement` — a period's date arriving is not a repayment, and
+   * counting it as one would double as the exact mistake `balancesForUser`'s
+   * `net` CTE above refuses to make (design.md, spec `finance-ledger`
+   * "A scheduled period is not a repayment").
+   *
+   * Grouped by expense, not by (counterpart, currency): a user can split two
+   * things with the same friend, both scheduled, both TWD, and nothing
+   * anywhere forbids it. Grouping by the pair alone returned one row
+   * belonging to neither schedule — the period counts summed while
+   * `period_amount` came from whichever schedule was larger. One row per
+   * expense is the grain the schedule actually lives at, so the caller gets
+   * two schedules instead of an average of two.
+   *
+   * `(now() AT TIME ZONE tz)::date`, **not** `CURRENT_DATE AT TIME ZONE tz` —
+   * the latter reads as "today's midnight, interpreted as a Taipei wall clock"
+   * and comes back a timestamp (`2026-08-07 00:00:00`), which then compares
+   * against a `date` by implicit cast: no error, just the wrong answer. Only
+   * the first form asks "what is the date where the user is".
+   *
+   * The due_periods filter uses the current date in the user's own timezone, not
+   * UTC: a period scheduled for "today" in the user's zone should count as due
+   * today, not wait until UTC reaches that date (shared-kernel/reminder-clock.ts
+   * precedent for timezone-aware date logic).
+   */
+  private async scheduleProgressForUser(me: string, today: string): Promise<ProgressRow[]> {
+    const result = await this.getDb().execute<ProgressRow>(sql`
+      SELECT
+        CASE WHEN se.payer_user_id = ${me}::uuid THEN ft.user_id ELSE se.payer_user_id END AS counterpart_id,
+        ft.currency AS currency,
+        ft.split_expense_id AS expense_id,
+        COUNT(*)::int AS total_periods,
+        MAX(ft.amount)::int AS period_amount,
+        COUNT(*) FILTER (WHERE ft.day <= ${today}::date)::int AS due_periods
+        FROM finance_transaction ft
+        JOIN split_expense se ON se.id = ft.split_expense_id
+       WHERE ft.installment_no IS NOT NULL
+         AND ((se.payer_user_id = ${me}::uuid AND ft.user_id != ${me}::uuid)
+           OR (ft.user_id = ${me}::uuid AND se.payer_user_id != ${me}::uuid))
+       GROUP BY counterpart_id, ft.currency, ft.split_expense_id
+    `);
+    return result.rows;
   }
 
   /**

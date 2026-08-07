@@ -3,6 +3,14 @@ export interface SplitShareInput {
   userId: string;
   /** What this participant owes, in the currency's minor units. Non-negative. */
   amount: number;
+  /**
+   * Optional repayment schedule (split-installments proposal.md): this
+   * holder repays the payer in `periods` monthly instalments of
+   * `perPeriodAmount` each, instead of all at once. `amount` above stays the
+   * whole share regardless — a schedule says when the money moves, not
+   * whether the debt exists.
+   */
+  schedule?: { periods: number; perPeriodAmount: number };
 }
 
 /**

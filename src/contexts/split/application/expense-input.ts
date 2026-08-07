@@ -1,5 +1,7 @@
 /** Caller-supplied split instructions before the amounts are computed/validated. */
-export type SplitInput = { mode: "equal"; participantUserIds: string[] } | { mode: "exact"; shares: { userId: string; amount: number }[] };
+export type SplitInput =
+  | { mode: "equal"; participantUserIds: string[] }
+  | { mode: "exact"; shares: { userId: string; amount: number; schedule?: { periods: number; perPeriodAmount: number } }[] };
 
 export interface CreateExpenseInput {
   callerUserId: string;

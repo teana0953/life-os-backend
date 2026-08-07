@@ -25,6 +25,12 @@ export interface ShareMirrorRow {
   /** `YYYY-MM-DD`, the split's day. */
   day: string;
   note: string | null;
+  /**
+   * 1-based position within a repayment schedule (split-installments
+   * proposal.md), absent for an ordinary lump mirror — presence is what
+   * distinguishes "part of a schedule" from "not", never a stubbed `0`.
+   */
+  installmentNo?: number;
 }
 
 /**
@@ -38,7 +44,7 @@ export interface MirrorPlanInput {
   day: string;
   description: string;
   categoryName: string | null;
-  shares: { userId: string; amount: number }[];
+  shares: { userId: string; amount: number; schedule?: { periods: number; perPeriodAmount: number } }[];
 }
 
 export interface SharesMirror {

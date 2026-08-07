@@ -1,0 +1,80 @@
+version: 1
+name: split-installments
+budget: 700k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  reproduce:
+    kind: task
+    role: implementer
+    tier: heavy
+    prompt: |
+      {{ inputs.goal }}
+
+      提案與任務清單在 `openspec/changes/split-installments/`,**先整份讀完**。
+      餘額語意不變是地基,不是選項 —— 不要重新設計它。
+
+      這一輪只寫**會紅**的測試,不要寫實作。fixture 都要真的踩到失效區:
+
+      1. **鏡像是條件反轉不是相加**(tasks 2.2-2.4):三條,少一條就有實作活下來。
+         - 兩者都記 → 該分攤者的鏡像總和 = 分攤額(6000 + 12×500 = 18000 要紅)
+         - 有時程表卻只記一筆總額 → 「帳本裡是 12 筆 500」要紅
+         - **沒有時程表的分攤也被拆開 → 要紅**(少了它「一律拆開」會活下來)
+      2. **餘額不按到期日分段**(3.2):斷言要包含**「那一列存在」**,不只金額。
+         `drizzle-balance-repository.ts` 有 `HAVING SUM(...) != 0`,零餘額整列消失,
+         只斷言金額的話「找不到列」跟「金額為零」分不出來。
+      3. **排定要還 ≠ 已經還了**(3.3):兩期日期已過但沒記錄還款 → 餘額不變。
+      4. **月份錨定**(1.2):fixture 從 **1/31** 開始,斷言**第三期** ——
+         逐次遞增與錨定推算對第二期都同意 2/28,只有第三期分得出來。
+      5. **進度欄位只在有時程表時才有**(4.3):沒有的那些列不帶欄位,不是帶零。
+      6. **語句數與期數無關**(5.4):PGlite,360 期,建立單一 multi-row INSERT。
+
+      跑 `npm test` 確認每條都紅、而且紅在斷言不是編譯錯,把「紅在哪、訊息是什麼」
+      寫進輸出。**原子性與語句數要在 `test/db/`**,不是用 fake。
+
+  fix:
+    kind: task
+    role: implementer
+    after: [reproduce]
+    prompt: |
+      讓 {{ nodes.reproduce.output }} 的測試轉綠,照 tasks.md 逐條做。
+
+      分層照 CLAUDE.md。`(user_id, split_expense_id)` 的唯一索引要改成帶
+      `installment_no`(tasks 0.1/5.1),鏡像的寫入仍在既有的 `db.batch` 裡。
+
+      **不要重用 #82 的 `finance_installment_plan`**(tasks 6.4)—— 那是
+      「我跟銀行」的時程表,這是「他跟我」的。形狀像不代表是同一件事。
+
+      同時更新 `openspec/changes/split-installments/specs/` 的 delta 並確認
+      `openspec validate split-installments --strict` 過(MODIFIED 是整塊替換,
+      現有 scenario 一條都不能漏 —— finance-ledger 那條有 20 條)。
+
+      **不要動前端。**
+
+  gate:
+    kind: script
+    after: [fix]
+    run: "npm test && npm run typecheck"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [fix]
+
+  refix:
+    kind: task
+    role: implementer
+    tier: light
+    after: [gate, code-review]
+    when: any-fail
+    goto: [gate, code-review]
+    max_iterations: 3
+
+  ship:
+    kind: gate
+    after: [gate, code-review]
+    when: all-pass
+    show: "{{ nodes.code-review.output }}"

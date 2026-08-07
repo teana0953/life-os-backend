@@ -69,6 +69,12 @@ function mirrorToRow(mirror: ShareMirrorRow) {
     note: mirror.note,
     splitExpenseId: mirror.splitExpenseId,
     categorySource: "mirror",
+    // 1-based period position for a scheduled mirror, null for an ordinary
+    // lump one — the third component of the identity key (split-installments
+    // tasks 0.1/5.1). `?? null` rather than leaving the key out: an
+    // explicit `undefined` value here would be ambiguous with "column not
+    // specified" depending on the driver, and the column has no default.
+    installmentNo: mirror.installmentNo ?? null,
   };
 }
 
@@ -87,13 +93,14 @@ const MIRROR_RETURNING = {
   categoryId: financeTransaction.categoryId,
   day: financeTransaction.day,
   note: financeTransaction.note,
+  installmentNo: financeTransaction.installmentNo,
 } as const;
 
-type WrittenMirrorRow = { userId: string; amount: number; currency: string; categoryId: string; day: string; note: string | null };
+type WrittenMirrorRow = { userId: string; amount: number; currency: string; categoryId: string; day: string; note: string | null; installmentNo: number | null };
 
 /** `split_expense_id` is not read back: every one of these rows belongs to the expense being written. */
 function writtenMirrors(splitExpenseId: string, rows: WrittenMirrorRow[]): ShareMirrorRow[] {
-  return rows.map((row) => ({ ...row, splitExpenseId }));
+  return rows.map((row) => ({ ...row, splitExpenseId, installmentNo: row.installmentNo ?? undefined }));
 }
 
 /**
@@ -325,20 +332,40 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
     // Built lazily because `.values([])` is not a statement drizzle will
     // build: when nobody gets a mirror there is nothing to upsert, only the
     // delete below.
-    const mirrorUpsert = () =>
+    //
+    // Two upserts, not one: `ON CONFLICT` takes a single target, and a mirror
+    // is arbitrated by one of two partial indexes depending on whether it is a
+    // lump (`installment_no is null`) or a period. Sending period rows at the
+    // lump target does not merely miss — the period index then raises an
+    // unhandled unique violation and the whole edit fails, which is what
+    // editing any scheduled expense used to do.
+    const MIRROR_SET = {
+      amount: sql`excluded.amount`,
+      currency: sql`excluded.currency`,
+      day: sql`excluded.day`,
+      categoryId: sql`case when ${financeTransaction.categorySource} = 'mirror' then excluded.category_id else ${financeTransaction.categoryId} end`,
+      updatedAt: now,
+    };
+    const lumpMirrors = mirrors.filter((mirror) => mirror.installmentNo == null);
+    const periodMirrors = mirrors.filter((mirror) => mirror.installmentNo != null);
+    const lumpUpsert = () =>
       db
         .insert(financeTransaction)
-        .values(mirrors.map(mirrorToRow))
+        .values(lumpMirrors.map(mirrorToRow))
         .onConflictDoUpdate({
           target: [financeTransaction.userId, financeTransaction.splitExpenseId],
-          targetWhere: sql`split_expense_id is not null`,
-          set: {
-            amount: sql`excluded.amount`,
-            currency: sql`excluded.currency`,
-            day: sql`excluded.day`,
-            categoryId: sql`case when ${financeTransaction.categorySource} = 'mirror' then excluded.category_id else ${financeTransaction.categoryId} end`,
-            updatedAt: now,
-          },
+          targetWhere: sql`split_expense_id is not null and installment_no is null`,
+          set: MIRROR_SET,
+        })
+        .returning(MIRROR_RETURNING);
+    const periodUpsert = () =>
+      db
+        .insert(financeTransaction)
+        .values(periodMirrors.map(mirrorToRow))
+        .onConflictDoUpdate({
+          target: [financeTransaction.userId, financeTransaction.splitExpenseId, financeTransaction.installmentNo],
+          targetWhere: sql`split_expense_id is not null and installment_no is not null`,
+          set: MIRROR_SET,
         })
         .returning(MIRROR_RETURNING);
     // Anyone who is no longer a share holder loses their mirror. Set-based on
@@ -357,14 +384,55 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
           ),
         ),
       );
+    // Shortening a schedule leaves the dropped periods with nothing to
+    // conflict on, so an upsert alone cannot remove them — they would survive
+    // as orphans and keep charging the holder for periods that no longer
+    // exist. Must track the highest surviving period **per holder** (not
+    // globally), because one expense can have multiple independently-scheduled
+    // holders with different period counts. Delete per holder, not globally.
+    const highestPeriodPerHolder = new Map<string, number>();
+    for (const mirror of periodMirrors) {
+      const current = highestPeriodPerHolder.get(mirror.userId) ?? 0;
+      highestPeriodPerHolder.set(mirror.userId, Math.max(current, mirror.installmentNo ?? 0));
+    }
+    // Build a list of delete conditions, one per holder: delete this holder's
+    // periods that exceed their own highest surviving period.
+    const dropConditions = Array.from(highestPeriodPerHolder.entries()).map(([holderId, highest]) =>
+      and(
+        eq(financeTransaction.userId, holderId),
+        eq(financeTransaction.splitExpenseId, id),
+        sql`${financeTransaction.installmentNo} is not null`,
+        sql`${financeTransaction.installmentNo} > ${highest}`,
+      ),
+    );
+    // Execute a separate delete for each holder (or none if no periods), so
+    // each holder's orphaned periods are deleted correctly.
+    const droppedPeriodDeletes = dropConditions.map((condition) =>
+      db.delete(financeTransaction).where(condition),
+    );
     // Same reason as `create`: two spelled-out batches rather than a spread,
     // so the upsert's returned rows have a known position.
     let written: ShareMirrorRow[] = [];
-    if (mirrors.length > 0) {
-      const [, , , mirrorRows] = await db.batch([deleteShares, insertShares, updateExpense, mirrorUpsert(), mirrorDelete, activityInsert]);
-      written = writtenMirrors(id, mirrorRows);
+    const head = [deleteShares, insertShares, updateExpense] as const;
+    const tail = [mirrorDelete, ...droppedPeriodDeletes, activityInsert] as const;
+    if (lumpMirrors.length > 0 && periodMirrors.length > 0) {
+      const result = await db.batch([...head, lumpUpsert(), periodUpsert(), ...tail]);
+      // Position 0-2: head; 3: lumpUpsert; 4: periodUpsert; 5+: tail (droppedPeriodDeletes + activityInsert)
+      const lumpRows = result[3];
+      const periodRows = result[4];
+      written = [...writtenMirrors(id, lumpRows), ...writtenMirrors(id, periodRows)];
+    } else if (lumpMirrors.length > 0) {
+      const result = await db.batch([...head, lumpUpsert(), ...tail]);
+      // Position 0-2: head; 3: lumpUpsert; 4+: tail (droppedPeriodDeletes + activityInsert)
+      const lumpRows = result[3];
+      written = writtenMirrors(id, lumpRows);
+    } else if (periodMirrors.length > 0) {
+      const result = await db.batch([...head, periodUpsert(), ...tail]);
+      // Position 0-2: head; 3: periodUpsert; 4+: tail (droppedPeriodDeletes + activityInsert)
+      const periodRows = result[3];
+      written = writtenMirrors(id, periodRows);
     } else {
-      await db.batch([deleteShares, insertShares, updateExpense, mirrorDelete, activityInsert]);
+      await db.batch([...head, ...tail]);
     }
 
     const expense = await this.findById(id);

@@ -1,0 +1,1 @@
+ALTER TABLE "finance_transaction" ADD CONSTRAINT "finance_transaction_plan_split_not_both" CHECK (num_nonnulls(plan_id, split_expense_id) <= 1);
