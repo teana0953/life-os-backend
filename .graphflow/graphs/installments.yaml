@@ -1,0 +1,85 @@
+version: 1
+name: installments
+budget: 400k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  reproduce:
+    kind: task
+    role: implementer
+    tier: heavy
+    prompt: |
+      {{ inputs.goal }}
+
+      設計與任務清單已經過四輪 proposal review,在
+      `openspec/changes/add-installments/{proposal.md,design.md,tasks.md,specs/}`。
+      **先整份讀完,決定都是拘束的,不要重新設計。**
+
+      這一輪只寫**會紅**的測試,不要寫實作。每條的 fixture 都要真的踩到失效區:
+
+      1. **月份推進要從起始日錨定**(`+ interval 'N month'`),不是逐次遞增。
+         fixture 必須從 **1/31** 開始 —— 逐次遞增會漂成 2/28 → 3/28 且再也回不去,
+         從 1/15 開始的 fixture 兩種寫法都會過。
+      2. **語句數與期數無關**:建立是單一 multi-row INSERT、清除是單一 DELETE。
+         neon-http 的 `db.batch` 語句數上限查不到,所以「一期一句」不能用。
+         fixture 用 **360 期**(房貸)。
+      3. **預算警示只對「月份 ≤ 使用者的今天」觸發**。fixture 要有一個
+         **未來月份的累計會跨過門檻**的預算 —— 沒跨過門檻的 fixture 兩種寫法都綠。
+         `updateTransaction` 也會觸發檢查,所以改一筆過去的期數也要蓋到。
+      4. **「今天」用使用者的時區**(`users.timezone`,預設 Asia/Taipei)。
+         財務 context 從來沒讀過它,分期是第一個。fixture 要挑一個
+         **UTC 與使用者時區跨日**的時刻,否則兩種寫法都過。
+      5. **除不盡的差額**:後端 `amount` 只是 integer、沒有小數位概念,所以差額
+         永遠是 1、與幣別無關。fixture 要用**除不盡**的總額。
+      6. **改整組只重寫尚未發生的期數**;**一次清償**刪掉未發生的、在今天插一筆。
+      7. 邊角:對已走完或被刪光的 plan 改整組/清償(不可以產生 0 元或負數剩餘)、
+         分期只對支出開放(收入 400)。
+
+      跑 `npm test` 確認每條都紅、而且紅在斷言不是編譯錯,把「紅在哪、訊息是什麼」
+      寫進輸出。**原子性與語句數那兩條要在 `test/db/`(PGlite)**,不是用 fake。
+
+  fix:
+    kind: task
+    role: implementer
+    after: [reproduce]
+    prompt: |
+      讓 {{ nodes.reproduce.output }} 的測試轉綠,照 tasks.md 逐條做。
+
+      分層照 CLAUDE.md:domain → application → adapter → route。
+
+      **讀取 API 要讓前端做得出這個功能**(tasks 7.5):期數、建立模式、起始月都要回,
+      不只是 `plan_id` / `installment_no`。
+
+      同時更新 `openspec/changes/add-installments/specs/` 的 delta,並確認
+      `openspec validate add-installments --strict` 過(MODIFIED 是整塊替換,
+      現有 scenario 一條都不能漏)。
+
+      **不要動前端**,那是下一個 change。
+
+  gate:
+    kind: script
+    after: [fix]
+    run: "npm test && npm run typecheck"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [fix]
+
+  refix:
+    kind: task
+    role: implementer
+    tier: light
+    after: [gate, code-review]
+    when: any-fail
+    goto: [gate, code-review]
+    max_iterations: 3
+
+  ship:
+    kind: gate
+    after: [gate, code-review]
+    when: all-pass
+    show: "{{ nodes.code-review.output }}"

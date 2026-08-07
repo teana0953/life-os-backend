@@ -21,6 +21,7 @@ import {
   InMemoryFinanceCategoryRepository,
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
+import { InMemoryInstallmentPlanRepository } from "../../contexts/finance/installment-fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
 import {
   InMemoryExpenseGroupRepository,
@@ -214,6 +215,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
   const financeTransactionRepository = overrides.financeTransactionRepository ?? new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
   const financeNetWorthRepository = new InMemoryNetWorthRepository();
+  const installmentPlanRepository = new InMemoryInstallmentPlanRepository(financeTransactionRepository);
   const budgetAlertNotifier = new FakeBudgetAlertNotifier();
   // Real (in-memory) split fakes, not stubs: the split-spending and
   // budget-non-interference tests below need to actually create a split
@@ -272,6 +274,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
     financeTransactionRepository,
     financeBudgetRepository,
     financeNetWorthRepository,
+    installmentPlanRepository,
     budgetAlertNotifier,
     vapidPublicKey: "",
     friendshipRepository: stubFriendshipRepository,
@@ -292,6 +295,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
     financeTransactionRepository,
     financeBudgetRepository,
     financeNetWorthRepository,
+    installmentPlanRepository,
     budgetAlertNotifier,
     expenseGroupRepository,
     splitExpenseRepository,
@@ -994,6 +998,23 @@ describe("finance HTTP routes", () => {
       expect(ctx.budgetAlertNotifier.messages).toHaveLength(1);
       expect(ctx.budgetAlertNotifier.messages[0].userId).toBe(await idOf(ctx.app, holder));
       expect(ctx.budgetAlertNotifier.messages[0].message).toEqual({ title: "預算提醒", body: "7月支出已達預算 8 成" });
+    });
+
+    it("does not burn a future month's alert on a future-dated split", async () => {
+      // A split's `day` has no future-date restriction, so this is reachable.
+      // Without the month gate the mirror runs a real threshold check for a
+      // month that has not happened, writes the (budget, month, threshold)
+      // dedup row, and that month can then never alert again — the row is
+      // spent before the spending is real. Same failure the instalment work
+      // added the gate for; this path is the one that did not have it.
+      const payer = await validToken("uid-payer");
+      const holder = await validToken("uid-holder");
+      const future = `${new Date().getUTCFullYear() + 1}-01-06`;
+      await ctx.app.request("/api/finance/budgets", authed(holder, "PUT", { category_id: null, amount: 1000 }));
+
+      await createSplitExpenseBetween(ctx, payer, holder, 1800, "TWD", future);
+
+      expect(ctx.budgetAlertNotifier.messages).toHaveLength(0);
     });
 
     it("still notifies the same (budget, month, threshold) only once across two splits", async () => {

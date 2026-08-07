@@ -27,6 +27,19 @@ Flutter (future) ──HTTPS──▶ Workers (Hono, driving adapter)
 - The composition root (`src/index.ts`) is the only place that wires concrete
   adapters into use cases via manual dependency injection — no DI framework.
 
+`shared/` means cross-context **infrastructure** (today: `db/`, `auth/`), which
+is why the rule above forbids it inward. Pure, dependency-free logic that more
+than one context genuinely needs goes in **`shared-kernel/`** instead (DDD's
+term for a small model two bounded contexts agree to share). A shared kernel
+sits at domain level, so `domain`/`application` may import it — that points
+inward, not outward.
+
+Keep it small and keep the distinction sharp: anything with I/O, a client, or a
+connection belongs in `shared/` and stays out of the inner layers; anything
+that is one context's business rule stays in that context. `shared-kernel/` is
+for the rest, and today that is one file (`reminder-clock.ts`, timezone-aware
+calendar math needed by both notifications and finance).
+
 ### Bounded contexts (context-first structure)
 
 The codebase is organized **by context first, by layer second**:

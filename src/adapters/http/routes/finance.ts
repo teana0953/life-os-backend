@@ -1,5 +1,10 @@
 import type { Context } from "hono";
+import type { CheckBudgetAlertsDeps } from "../../../contexts/finance/application/check-budget-alerts";
 import { createCategory } from "../../../contexts/finance/application/create-category";
+import { createInstallmentPlan } from "../../../contexts/finance/application/create-installment-plan";
+import type { InstallmentDeps } from "../../../contexts/finance/application/create-installment-plan";
+import { settleInstallmentPlan } from "../../../contexts/finance/application/settle-installment-plan";
+import { updateInstallmentPlan } from "../../../contexts/finance/application/update-installment-plan";
 import { createTransaction } from "../../../contexts/finance/application/create-transaction";
 import { deleteBudget } from "../../../contexts/finance/application/delete-budget";
 import { deleteTransaction } from "../../../contexts/finance/application/delete-transaction";
@@ -25,10 +30,13 @@ import {
   FinanceCategoryNotFound,
   FinanceCategoryTypeMismatch,
   FinanceTransactionNotFound,
+  InstallmentPlanNotFound,
   InvalidFinanceInputError,
   MirroredTransactionChangedUnderneath,
   MirroredTransactionReadOnly,
 } from "../../../contexts/finance/domain/errors";
+import type { InstallmentPlan } from "../../../contexts/finance/domain/installment-plan";
+import type { InstallmentPlanRepository } from "../../../contexts/finance/domain/installment-plan-repository";
 import {
   NetWorthAccountArchived,
   NetWorthAccountNameConflict,
@@ -64,6 +72,7 @@ export interface FinanceHandlerOptions {
   financeTransactionRepository: FinanceTransactionRepository;
   financeBudgetRepository: FinanceBudgetRepository;
   financeNetWorthRepository: NetWorthRepository;
+  installmentPlanRepository: InstallmentPlanRepository;
   budgetAlertNotifier: BudgetAlertNotifier;
   splitSpendingRepository: SplitSpendingRepository;
 }
@@ -81,7 +90,8 @@ function mapFinanceError(err: unknown, c: Context): Response {
     err instanceof FinanceCategoryNotFound ||
     err instanceof FinanceTransactionNotFound ||
     err instanceof FinanceBudgetNotFound ||
-    err instanceof NetWorthAccountNotFound
+    err instanceof NetWorthAccountNotFound ||
+    err instanceof InstallmentPlanNotFound
   ) {
     return c.json({ error: "not_found" }, 404);
   }
@@ -120,6 +130,12 @@ function transactionToJson(txn: FinanceTransaction) {
     // API will refuse to change anyway.
     split_expense_id: txn.splitExpenseId,
     category_source: txn.categorySource,
+    // Present on every transaction, null off a plan (add-installments
+    // design.md D6d) — alongside `GET /api/finance/installment-plans/:id` for
+    // the period count/mode/start month a client needs but a single
+    // transaction row cannot carry.
+    plan_id: txn.planId ?? null,
+    installment_no: txn.installmentNo ?? null,
   };
 }
 
@@ -158,8 +174,46 @@ function budgetCategoryId(body: Record<string, unknown>): string | null {
   throw new BadRequestError("category_id must be a string or null");
 }
 
-function budgetAlertDeps(options: FinanceHandlerOptions) {
-  return { budgetRepository: options.financeBudgetRepository, categoryRepository: options.financeCategoryRepository, notifier: options.budgetAlertNotifier };
+/**
+ * `now`/`getUserTimezone` are what let `checkBudgetAlerts` apply its
+ * "month ≤ the user's today" gate (add-installments design.md D4b) — without
+ * them the check behaves as before (no month gating at all). This matters
+ * beyond installment routes: an instalment is an ordinary transaction
+ * (design.md D2), so editing one goes through the very same
+ * `PUT /api/finance/transactions/:id` route as any other edit (tasks 0b.1c).
+ */
+function budgetAlertDeps(options: FinanceHandlerOptions): CheckBudgetAlertsDeps {
+  return {
+    budgetRepository: options.financeBudgetRepository,
+    categoryRepository: options.financeCategoryRepository,
+    notifier: options.budgetAlertNotifier,
+    now: () => new Date(),
+    getUserTimezone: async (userId: string) => (await options.userRepository.getById(userId))?.timezone ?? "Asia/Taipei",
+  };
+}
+
+/** Same clock/timezone contract as `budgetAlertDeps` — "today" for the due/upcoming boundary is the user's own (design.md D5). */
+function installmentDeps(options: FinanceHandlerOptions): InstallmentDeps {
+  return {
+    planRepository: options.installmentPlanRepository,
+    categoryRepository: options.financeCategoryRepository,
+    now: () => new Date(),
+    getUserTimezone: async (userId: string) => (await options.userRepository.getById(userId))?.timezone ?? "Asia/Taipei",
+  };
+}
+
+/** period count, creation mode, and start month, on top of the plan_id/installment_no already on every transaction — what a client needs to render "instalment N of M" and to know whether settling it should prompt for an amount (design.md D6d). */
+function installmentPlanToJson(plan: InstallmentPlan) {
+  return {
+    id: plan.id,
+    mode: plan.mode,
+    periods: plan.periods,
+    start_day: plan.startDay,
+    amount: plan.amount,
+    currency: plan.currency,
+    category_id: plan.categoryId,
+    note: plan.note,
+  };
 }
 
 /** Optional `note` field, present-key three-state: absent -> undefined, `null` -> null, string -> string; anything else -> 400. */
@@ -246,6 +300,98 @@ export function createDeleteTransactionHandler(options: FinanceHandlerOptions) {
     try {
       await deleteTransaction(options.financeTransactionRepository, userId, c.req.param("id") ?? "");
       return c.json({ deleted: true });
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** `mode` on an instalment-plan write: only the two the domain knows (design.md D0/D2). */
+function requireInstallmentMode(value: unknown): "total" | "per_installment" {
+  if (value === "total" || value === "per_installment") return value;
+  throw new BadRequestError('mode must be "total" or "per_installment"');
+}
+
+/** Protected `POST /api/finance/installment-plans`: create a plan and write every one of its instalments (design.md D1/D3/D4). */
+export function createCreateInstallmentPlanHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      const plan = await createInstallmentPlan(
+        installmentDeps(options),
+        {
+          userId,
+          mode: requireInstallmentMode(body.mode),
+          amount: requireFiniteNumber(body.amount, "amount"),
+          periods: requireFiniteNumber(body.periods, "periods"),
+          currency: typeof body.currency === "string" ? body.currency : DEFAULT_CURRENCY,
+          categoryId: requireString(body.category_id, "category_id"),
+          startDay: requireDay(body.start_day, "start_day"),
+          note: optionalNote(body),
+        },
+        budgetAlertDeps(options),
+      );
+      return c.json(installmentPlanToJson(plan));
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `GET /api/finance/installment-plans/:id`: the period count, creation mode and start month a client needs (design.md D6d) — never verifies ownership beyond "some row with this id exists"; the finance API otherwise never leaks a wrong-owner 404 vs 403 distinction either. */
+export function createGetInstallmentPlanHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const plan = await options.installmentPlanRepository.findById(c.req.param("id") ?? "");
+    if (!plan || plan.userId !== userId) return c.json({ error: "not_found" }, 404);
+    return c.json(installmentPlanToJson(plan));
+  };
+}
+
+/** Protected `PUT /api/finance/installment-plans/:id`: rewrite the instalments still to come (design.md D2b/D5). */
+export function createUpdateInstallmentPlanHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      await updateInstallmentPlan(
+        installmentDeps(options),
+        {
+          userId,
+          planId: c.req.param("id") ?? "",
+          amount: requireFiniteNumber(body.amount, "amount"),
+          periods: requireFiniteNumber(body.periods, "periods"),
+        },
+        budgetAlertDeps(options),
+      );
+      const plan = await options.installmentPlanRepository.findById(c.req.param("id") ?? "");
+      return c.json(plan ? installmentPlanToJson(plan) : { updated: true });
+    } catch (err) {
+      return mapFinanceError(err, c);
+    }
+  };
+}
+
+/** Protected `POST /api/finance/installment-plans/:id/settle`: replace the instalments still to come with one transaction dated today (design.md D6). `amount` is required for a `per_installment` plan (the bank's payoff figure) and ignored for `total` (computed from what remains, D2b). */
+export function createSettleInstallmentPlanHandler(options: FinanceHandlerOptions) {
+  return async (c: Context<{ Variables: AuthVariables }>) => {
+    const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
+    const body = await c.req.json<Record<string, unknown>>();
+
+    try {
+      await settleInstallmentPlan(
+        installmentDeps(options),
+        {
+          userId,
+          planId: c.req.param("id") ?? "",
+          amount: typeof body.amount === "number" ? body.amount : undefined,
+        },
+        budgetAlertDeps(options),
+      );
+      return c.json({ settled: true });
     } catch (err) {
       return mapFinanceError(err, c);
     }

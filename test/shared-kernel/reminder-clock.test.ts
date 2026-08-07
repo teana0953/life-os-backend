@@ -6,7 +6,7 @@ import {
   previousLocalDate,
   weekdayOf,
   weeksSince,
-} from "../../../../src/contexts/notifications/domain/reminder-clock";
+} from "../../src/shared-kernel/reminder-clock";
 
 describe("localParts", () => {
   it("resolves date/hhmm/weekday for a UTC instant in Asia/Taipei (UTC+8, no DST)", () => {

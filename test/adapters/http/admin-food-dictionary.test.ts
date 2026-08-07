@@ -302,6 +302,13 @@ function buildApp(options: { userRepository: UserRepository; foodDictionaryRepos
       getSpent: notImplemented,
       tryRecordAlert: notImplemented,
     },
+    installmentPlanRepository: {
+      createWithInstallments: notImplemented,
+      findById: notImplemented,
+      listInstallments: notImplemented,
+      rewriteUpcoming: notImplemented,
+      settle: notImplemented,
+    },
       financeNetWorthRepository: {
         listAccounts: notImplemented,
         findAccountById: notImplemented,

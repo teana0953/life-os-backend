@@ -12,6 +12,20 @@ export interface FinanceSharesMirrorDeps {
   budgets: FinanceBudgetRepository;
   /** Used by `afterWrite` only — see its doc. */
   notifier: BudgetAlertNotifier;
+  /**
+   * Used by `afterWrite` to gate budget alerts (add-installments design.md D4b).
+   * When provided, a share holder is only alerted if the transaction's month
+   * ≤ their own today's month; absent, alerts are not gated (pre-D4b behavior).
+   * Both must be supplied together or omitted together.
+   */
+  now?: () => Date;
+  /**
+   * Used by `afterWrite` to gate budget alerts (add-installments design.md D4b).
+   * When provided, a share holder is only alerted if the transaction's month
+   * ≤ their own today's month; absent, alerts are not gated (pre-D4b behavior).
+   * Both must be supplied together or omitted together.
+   */
+  getUserTimezone?: (userId: string) => Promise<string>;
 }
 
 /**
@@ -88,12 +102,24 @@ export class FinanceSharesMirror implements SharesMirror {
    * Only the categories the mirrors carry *now* are checked. An edit that
    * moved a mirror off a category cannot have raised that category's spend,
    * and this check only ever fires on the way up (design.md D19).
+   *
+   * **Budget alert gating (add-installments design.md D4b):** when `now` and
+   * `getUserTimezone` are supplied, a share holder is only alerted if the
+   * transaction's month ≤ their own today's month. Without them, every share's
+   * month is checked identically (pre-D4b behavior). Both must be supplied
+   * together or omitted together.
    */
   async afterWrite(rows: ShareMirrorRow[]): Promise<void> {
     for (const row of rows) {
       try {
         await checkBudgetAlerts(
-          { budgetRepository: this.deps.budgets, categoryRepository: this.deps.categories, notifier: this.deps.notifier },
+          {
+            budgetRepository: this.deps.budgets,
+            categoryRepository: this.deps.categories,
+            notifier: this.deps.notifier,
+            now: this.deps.now,
+            getUserTimezone: this.deps.getUserTimezone,
+          },
           { userId: row.userId, type: "expense", currency: row.currency, categoryId: row.categoryId, date: row.day },
         );
       } catch (error) {

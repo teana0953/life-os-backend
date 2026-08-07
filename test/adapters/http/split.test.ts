@@ -240,6 +240,13 @@ beforeEach(() => {
       findPreviousSnapshotMonth: notImplemented,
       getTrend: notImplemented,
     },
+    installmentPlanRepository: {
+      createWithInstallments: notImplemented,
+      findById: notImplemented,
+      listInstallments: notImplemented,
+      rewriteUpcoming: notImplemented,
+      settle: notImplemented,
+    },
     budgetAlertNotifier: new FakeBudgetAlertNotifier(),
     friendshipRepository: stubFriendshipRepository,
     friendInviteRepository: stubFriendInviteRepository,

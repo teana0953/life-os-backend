@@ -124,6 +124,7 @@ const TABLES = [
   "split_settlement",
   "split_share",
   "finance_transaction",
+  "finance_installment_plan",
   "split_expense",
   "finance_budget_alert",
   "finance_budget",
@@ -225,8 +226,24 @@ export async function insertSettlement(
   return input.id;
 }
 
-export async function createTestDb(): Promise<TestDb> {
+/**
+ * `onQuery` observes every SQL statement the drizzle session sends
+ * (`drizzle-orm/pglite` funnels through `client.query`). It exists for the
+ * statement-count contracts of add-installments (design.md D3b): neon-http's
+ * batch statement limit is unknowable, so "the statement count does not grow
+ * with the instalment count" is an assertable property, and only here — the
+ * in-memory fakes have no statements to count.
+ */
+export async function createTestDb(options?: { onQuery?: (sql: string) => void }): Promise<TestDb> {
   const client = new PGlite();
+  if (options?.onQuery) {
+    const onQuery = options.onQuery;
+    const originalQuery = client.query.bind(client);
+    (client as { query: typeof client.query }).query = async (...args: Parameters<typeof client.query>) => {
+      onQuery(String(args[0]));
+      return originalQuery(...args);
+    };
+  }
   const pgliteDb = drizzle(client, { schema });
   await migrate(pgliteDb, { migrationsFolder: "./drizzle" });
   withBatchShim(pgliteDb);

@@ -16,6 +16,9 @@ export class InvalidFinanceInputError extends Error {}
 /** A budget doesn't exist, or belongs to another user (route maps this to 404). */
 export class FinanceBudgetNotFound extends Error {}
 
+/** An instalment plan doesn't exist, or belongs to another user (add-installments; route maps this to 404). */
+export class InstallmentPlanNotFound extends Error {}
+
 /**
  * A transaction mirrored from a split expense was asked to change one of the
  * split's own facts — its amount, date, currency or type — or to be deleted

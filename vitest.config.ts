@@ -6,7 +6,7 @@ export default defineConfig({
       {
         test: {
           name: "unit",
-          include: ["test/contexts/**/*.test.ts"],
+          include: ["test/contexts/**/*.test.ts", "test/architecture/**/*.test.ts"],
         },
       },
       {

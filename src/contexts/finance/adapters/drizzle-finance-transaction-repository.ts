@@ -14,7 +14,8 @@ import type { MonthlySummaryRaw } from "../domain/monthly-summary";
 
 type FinanceTransactionRow = typeof financeTransaction.$inferSelect;
 
-function toDomain(row: FinanceTransactionRow): FinanceTransaction {
+/** Exported so the instalment-plan adapter (add-installments) can map the same rows without duplicating this. */
+export function financeTransactionRowToDomain(row: FinanceTransactionRow): FinanceTransaction {
   return {
     id: row.id,
     userId: row.userId,
@@ -26,6 +27,8 @@ function toDomain(row: FinanceTransactionRow): FinanceTransaction {
     note: row.note,
     splitExpenseId: row.splitExpenseId,
     categorySource: row.categorySource as FinanceCategorySource,
+    planId: row.planId,
+    installmentNo: row.installmentNo,
   };
 }
 
@@ -47,16 +50,18 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         note: input.note ?? null,
         splitExpenseId: input.splitExpenseId ?? null,
         categorySource: input.categorySource ?? "manual",
+        planId: input.planId ?? null,
+        installmentNo: input.installmentNo ?? null,
       })
       .returning();
     if (!row) throw new Error("failed to create finance transaction");
-    return toDomain(row);
+    return financeTransactionRowToDomain(row);
   }
 
   async findById(id: string): Promise<FinanceTransaction | null> {
     const db = this.getDb();
     const [row] = await db.select().from(financeTransaction).where(eq(financeTransaction.id, id)).limit(1);
-    return row ? toDomain(row) : null;
+    return row ? financeTransactionRowToDomain(row) : null;
   }
 
   async listByUserAndRange(userId: string, from: string, to: string): Promise<FinanceTransaction[]> {
@@ -66,7 +71,7 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
       .from(financeTransaction)
       .where(and(eq(financeTransaction.userId, userId), gte(financeTransaction.day, from), lte(financeTransaction.day, to)))
       .orderBy(asc(financeTransaction.day));
-    return rows.map(toDomain);
+    return rows.map(financeTransactionRowToDomain);
   }
 
   async update(userId: string, id: string, input: UpdateFinanceTransactionFields, expected?: SplitFactsSnapshot): Promise<FinanceTransaction | null> {
@@ -110,7 +115,7 @@ export class DrizzleFinanceTransactionRepository implements FinanceTransactionRe
         ),
       )
       .returning();
-    return row ? toDomain(row) : null;
+    return row ? financeTransactionRowToDomain(row) : null;
   }
 
   async delete(userId: string, id: string): Promise<boolean> {

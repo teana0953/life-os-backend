@@ -3,6 +3,7 @@ import { createApp } from "./adapters/http/app";
 import { DrizzleFinanceBudgetRepository } from "./contexts/finance/adapters/drizzle-finance-budget-repository";
 import { DrizzleFinanceCategoryRepository } from "./contexts/finance/adapters/drizzle-finance-category-repository";
 import { DrizzleFinanceTransactionRepository } from "./contexts/finance/adapters/drizzle-finance-transaction-repository";
+import { DrizzleInstallmentPlanRepository } from "./contexts/finance/adapters/drizzle-installment-plan-repository";
 import { DrizzleNetWorthRepository } from "./contexts/finance/adapters/drizzle-networth-repository";
 import { PushBudgetAlertNotifier } from "./contexts/finance/adapters/push-budget-alert-notifier";
 import { DrizzleBodyProfileRepository } from "./contexts/health/adapters/drizzle-body-profile-repository";
@@ -49,6 +50,24 @@ export interface Env {
 const jwks = createGoogleSecuretokenJwks();
 
 /**
+ * `DrizzleInstallmentPlanRepository` takes a `Db` directly rather than a
+ * `getDb: () => Db` accessor like every other repository here — its
+ * constructor is fixed by `test/db/installments.test.ts`, which builds it
+ * straight from a PGlite instance. This Proxy gets the same laziness back:
+ * `getDb()` (which can throw on a malformed `DATABASE_URL`) only runs on the
+ * first property actually touched — i.e. the first real DB call inside a
+ * request that hits an installment route — not for every request regardless
+ * of which route it hits.
+ */
+function lazyDb(getDb: () => Db): Db {
+  return new Proxy({} as Db, {
+    get(_target, prop, receiver) {
+      return Reflect.get(getDb() as object, prop, receiver);
+    },
+  });
+}
+
+/**
  * Builds the DB client + every repository/adapter shared by `fetch` and
  * `scheduled`, so the two entry points never drift (D7 in
  * add-medication-reminders/design.md). The DB client is built lazily on first
@@ -91,6 +110,7 @@ function buildDeps(env: Env) {
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),
     financeNetWorthRepository: new DrizzleNetWorthRepository(getDb),
+    installmentPlanRepository: new DrizzleInstallmentPlanRepository(lazyDb(getDb)),
     friendshipRepository: new DrizzleFriendshipRepository(getDb),
     friendInviteRepository: new DrizzleFriendInviteRepository(getDb),
     expenseGroupRepository: new DrizzleExpenseGroupRepository(getDb),
@@ -131,6 +151,7 @@ export default {
       financeTransactionRepository: deps.financeTransactionRepository,
       financeBudgetRepository: deps.financeBudgetRepository,
       financeNetWorthRepository: deps.financeNetWorthRepository,
+      installmentPlanRepository: deps.installmentPlanRepository,
       budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
       friendshipRepository: deps.friendshipRepository,
       friendInviteRepository: deps.friendInviteRepository,

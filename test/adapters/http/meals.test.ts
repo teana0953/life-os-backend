@@ -621,6 +621,23 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
+    installmentPlanRepository: {
+      createWithInstallments: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      findById: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      listInstallments: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      rewriteUpcoming: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      settle: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     budgetAlertNotifier: {
       notify: async () => {
         throw new Error("not implemented in this test's fakes");
