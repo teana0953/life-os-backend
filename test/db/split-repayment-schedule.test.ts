@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { DrizzleBalanceRepository } from "../../src/contexts/split/adapters/drizzle-balance-repository";
 import { DrizzleSplitExpenseRepository } from "../../src/contexts/split/adapters/drizzle-split-expense-repository";
 import type { ShareMirrorRow } from "../../src/contexts/split/domain/shares-mirror";
@@ -196,13 +196,13 @@ describe("schedule progress rides alongside the balance (4.3)", () => {
       // The date is a parameter now, not `CURRENT_DATE` — which is what makes
       // this assertion mean anything: with the date decided inside SQL, the
       // expected value would drift with the wall clock.
-      schedule: { nextPeriod: 1, totalPeriods: 12, periodAmount: 500 },
+      schedules: [{ expenseId: E1, nextPeriod: 1, totalPeriods: 12, periodAmount: 500 }],
     });
     // The unscheduled row must NOT carry the field — absent, not zeroed.
     // Zeros would make "no schedule" and "schedule finished" the same answer,
     // which is exactly what a client cannot tell apart.
     expect(rowC?.balances[0]).toMatchObject({ currency: "TWD", amount: 700 });
-    expect(rowC?.balances[0]).not.toHaveProperty("schedule");
+    expect(rowC?.balances[0]).not.toHaveProperty("schedules");
   });
 });
 
@@ -358,7 +358,65 @@ describe("statement count is independent of the period count (5.4)", () => {
     const dayBefore = await balances.balancesForUser(A, "2030-01-14");
     const dayOf = await balances.balancesForUser(A, "2030-01-15");
 
-    expect(dayBefore[0]?.balances[0]?.schedule?.nextPeriod).toBe(1);
-    expect(dayOf[0]?.balances[0]?.schedule?.nextPeriod).toBe(2);
+    expect(dayBefore[0]?.balances[0]?.schedules?.[0]?.nextPeriod).toBe(1);
+    expect(dayOf[0]?.balances[0]?.schedules?.[0]?.nextPeriod).toBe(2);
+  });
+
+
+  it("two schedules with the same counterpart and currency stay two schedules", async () => {
+    // Nothing stops a user from splitting two things with the same friend,
+    // both scheduled, both TWD — and grouping progress by (counterpart,
+    // currency) alone produced a single row belonging to neither: the period
+    // counts summed (12 + 6 = 18) while the amount came from whichever
+    // schedule happened to be larger (MAX(500, 900) = 900), so the client was
+    // told "period 1 of 18, worth 900" for a pair of schedules that are
+    // 12x500 and 6x900.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 12, amount: 500, startYear: 2030 }),
+    );
+    await expenses.create(
+      createInput({ id: E2, amount: 5400, description: "flights", shares: [scheduledShare(B, 5400, 6, 900)] }),
+      installmentMirrors(B, CAT_B, E2, { periods: 6, amount: 900, startYear: 2030 }),
+    );
+
+    const rows = await balances.balancesForUser(A, "2029-12-31");
+    const schedules = rows.find((balance) => balance.userId === B)?.balances[0]?.schedules ?? [];
+
+    expect(schedules).toHaveLength(2);
+    expect([...schedules].sort((x, y) => y.totalPeriods - x.totalPeriods)).toEqual([
+      { expenseId: E1, nextPeriod: 1, totalPeriods: 12, periodAmount: 500 },
+      { expenseId: E2, nextPeriod: 1, totalPeriods: 6, periodAmount: 900 },
+    ]);
+  });
+
+
+  it("the database refuses a row that is both a plan period and a split mirror", async () => {
+    // `installment_no` carries two meanings — a bank instalment's position
+    // when `plan_id` is set, a repayment period's when `split_expense_id` is —
+    // and the whole arrangement is only safe because a row can never be both.
+    // That was true by convention until this constraint; the two partial
+    // unique indexes are keyed off `installment_no`'s nullness, so a row with
+    // both origins would be arbitrated by the wrong one.
+    await expenses.create(
+      createInput({}),
+      installmentMirrors(B, CAT_B, E1, { periods: 1, amount: 6000, startYear: 2030 }),
+    );
+
+    // A real plan row first, so the failure is the constraint and not the
+    // foreign key — otherwise this passes for the wrong reason.
+    const planId = "f1111111-1111-1111-1111-111111111111";
+    await harness.db.execute(sql`
+      INSERT INTO finance_installment_plan (id, user_id, mode, amount, periods, currency, category_id, start_day)
+      VALUES (${planId}::uuid, ${B}::uuid, 'total', 6000, 12, 'TWD', ${CAT_B}::uuid, '2030-01-15')
+    `);
+
+    await expect(
+      harness.db.execute(sql`
+        UPDATE finance_transaction
+           SET plan_id = ${planId}::uuid
+         WHERE split_expense_id = ${E1}::uuid
+      `),
+    ).rejects.toThrow();
   });
 });

@@ -24,6 +24,7 @@ type NetRow = {
 type ProgressRow = {
   counterpart_id: string;
   currency: string;
+  expense_id: string;
   total_periods: number;
   period_amount: number;
   due_periods: number;
@@ -56,16 +57,21 @@ function progressKey(counterpartId: string, currency: string): string {
  */
 function attachSchedules(balances: Balance[], progressRows: ProgressRow[]): void {
   if (progressRows.length === 0) return;
-  const byKey = new Map(progressRows.map((row) => [progressKey(row.counterpart_id, row.currency), row]));
+  const byKey = new Map<string, ProgressRow[]>();
+  for (const row of progressRows) {
+    const key = progressKey(row.counterpart_id, row.currency);
+    byKey.set(key, [...(byKey.get(key) ?? []), row]);
+  }
   for (const balance of balances) {
     for (const currencyBalance of balance.balances) {
-      const progress = byKey.get(progressKey(balance.userId, currencyBalance.currency));
-      if (!progress) continue;
-      currencyBalance.schedule = {
+      const rows = byKey.get(progressKey(balance.userId, currencyBalance.currency));
+      if (!rows || rows.length === 0) continue;
+      currencyBalance.schedules = rows.map((progress) => ({
+        expenseId: progress.expense_id,
         nextPeriod: Math.min(progress.due_periods + 1, progress.total_periods),
         totalPeriods: progress.total_periods,
         periodAmount: progress.period_amount,
-      };
+      }));
     }
   }
 }
@@ -143,17 +149,13 @@ export class DrizzleBalanceRepository implements BalanceRepository {
    * `net` CTE above refuses to make (design.md, spec `finance-ledger`
    * "A scheduled period is not a repayment").
    *
-   * Grouped by (counterpart, currency) rather than by expense: this repo's
-   * feature set never gives one counterpart two live schedules in the same
-   * currency, so the ambiguity that grouping would hide never arises here.
-   *
-   * **Known gap**: nothing enforces this constraint. A user could create two
-   * separate split expenses with the same counterpart, both scheduled, both TWD.
-   * If this happens, the query silently merges both schedules: `total_periods`
-   * becomes the sum of two unrelated schedules, and `period_amount` becomes the
-   * MAX — producing incorrect schedule progress. This should be prevented either
-   * at the DB level (uniqueness constraint on counterpart/currency for scheduled
-   * splits) or in the application layer during expense creation.
+   * Grouped by expense, not by (counterpart, currency): a user can split two
+   * things with the same friend, both scheduled, both TWD, and nothing
+   * anywhere forbids it. Grouping by the pair alone returned one row
+   * belonging to neither schedule — the period counts summed while
+   * `period_amount` came from whichever schedule was larger. One row per
+   * expense is the grain the schedule actually lives at, so the caller gets
+   * two schedules instead of an average of two.
    *
    * `(now() AT TIME ZONE tz)::date`, **not** `CURRENT_DATE AT TIME ZONE tz` —
    * the latter reads as "today's midnight, interpreted as a Taipei wall clock"
@@ -171,6 +173,7 @@ export class DrizzleBalanceRepository implements BalanceRepository {
       SELECT
         CASE WHEN se.payer_user_id = ${me}::uuid THEN ft.user_id ELSE se.payer_user_id END AS counterpart_id,
         ft.currency AS currency,
+        ft.split_expense_id AS expense_id,
         COUNT(*)::int AS total_periods,
         MAX(ft.amount)::int AS period_amount,
         COUNT(*) FILTER (WHERE ft.day <= ${today}::date)::int AS due_periods
@@ -179,7 +182,7 @@ export class DrizzleBalanceRepository implements BalanceRepository {
        WHERE ft.installment_no IS NOT NULL
          AND ((se.payer_user_id = ${me}::uuid AND ft.user_id != ${me}::uuid)
            OR (ft.user_id = ${me}::uuid AND se.payer_user_id != ${me}::uuid))
-       GROUP BY counterpart_id, ft.currency
+       GROUP BY counterpart_id, ft.currency, ft.split_expense_id
     `);
     return result.rows;
   }

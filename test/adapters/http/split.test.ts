@@ -600,6 +600,53 @@ describe("expenses: creation and visibility", () => {
     expect(overCap.status).toBe(400);
   });
 
+  it("hands every schedule to the client in snake_case, one entry per expense", async () => {
+    // The wire contract, which no other test here reaches: the repository's
+    // schedule progress is a list (two things split with the same friend in
+    // the same currency are two schedules), and the transcription to JSON is
+    // the only place those keys get their snake_case names. Stubbing the
+    // repository rather than driving it through a fake is deliberate — the
+    // in-memory fake does not compute progress, so making it do so would be
+    // testing the fake's agreement with itself.
+    const bobId = await idOf(BOB);
+    balances.balancesForUser = async () => [
+      {
+        userId: bobId,
+        displayName: "Bob",
+        balances: [
+          {
+            currency: "TWD",
+            amount: 11400,
+            schedules: [
+              { expenseId: "e1", nextPeriod: 3, totalPeriods: 12, periodAmount: 500 },
+              { expenseId: "e2", nextPeriod: 1, totalPeriods: 6, periodAmount: 900 },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const res = await app.request("/api/split/balances", { headers: await authHeader(ALICE) });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { balances: unknown[] }).balances).toEqual([
+      {
+        user_id: bobId,
+        display_name: "Bob",
+        balances: [
+          {
+            currency: "TWD",
+            amount: 11400,
+            schedules: [
+              { expense_id: "e1", next_period: 3, total_periods: 12, period_amount: 500 },
+              { expense_id: "e2", next_period: 1, total_periods: 6, period_amount: 900 },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("rejects a repayment schedule when periods * per_period_amount does not equal the share amount", async () => {
     await makeFriends(ALICE, BOB);
     const aliceId = await idOf(ALICE);

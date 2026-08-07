@@ -20,6 +20,10 @@ genuinely different question ("what do I hand over this month") from the one
 the balance answers ("what am I out if they vanish"), and answering only one of
 them leaves the other unanswerable.
 
+Progress SHALL be reported per scheduled expense, not per counterpart: two
+things split with the same person in the same currency are two schedules, and
+a single combined figure belongs to neither of them.
+
 #### Scenario: Two currencies stay on separate lines
 
 - **WHEN** the caller and another user have both TWD and USD expenses
@@ -71,4 +75,12 @@ them leaves the other unanswerable.
 - **WHEN** a counterpart's debt is on a schedule
 - **THEN** their balance row also says which period is next, of how many, and
   what that period is worth
+
+#### Scenario: Two schedules with the same person stay two schedules
+
+- **WHEN** a counterpart is on two separate repayment schedules in the same
+  currency
+- **THEN** their balance row reports both, each with its own period count and
+  period amount, rather than one row summing the periods of one and taking the
+  amount of the other
 

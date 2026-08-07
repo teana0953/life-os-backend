@@ -153,7 +153,18 @@ function balanceToJson(balance: Balance) {
       // Absent, not zeroed, when nothing behind this figure is on a schedule
       // (split-installments tasks 4.1/4.2) — a zeroed value would be
       // indistinguishable from "the schedule finished".
-      ...(b.schedule ? { schedule: { next_period: b.schedule.nextPeriod, total_periods: b.schedule.totalPeriods, period_amount: b.schedule.periodAmount } } : {}),
+      // A list, one entry per scheduled expense: the same counterpart can owe
+      // on two scheduled expenses in the same currency.
+      ...(b.schedules
+        ? {
+            schedules: b.schedules.map((s) => ({
+              expense_id: s.expenseId,
+              next_period: s.nextPeriod,
+              total_periods: s.totalPeriods,
+              period_amount: s.periodAmount,
+            })),
+          }
+        : {}),
     })),
   };
 }

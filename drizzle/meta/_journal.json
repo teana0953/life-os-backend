@@ -211,6 +211,13 @@
       "when": 1786102005407,
       "tag": "0029_split-repayment-schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786103632900,
+      "tag": "0030_split-origin-xor",
+      "breakpoints": true
     }
   ]
 }
