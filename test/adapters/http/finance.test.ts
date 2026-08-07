@@ -1718,6 +1718,45 @@ describe("finance HTTP routes", () => {
         expect(sortOrderOf(cash.id)).toBe(20);
       });
 
+      it("rejects a duplicated id padding out the length (400) and writes nothing", async () => {
+        // The one shape that keeps `ids.length` right while omitting an
+        // account: send one id twice. A length check plus "every given id is
+        // mine" both pass on this input — only comparing it as a *set* against
+        // the user's own ids rejects it. Behaviour was confirmed by hand
+        // during review and then not pinned by anything, which is how it would
+        // quietly stop holding.
+        const token = await validToken("uid-owner");
+        const stock = await seedOrdered(token, "asset", "股票", 10);
+        const cash = await seedOrdered(token, "asset", "現金", 20);
+
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(token, "PUT", { kind: "asset", ids: [stock.id, stock.id] }),
+        );
+        expect(res.status).toBe(400);
+        expect(sortOrderOf(stock.id)).toBe(10);
+        expect(sortOrderOf(cash.id)).toBe(20);
+      });
+
+      it("rejects an invalid kind before it can reach the write (400)", async () => {
+        // `ids: []`, deliberately. With a non-empty `ids` this test cannot
+        // fail: dropping the kind check makes `filter(a => a.kind === "savings")`
+        // return nothing, the set comparison then rejects on length, and the
+        // response is 400 either way — the assertion could not tell "invalid
+        // kind" from "set mismatch". Empty ids make both sides empty, so the
+        // set comparison passes vacuously and only the kind check is left
+        // standing between the request and a write with a bogus kind.
+        const token = await validToken("uid-owner");
+        const stock = await seedOrdered(token, "asset", "股票", 10);
+
+        const res = await ctx.app.request(
+          "/api/finance/networth/accounts/order",
+          authed(token, "PUT", { kind: "savings", ids: [] }),
+        );
+        expect(res.status).toBe(400);
+        expect(sortOrderOf(stock.id)).toBe(10);
+      });
+
       it("rejects ids containing an extra unknown id (400) and writes nothing", async () => {
         const token = await validToken("uid-owner");
         const stock = await seedOrdered(token, "asset", "股票", 10);
