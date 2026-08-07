@@ -72,7 +72,7 @@ function planRows() {
 }
 
 describe("creating a plan spanning future months (suppression half + current-month trigger half)", () => {
-  it("writes no alert row for any month after the user's today, but the current month's instalment still alerts", async () => {
+  it("writes no alert row for any month at all — not even the current one", async () => {
     const category = await seedCategoryAndOverallBudget();
 
     await createInstallmentPlan(
@@ -82,13 +82,42 @@ describe("creating a plan spanning future months (suppression half + current-mon
     );
 
     expect(planRows()).toHaveLength(6); // 2026-04-05 .. 2026-09-05
-    // Suppression half: months 2026-05 .. 2026-09 each crossed 80% by
-    // themselves, and none of them may have an alert row yet.
-    expect(budgets.alerts.filter((a) => a.month > "2026-04")).toEqual([]);
-    // Trigger half (current month): 2026-04 ≤ today's month, 35 000/40 000
-    // crosses 80 — this alert must fire. "Plan writes never alert" fails here.
-    expect(budgets.alerts).toContainEqual(expect.objectContaining({ month: "2026-04", threshold: 80 }));
-    expect(notifier.messages.length).toBeGreaterThanOrEqual(1);
+    // Every instalment here is 35 000 against a 40 000 budget, so each one
+    // crosses 80% on its own — the fixture cannot pass by being too small.
+    //
+    // Creating a plan raises nothing at all. The earlier version of this test
+    // asserted the *current* month still alerted, following design.md D4b's
+    // "month ≤ today" gate. That gate cannot express the rule the docs also
+    // state (tasks 6b.2): a plan entered part-way through has every past
+    // period at a month ≤ today, so the gate lets them all through and the
+    // user gets a burst of "you overspent in March" for months they are only
+    // now recording. Decided 2026-08-07: creation is a record of money already
+    // committed, and records do not alert.
+    expect(budgets.alerts).toEqual([]);
+    expect(notifier.messages).toEqual([]);
+  });
+
+  it("a backdated plan does not fire for the months it is only now recording", async () => {
+    // The case the docs disagreed about, and the one nothing covered in
+    // either direction. A mortgage entered part-way through: every period
+    // before today is at a month ≤ today, so the "month ≤ today" gate alone
+    // lets all of them through — eight real threshold checks, eight pushes,
+    // and eight (budget, month, threshold) dedup rows spent on months the
+    // user is only now writing down.
+    const category = await seedCategoryAndOverallBudget();
+
+    await createInstallmentPlan(
+      installmentDeps(),
+      { userId: USER, mode: "per_installment", amount: PER_INSTALLMENT, periods: 6, currency: "TWD", categoryId: category.id, startDay: "2025-10-05" },
+      budgetAlertDeps(),
+    );
+
+    // All six are in the past relative to the fixture's today, each 35 000
+    // against a 40 000 budget.
+    expect(planRows()).toHaveLength(6);
+    expect(planRows().every((r) => r.date < "2026-04")).toBe(true);
+    expect(budgets.alerts).toEqual([]);
+    expect(notifier.messages).toEqual([]);
   });
 
   it("a future month's alert is not burned: when that month arrives, a real overspend still rings", async () => {

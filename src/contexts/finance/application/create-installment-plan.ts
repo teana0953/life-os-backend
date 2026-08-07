@@ -1,4 +1,4 @@
-import { type CheckBudgetAlertsDeps, checkBudgetAlerts } from "./check-budget-alerts";
+import type { CheckBudgetAlertsDeps } from "./check-budget-alerts";
 import { FinanceCategoryArchived, FinanceCategoryNotFound, FinanceCategoryTypeMismatch } from "../domain/errors";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { InstallmentPlan, InstallmentPlanMode, InstallmentRow } from "../domain/installment-plan";
@@ -40,10 +40,8 @@ export interface CreateInstallmentPlanInput {
  * (design.md D1). Dates are anchored on `startDay` (D3); a `total` amount is
  * divided with the remainder on the earliest instalments (D4); a
  * `per_installment` amount is copied to every row unchanged — never divided
- * (D0). When `budgetAlertDeps` is supplied, each instalment's write
- * best-effort runs the same budget-alert check an ordinary transaction does;
- * `checkBudgetAlerts`'s own "month ≤ the user's today" gate (D4b) is what
- * keeps a plan spanning future months from burning those months' alerts.
+ * (D0). Creating a plan never raises a budget alert, for any period — see the
+ * note at the end of the body for why the D4b gate alone is not enough.
  */
 export async function createInstallmentPlan(
   deps: InstallmentDeps,
@@ -81,21 +79,20 @@ export async function createInstallmentPlan(
     rows,
   );
 
-  if (budgetAlertDeps) {
-    for (const row of rows) {
-      try {
-        await checkBudgetAlerts(budgetAlertDeps, {
-          userId: input.userId,
-          type: "expense",
-          currency,
-          categoryId: input.categoryId,
-          date: row.day,
-        });
-      } catch (err) {
-        console.error("budget alert check failed", err);
-      }
-    }
-  }
+  // Creating a plan raises **no** alert, for any period, past or future
+  // (tasks 6b.2). `checkBudgetAlerts`'s own "month ≤ today" gate (D4b) is not
+  // enough here and the two rules read as contradicting each other: a plan
+  // entered part-way through — a mortgage already paid for eight months — has
+  // every past period at a month ≤ today, so the gate lets them all through.
+  // That would push "you overspent in March" eight times at once *and* consume
+  // each of those months' (budget, month, threshold) dedup rows, so a real
+  // overspend in any of them could never be reported again.
+  //
+  // The user is recording a fact about money already spent, not spending it
+  // now. Editing a single instalment afterwards still alerts normally (that is
+  // a real decision about a real month), and so does settling, which inserts a
+  // genuinely new charge dated today.
+  void budgetAlertDeps;
 
   return plan;
 }
