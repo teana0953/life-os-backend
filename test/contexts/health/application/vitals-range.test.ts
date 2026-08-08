@@ -57,4 +57,19 @@ describe("getVitalsRange", () => {
       { day: "2026-07-03", time: "", value: 51.7 },
     ]);
   });
+
+  it("includes waist measurements in the built series", async () => {
+    const repo = new FakeVitalsRepository([
+      record({ day: "2026-07-01", waistCm: 78.5 }),
+      record({ day: "2026-07-03" }),
+      record({ day: "2026-07-05", waistCm: 77.2 }),
+    ]);
+
+    const result = await getVitalsRange(repo, "user-1", "2026-07-01", "2026-07-31");
+
+    expect(result.series.waist).toEqual([
+      { day: "2026-07-01", time: "", value: 78.5 },
+      { day: "2026-07-05", time: "", value: 77.2 },
+    ]);
+  });
 });

@@ -75,6 +75,7 @@ function seriesToJson(series: VitalsSeries) {
   return {
     weight: series.weight,
     body_fat: series.bodyFat,
+    waist: series.waist,
     systolic: series.systolic,
     diastolic: series.diastolic,
     pulse: series.pulse,

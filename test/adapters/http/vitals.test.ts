@@ -552,6 +552,11 @@ describe("vitals HTTP routes", () => {
     // typo this range exists to refuse — a waist is neither 0.78 nor 780.
     ["a waist in metres", { waist_cm: 0.78 }],
     ["a waist with an extra digit", { waist_cm: 780 }],
+    // Just outside, so the bound is pinned on both sides: with only 0.78 and
+    // 780 to refuse, every limit between them passes and whether the ends are
+    // inclusive is invisible.
+    ["a waist just under the lower bound", { waist_cm: 19.9 }],
+    ["a waist just over the upper bound", { waist_cm: 300.1 }],
     ["a negative systolic", { bp_readings: [{ systolic: -1, diastolic: 80 }] }],
     ["a negative glucose value", { glucose_readings: [{ label: "餐前", value: -5 }] }],
     ["an SpO2 over 100", { spo2_readings: [{ spo2: 150 }] }],
@@ -567,6 +572,30 @@ describe("vitals HTTP routes", () => {
     });
 
     expect(res.status).toBe(400);
+  });
+
+  it.each([
+    ["waist at lower bound", { waist_cm: 20 }],
+    ["waist at upper bound", { waist_cm: 300 }],
+  ])("accepts %s and round-trips it", async (_desc, patch) => {
+    const { app } = buildApp();
+    const token = await validToken();
+
+    const put = await app.request("/api/vitals", {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ day: "2026-07-18", ...patch }),
+    });
+
+    expect(put.status).toBe(200);
+    const putBody = (await put.json()) as Record<string, unknown>;
+    expect(putBody.waist_cm).toBe(patch.waist_cm);
+
+    // Verify it persisted (not just echoed back).
+    const get = await app.request("/api/vitals?day=2026-07-18", { headers: { Authorization: `Bearer ${token}` } });
+    expect(get.status).toBe(200);
+    const getBody = (await get.json()) as Record<string, unknown>;
+    expect(getBody.waist_cm).toBe(patch.waist_cm);
   });
 
   it("requires auth for GET /api/vitals/range", async () => {
@@ -598,7 +627,11 @@ describe("vitals HTTP routes", () => {
       day: "2026-07-03",
       weightKg: 51.7,
       bodyFatPct: null,
-      waistCm: null,
+      // A real value, different from every other number in this fixture: the
+      // response and the expectation were both missing the `waist` key, so a
+      // strict `toEqual` agreed with itself while the serializer emitted
+      // nothing and the trend tab stayed empty in production.
+      waistCm: 78.5,
       bpReadings: [],
       glucoseReadings: [],
       spo2Readings: [],
@@ -618,6 +651,7 @@ describe("vitals HTTP routes", () => {
           { day: "2026-07-03", time: "", value: 51.7 },
         ],
         body_fat: [],
+        waist: [{ day: "2026-07-03", time: "", value: 78.5 }],
         systolic: [
           { day: "2026-07-01", time: "08:00", value: 118 },
           { day: "2026-07-01", time: "20:00", value: 122 },

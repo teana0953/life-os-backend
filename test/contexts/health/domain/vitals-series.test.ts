@@ -38,6 +38,15 @@ describe("buildVitalsSeries", () => {
     expect(series.bodyFat).toEqual([{ day: "2026-07-01", time: "", value: 22.2 }]);
   });
 
+  it("emits waist scalar to one decimal, skipping null days", () => {
+    const series = buildVitalsSeries([
+      record({ day: "2026-07-01", waistCm: 78.55 }),
+      record({ day: "2026-07-02" }),
+    ]);
+
+    expect(series.waist).toEqual([{ day: "2026-07-01", time: "", value: 78.6 }]);
+  });
+
   it("emits one point per blood-pressure reading (no averaging), ordered by time", () => {
     const series = buildVitalsSeries([
       record({
@@ -84,6 +93,7 @@ describe("buildVitalsSeries", () => {
     expect(series.spo2).toEqual([]);
     expect(series.pulse).toEqual([]);
     expect(series.systolic).toEqual([]);
+    expect(series.waist).toEqual([]);
   });
 
   it("emits one spo2 point per reading, rounded to whole numbers", () => {

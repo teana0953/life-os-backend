@@ -23,7 +23,10 @@ describe("DrizzleVitalsRepository read coerce", () => {
       day: "2026-07-18",
       weightKg: null,
       bodyFatPct: null,
-      waistCm: null,
+      // Stored as a string, because `numeric` comes back as one — the read
+      // has to turn it into a number, and a fixture of `null` proves nothing
+      // about that conversion or about which column it reads.
+      waistCm: "78.5",
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70 }],
       glucoseReadings: [{ label: "餐前", value: 95 }],
       spo2Readings: [{ spo2: 98, pulse: null }],
@@ -35,6 +38,7 @@ describe("DrizzleVitalsRepository read coerce", () => {
     expect(result?.bpReadings).toEqual([{ systolic: 120, diastolic: 80, pulse: 70, time: "" }]);
     expect(result?.glucoseReadings).toEqual([{ label: "餐前", value: 95, mealContext: null, time: "" }]);
     expect(result?.spo2Readings).toEqual([{ spo2: 98, pulse: null, time: "" }]);
+    expect(result?.waistCm).toBe(78.5);
   });
 
   it("preserves an existing time on read", async () => {
