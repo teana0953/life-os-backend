@@ -1060,6 +1060,9 @@ describe("GET /api/split/activity", () => {
       counterpartDisplayName: null,
       amount: 300,
       previousAmount: null,
+      changedFields: null,
+      addedDisplayNames: null,
+      removedDisplayNames: null,
       actorIsPayer: null,
       currency: "TWD",
       description: "Dinner",
@@ -1072,6 +1075,50 @@ describe("GET /api/split/activity", () => {
   it("rejects an unauthenticated request", async () => {
     const res = await app.request("/api/split/activity");
     expect(res.status).toBe(401);
+  });
+
+  it("hands the edit detail to the client, absent-not-empty on non-edits", async () => {
+    // The wire contract for issue #74. `[]` and `null` say different things
+    // here — "an edit that changed nothing" versus "not an edit" — so a
+    // mapper that collapsed either into the other would be a lie the client
+    // cannot see through.
+    const me = await idOf(ALICE);
+    seed("a1111111-1111-1111-1111-111111111111", "2026-04-01T10:00:00.000Z", [me], null, {
+      type: "expense_updated",
+      changedFields: ["shares", "amount"],
+      addedDisplayNames: ["Cid"],
+      removedDisplayNames: ["Ben"],
+    });
+    seed("a2222222-2222-2222-2222-222222222222", "2026-04-01T09:00:00.000Z", [me]);
+    // An edit that changed nothing: the empty list has to survive the wire as
+    // an empty list. Collapsing it to null turns "this edit did nothing" into
+    // "this was never an edit", and only a fixture that is actually empty can
+    // catch that.
+    seed("a0000000-0000-0000-0000-000000000000", "2026-04-01T08:00:00.000Z", [me], null, {
+      type: "expense_updated",
+      changedFields: [],
+      addedDisplayNames: [],
+      removedDisplayNames: [],
+    });
+
+    const res = await app.request("/api/split/activity", { headers: await authHeader(ALICE) });
+    const body = await res.json<{ activity: Array<Record<string, unknown>> }>();
+
+    expect(body.activity[0]).toMatchObject({
+      changed_fields: ["shares", "amount"],
+      added_display_names: ["Cid"],
+      removed_display_names: ["Ben"],
+    });
+    expect(body.activity[1]).toMatchObject({
+      changed_fields: null,
+      added_display_names: null,
+      removed_display_names: null,
+    });
+    expect(body.activity[2]).toMatchObject({
+      changed_fields: [],
+      added_display_names: [],
+      removed_display_names: [],
+    });
   });
 
   it("returns the caller's entries with everything needed to render them", async () => {

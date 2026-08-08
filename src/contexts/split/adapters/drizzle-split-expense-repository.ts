@@ -153,6 +153,43 @@ function memberOfExpenseGroup(db: Db, userId: string) {
   );
 }
 
+/**
+ * What an edit touched, from the fixed vocabulary the `split_activity` CHECK
+ * enforces (issue #74).
+ *
+ * `shares` covers both halves of a split change — who is in it, and how much
+ * each of them owes — because both move somebody's balance. A reshuffle
+ * between the same two people adds and removes nobody and can leave the total
+ * untouched, so the participant sets alone would call it no change at all.
+ *
+ * An empty list is a real answer: a client re-sending identical values is an
+ * ordinary event, `PUT` being a whole replace.
+ */
+function describeEdit(
+  previous: { payerUserId: string; amount: number; currency: string; description: string; day: string },
+  previousShares: { userId: string; amount: number }[],
+  next: UpdateSplitExpenseFields,
+): { changedFields: string[]; addedUserIds: string[]; removedUserIds: string[] } {
+  const before = new Map(previousShares.map((share) => [share.userId, share.amount]));
+  const after = new Map(next.shares.map((share) => [share.userId, share.amount]));
+  const addedUserIds = [...after.keys()].filter((userId) => !before.has(userId));
+  const removedUserIds = [...before.keys()].filter((userId) => !after.has(userId));
+  const sharesChanged =
+    addedUserIds.length > 0 ||
+    removedUserIds.length > 0 ||
+    [...after.entries()].some(([userId, amount]) => before.get(userId) !== amount);
+
+  const changedFields = [
+    ...(previous.amount !== next.amount ? ["amount"] : []),
+    ...(previous.currency !== next.currency ? ["currency"] : []),
+    ...(previous.description !== next.description ? ["description"] : []),
+    ...(previous.day !== next.day ? ["day"] : []),
+    ...(previous.payerUserId !== next.payerUserId ? ["payer"] : []),
+    ...(sharesChanged ? ["shares"] : []),
+  ];
+  return { changedFields, addedUserIds, removedUserIds };
+}
+
 /** Driven adapter: implements SplitExpenseRepository via Drizzle + Neon; also SplitSpendingRepository (see `splitSpendingForUser`) since both read `split_expense`/`split_share`. */
 export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, SplitSpendingRepository {
   constructor(private readonly getDb: () => Db) {}
@@ -281,16 +318,34 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
   async update(id: string, fields: UpdateSplitExpenseFields, mirrors: ShareMirrorRow[], now: Date, actorUserId: string): Promise<SplitExpenseWriteResult | null> {
     const db = this.getDb();
     const [existing] = await db
-      .select({ id: splitExpense.id, groupId: splitExpense.groupId, payerUserId: splitExpense.payerUserId, amount: splitExpense.amount })
+      .select({
+        id: splitExpense.id,
+        groupId: splitExpense.groupId,
+        payerUserId: splitExpense.payerUserId,
+        amount: splitExpense.amount,
+        // Read so the activity entry can say what the edit actually touched
+        // (issue #74) — without them "someone modified this" is all the
+        // timeline can offer for every edit that left the amount alone.
+        currency: splitExpense.currency,
+        description: splitExpense.description,
+        day: splitExpense.day,
+      })
       .from(splitExpense)
       .where(eq(splitExpense.id, id))
       .limit(1);
     if (!existing) return null;
 
-    // Read before the batch replaces them. Only a groupless entry freezes an
-    // audience, so a grouped expense never pays for this query.
-    const previousShareUserIds =
-      existing.groupId === null ? (await db.select({ userId: splitShare.userId }).from(splitShare).where(eq(splitShare.expenseId, id))).map((row) => row.userId) : [];
+    // Read before the batch replaces them, and now for **every** expense, not
+    // only groupless ones: freezing an audience needs this for groupless
+    // rows, but the split diff needs it either way, and a change to the split
+    // is the change this timeline most exists to report.
+    const previousShares = await db
+      .select({ userId: splitShare.userId, amount: splitShare.amount })
+      .from(splitShare)
+      .where(eq(splitShare.expenseId, id));
+    const previousShareUserIds = previousShares.map((row) => row.userId);
+    const edit = describeEdit(existing, previousShares, fields);
+    const editedNames = await this.namesFor([...edit.addedUserIds, ...edit.removedUserIds]);
 
     const deleteShares = db.delete(splitShare).where(eq(splitShare.expenseId, id));
     const insertShares = db.insert(splitShare).values(sharesToRows(id, fields.shares));
@@ -319,6 +374,12 @@ export class DrizzleSplitExpenseRepository implements SplitExpenseRepository, Sp
       previousAmount: existing.amount,
       currency: fields.currency,
       description: fields.description,
+      changedFields: edit.changedFields,
+      // Names, not ids: an entry has to render after the expense it describes
+      // is gone, and the person dropped from a split is exactly the reader
+      // whose balance moved without being told.
+      addedDisplayNames: edit.addedUserIds.map((userId) => editedNames.get(userId) ?? userId),
+      removedDisplayNames: edit.removedUserIds.map((userId) => editedNames.get(userId) ?? userId),
       audienceUserIds:
         existing.groupId === null
           ? grouplessAudience([
