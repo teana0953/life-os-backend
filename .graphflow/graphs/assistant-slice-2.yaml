@@ -1,0 +1,106 @@
+version: 1
+name: assistant-slice-2
+budget: 700k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  plan:
+    kind: task
+    role: planner
+    tier: heavy
+    prompt: |
+      {{ inputs.goal }}
+
+      提案與任務清單在 `openspec/changes/ai-assistant/`,**先整份讀完**。第一刀已經
+      commit(model port、金鑰接縫、工具集),`git log --oneline -1` 看得到。
+
+      **這一輪只規劃,不寫程式。** 產出:要改/新增哪些檔案、每個檔案要做什麼、
+      以及每一條守門要怎麼寫才會紅。
+
+      六個決定是**地基,不要重新設計**:金鑰每次帶不落地、寫入只提議、工具走既有
+      use case、只做 Gemini 一個 adapter、功能名泛稱但金鑰欄位具體、只碰記帳與分帳。
+
+      特別要在計畫裡回答:
+      - Gemini 的 `functionDeclarations` / `functionCall` / `functionResponse` 怎麼
+        跟中立的 `AssistantTool` / `ToolCall` / `ToolResult` 對應
+      - 迴圈的上限是多少、**超過上限怎麼說出來**(不能安靜截斷)
+      - 三種失敗(金鑰無效 / 額度用盡 / 模型無權限)各自對應 Gemini 的什麼回應
+      - 「任何回應不含金鑰」這條要怎麼測**每一條錯誤路徑**,不是只有成功那條
+
+  approve-plan:
+    kind: gate
+    after: [plan]
+    show: "{{ nodes.plan.output }}"
+
+  implement:
+    kind: task
+    role: implementer
+    tier: heavy
+    after: [approve-plan]
+    prompt: |
+      照核可的計畫實作。**不要動第一刀已經 commit 的東西**,除非計畫明說要改。
+
+      鐵則:
+      - Gemini 的 HTTP 呼叫用 fake fetch,**測試不打真的網路**
+      - 金鑰只從 `resolveModelApiKey` 來,其他地方拿到的就只是一把字串
+      - **不要 log request headers 或 body**,錯誤不要回傳原始請求
+      - 每寫一條守門就想「什麼突變會讓它紅」,想不出來就是壞守門
+
+  test:
+    kind: script
+    after: [implement]
+    # test/db 不含在內:那 11 個 PGlite 檔平行跑會逾時,clean main 也一樣,
+    # 放進來會讓節點因為跟 diff 無關的理由失敗。這一刀不碰資料庫。
+    run: "npm run typecheck && npx vitest run --project unit --project workers"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [implement]
+    prompt: |
+      只看這一刀的 diff。重點:
+      - 金鑰有沒有任何路徑會流進 log、回應、錯誤訊息
+      - 三種失敗真的分得開嗎,還是最後都塌成一種
+      - 迴圈上限到了會不會安靜截斷
+      - 工具參數不符 schema、工具不存在時,是回錯誤給模型還是 500
+
+  guard-audit:
+    kind: check
+    role: code-reviewer
+    tier: heavy
+    after: [implement]
+    prompt: |
+      只找**不會失敗的守門**:斷言存在、但無論程式對錯都是綠的。逐條說明**要怎麼
+      突變才會紅**;想不出能讓它紅的突變,那條就是壞守門。
+
+      這個 repo 反覆出現的形態,逐一對照:
+      - fixture 是 null / 空陣列 / 跟同物件的鄰居撞號 → 讀錯鍵、接錯欄位照樣過
+      - 回應與期望同時缺同一個 key → 整份 `toEqual` 跟自己達成一致
+      - in-memory fake 有自己的實作 → 真正的那條路徑零覆蓋
+      - 斷言恆為真(比較一個永遠不會變的東西)
+      - 「不包含 X」型的斷言 → 對之後新增的東西永遠是綠的
+
+      特別查:「任何回應不含金鑰」有沒有涵蓋**每一條錯誤路徑**,還是只測了成功那條。
+
+  fix:
+    kind: task
+    role: fixer
+    after: [test, code-review, guard-audit]
+    when: any-fail
+    goto: [test, code-review, guard-audit]
+    max_iterations: 2
+    prompt: "依 code-review 與 guard-audit 的發現修正。每補一條守門就說明能讓它紅的突變。"
+
+  ship:
+    kind: gate
+    after: [test, code-review, guard-audit]
+    when: all-pass
+    show: |
+      code review:
+      {{ nodes.code-review.output }}
+
+      守門稽核:
+      {{ nodes.guard-audit.output }}

@@ -108,8 +108,13 @@ records.
 
 A free provider tier generally reserves the right to use submitted content to
 improve its products, and this product holds menstrual, glucose and care
-records. What is sent SHALL also be the aggregate a question needs rather than
-the underlying rows.
+records.
+
+Within finance, the assistant MAY read individual transactions — "which
+dinner was that" is a real question an aggregate cannot answer — but the
+number of rows it can pull SHALL be bounded, and the bound SHALL be the
+server's, not the model's. An unbounded listing turns one careless question
+into a month of records leaving the account.
 
 #### Scenario: A health question
 
@@ -117,8 +122,7 @@ the underlying rows.
 - **THEN** the assistant says it cannot see those, rather than reaching for
   them
 
-#### Scenario: Answering from an aggregate
+#### Scenario: A listing the model cannot widen
 
-- **WHEN** the caller asks what they spent on a category
-- **THEN** the model is given the category's total and budget, not the
-  transactions behind them
+- **WHEN** the model asks for more transactions than the server allows
+- **THEN** it receives the server's maximum, not the number it asked for
