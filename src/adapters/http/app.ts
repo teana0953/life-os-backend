@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { JWTVerifyGetKey } from "jose";
+import type { ModelClient } from "../../contexts/assistant/domain/model-client";
+import { ModelFailure } from "../../contexts/assistant/domain/model-client";
 import { FinanceSharesMirror } from "../../contexts/finance/adapters/finance-shares-mirror";
 import type { BudgetAlertNotifier } from "../../contexts/finance/domain/budget-alert-notifier";
 import type { FinanceBudgetRepository } from "../../contexts/finance/domain/finance-budget-repository";
@@ -157,6 +159,8 @@ import {
   createListSettlementsHandler,
   createUpdateExpenseHandler,
 } from "./routes/split";
+import { createAssistantHandler } from "./routes/assistant";
+import { GEMINI_KEY_HEADER } from "./routes/assistant-key";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -210,6 +214,7 @@ export interface CreateAppOptions {
   splitSettlementRepository: SettlementRepository;
   splitActivityRepository: SplitActivityRepository;
   splitSpendingRepository: SplitSpendingRepository;
+  modelClient: ModelClient;
   ping: () => Promise<void>;
   /** Deployed web app origin (Cloudflare Pages) to allow via CORS, in addition to localhost. */
   allowedWebOrigin?: string;
@@ -226,7 +231,9 @@ export function createApp(options: CreateAppOptions) {
     cors({
       origin: (origin) => (isAllowedOrigin(origin, options.allowedWebOrigin) ? origin : null),
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowHeaders: ["Authorization", "Content-Type"],
+      // GEMINI_KEY_HEADER must be allowed here or the browser's preflight
+      // rejects every assistant request before it leaves the client.
+      allowHeaders: ["Authorization", "Content-Type", GEMINI_KEY_HEADER],
     }),
   );
 
@@ -241,6 +248,21 @@ export function createApp(options: CreateAppOptions) {
       // `detail` is a short, non-credential diagnostic (e.g. "status_403",
       // "network", "parse") to tell apart a WAF/bot block from a network error.
       return c.json({ error: "chaodays_unavailable", detail: err.reason }, 502);
+    }
+    if (err instanceof ModelFailure) {
+      // Three of these are the caller's own account, and each is reported as
+      // itself — collapsed, they all read as "the assistant is broken", which
+      // is both wrong and unactionable. Nothing here echoes the request or key.
+      switch (err.reason) {
+        case "key_rejected":
+          return c.json({ error: "gemini_key_rejected", message: "Gemini 拒絕了這把金鑰，請到 設定 > AI 助手 檢查" }, 400);
+        case "quota_exhausted":
+          return c.json({ error: "gemini_quota_exhausted", message: "你的 Gemini 免費額度已用盡" }, 429);
+        case "model_unavailable":
+          return c.json({ error: "gemini_model_unavailable", message: "這把金鑰無法使用此模型" }, 403);
+        default:
+          return c.json({ error: "gemini_unavailable" }, 502);
+      }
     }
     console.error(err);
     return c.json({ error: "internal" }, 500);
@@ -399,6 +421,22 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/push/test", authMiddleware, createTestPushHandler(pushOptions));
 
   app.put("/api/user/timezone", authMiddleware, createSetUserTimezoneHandler({ userRepository: options.userRepository }));
+
+  // The assistant (ai-assistant): reads finance and split records through the
+  // same use cases as everything else, under the caller's identity, and its
+  // only write is a proposal the caller must accept through an ordinary request.
+  app.post(
+    "/api/assistant",
+    authMiddleware,
+    createAssistantHandler({
+      userRepository: options.userRepository,
+      financeTransactionRepository: options.financeTransactionRepository,
+      financeCategoryRepository: options.financeCategoryRepository,
+      financeBudgetRepository: options.financeBudgetRepository,
+      balanceRepository: options.splitBalanceRepository,
+      modelClient: options.modelClient,
+    }),
+  );
 
   const careOptions = {
     userRepository: options.userRepository,

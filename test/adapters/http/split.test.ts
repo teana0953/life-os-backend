@@ -21,6 +21,7 @@ import {
   InMemoryFinanceTransactionRepository,
 } from "../../contexts/finance/fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
+import { stubModelClient } from "./assistant-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -257,6 +258,7 @@ beforeEach(() => {
     splitSettlementRepository: settlements,
     splitActivityRepository: activity,
     splitSpendingRepository: expenses,
+    modelClient: stubModelClient,
     ping: async () => {},
   });
 });

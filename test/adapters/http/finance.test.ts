@@ -32,6 +32,7 @@ import {
 } from "../../contexts/split/fakes";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 import { stubSplitActivityRepository, stubSplitBalanceRepository } from "./split-stubs";
+import { stubModelClient } from "./assistant-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -287,6 +288,7 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
     splitActivityRepository: stubSplitActivityRepository,
     // `InMemorySplitExpenseRepository` also implements `SplitSpendingRepository`.
     splitSpendingRepository: splitExpenseRepository,
+    modelClient: stubModelClient,
     ping: async () => {},
   });
   return {
