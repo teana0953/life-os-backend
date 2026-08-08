@@ -5,6 +5,7 @@ export interface SetVitalsInput {
   day: string;
   weightKg: number | null;
   bodyFatPct: number | null;
+  waistCm: number | null;
   bpReadings: BpReading[];
   glucoseReadings: GlucoseReading[];
   spo2Readings: Spo2Reading[];

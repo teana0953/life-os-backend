@@ -24,6 +24,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
       day: input.day,
       weightKg: input.weightKg,
       bodyFatPct: input.bodyFatPct,
+      waistCm: input.waistCm,
       bpReadings: input.bpReadings,
       glucoseReadings: input.glucoseReadings,
       spo2Readings: input.spo2Readings,
@@ -158,6 +159,7 @@ describe("importChaodaysWeight", () => {
       day: "2026-07-01",
       weightKg: 65.5,
       bodyFatPct: 22.1,
+      waistCm: null,
       bpReadings: [],
       glucoseReadings: [],
       spo2Readings: [],
@@ -171,6 +173,7 @@ describe("importChaodaysWeight", () => {
       day: "2026-07-01",
       weightKg: 60,
       bodyFatPct: 20,
+      waistCm: null,
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
       glucoseReadings: [{ label: "餐前", value: 95, mealContext: "pre_meal", time: "07:45" }],
       spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
@@ -199,6 +202,7 @@ describe("importChaodaysWeight", () => {
       day: "2026-07-01",
       weightKg: 60,
       bodyFatPct: 20,
+      waistCm: null,
       bpReadings: [],
       glucoseReadings: [],
       spo2Readings: [],
@@ -352,5 +356,37 @@ describe("importChaodaysWeight", () => {
         to: "2026-07-02",
       }),
     ).rejects.toThrow(ChaodaysAuthError);
+  });
+});
+
+describe("importChaodaysWeight leaves alone what chaodays does not have", () => {
+  it("keeps a waist measurement the user recorded", async () => {
+    // `set` is a whole-row upsert, so a field the importer forgets to carry
+    // forward is a field it erases. chaodays has no waist figure at all,
+    // which is exactly why nothing else here would have complained.
+    vitalsRepository.seed({
+      userId: "user-1",
+      day: "2026-07-01",
+      weightKg: 64,
+      bodyFatPct: 21,
+      waistCm: 78.5,
+      bpReadings: [],
+      glucoseReadings: [],
+      spo2Readings: [],
+    });
+    chaodaysClient.records = [{ date: "2026-07-01", weight: 65.5, bodyFatPct: 22.1 }];
+
+    await importChaodaysWeight(vitalsRepository, chaodaysClient, {
+      userId: "user-1",
+      uid: "chaodays-uid",
+      password: "chaodays-pw",
+      from: "2026-07-01",
+      to: "2026-07-01",
+    });
+
+    const after = await vitalsRepository.get("user-1", "2026-07-01");
+    expect(after?.waistCm).toBe(78.5);
+    // And the import still did its own job.
+    expect(after?.weightKg).toBe(65.5);
   });
 });

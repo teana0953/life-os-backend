@@ -275,6 +275,7 @@ export async function importChaodaysDiet(
         day,
         weightKg: existingVitals?.weightKg ?? null,
         bodyFatPct: existingVitals?.bodyFatPct ?? null,
+        waistCm: existingVitals?.waistCm ?? null,
         bpReadings: existingVitals?.bpReadings ?? [],
         glucoseReadings: [...existingGlucose, ...glucoseToAppend],
         spo2Readings: existingVitals?.spo2Readings ?? [],

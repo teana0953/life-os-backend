@@ -210,6 +210,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
       day,
       weightKg,
       bodyFatPct: null,
+      waistCm: null,
       bpReadings: [],
       glucoseReadings: [],
       spo2Readings: [],

@@ -12,6 +12,7 @@ function toDomain(row: VitalsRow): VitalsRecord {
     day: row.day,
     weightKg: row.weightKg == null ? null : Number(row.weightKg),
     bodyFatPct: row.bodyFatPct == null ? null : Number(row.bodyFatPct),
+    waistCm: row.waistCm == null ? null : Number(row.waistCm),
     // Legacy readings predate `time`; coerce a missing/non-string time to "".
     bpReadings: row.bpReadings.map((r) => ({ ...r, time: typeof r.time === "string" ? r.time : "" })),
     glucoseReadings: row.glucoseReadings.map((r) => ({
@@ -45,6 +46,7 @@ export class DrizzleVitalsRepository implements VitalsRepository {
       day: input.day,
       weightKg: input.weightKg == null ? null : String(input.weightKg),
       bodyFatPct: input.bodyFatPct == null ? null : String(input.bodyFatPct),
+      waistCm: input.waistCm == null ? null : String(input.waistCm),
       bpReadings: input.bpReadings,
       glucoseReadings: input.glucoseReadings,
       spo2Readings: input.spo2Readings,
@@ -67,6 +69,7 @@ export class DrizzleVitalsRepository implements VitalsRepository {
         day: input.day,
         weightKg: input.weightKg == null ? null : String(input.weightKg),
         bodyFatPct: input.bodyFatPct == null ? null : String(input.bodyFatPct),
+        waistCm: input.waistCm == null ? null : String(input.waistCm),
         bpReadings: input.bpReadings,
         glucoseReadings: input.glucoseReadings,
         spo2Readings: input.spo2Readings,

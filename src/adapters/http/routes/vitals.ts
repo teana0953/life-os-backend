@@ -16,11 +16,12 @@ export interface VitalsHandlerOptions {
 }
 
 /** Serializes a vitals record to the snake_case JSON shape returned by both endpoints. */
-function toJson(record: { day: string; weightKg: number | null; bodyFatPct: number | null; bpReadings: BpReading[]; glucoseReadings: GlucoseReading[]; spo2Readings: Spo2Reading[] }) {
+function toJson(record: { day: string; weightKg: number | null; bodyFatPct: number | null; waistCm: number | null; bpReadings: BpReading[]; glucoseReadings: GlucoseReading[]; spo2Readings: Spo2Reading[] }) {
   return {
     day: record.day,
     weight_kg: record.weightKg,
     body_fat_pct: record.bodyFatPct,
+    waist_cm: record.waistCm,
     bp_readings: record.bpReadings,
     glucose_readings: record.glucoseReadings.map((r) => ({
       label: r.label,
@@ -74,6 +75,7 @@ function seriesToJson(series: VitalsSeries) {
   return {
     weight: series.weight,
     body_fat: series.bodyFat,
+    waist: series.waist,
     systolic: series.systolic,
     diastolic: series.diastolic,
     pulse: series.pulse,
@@ -125,6 +127,9 @@ export function createSetVitalsHandler(options: VitalsHandlerOptions) {
       // Percentages are capped at 100; every other measurement is non-negative.
       weightKg: nullableNumber(body.weight_kg, "weight_kg"),
       bodyFatPct: nullableNumber(body.body_fat_pct, "body_fat_pct", 0, 100),
+      // 20..300 cm: wide enough for any real person, narrow enough that a
+      // metre/centimetre mix-up (0.78) or a typo (780) is refused.
+      waistCm: nullableNumber(body.waist_cm, "waist_cm", 20, 300),
       bpReadings: requireReadingArray(body.bp_readings, "bp_readings", (item, i) => ({
         systolic: requireNumberInRange(item.systolic, `bp_readings[${i}].systolic`, 0),
         diastolic: requireNumberInRange(item.diastolic, `bp_readings[${i}].diastolic`, 0),

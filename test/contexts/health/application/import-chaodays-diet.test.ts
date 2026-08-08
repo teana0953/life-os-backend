@@ -118,6 +118,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
       day: input.day,
       weightKg: input.weightKg,
       bodyFatPct: input.bodyFatPct,
+      waistCm: input.waistCm,
       bpReadings: input.bpReadings,
       glucoseReadings: input.glucoseReadings,
       spo2Readings: input.spo2Readings,
@@ -519,6 +520,10 @@ describe("importChaodaysDiet", () => {
       day: "2026-07-01",
       weightKg: 60,
       bodyFatPct: 20,
+      // A real value, not null: this test is the one that guards "preserves
+      // other vitals fields", and a null here would let the field be dropped
+      // without the assertion below noticing.
+      waistCm: 78.5,
       bpReadings: [{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }],
       glucoseReadings: [{ label: "餐前", value: 93, mealContext: "pre_meal", time: "07:30" }],
       spo2Readings: [{ spo2: 98, pulse: 71, time: "08:30" }],
@@ -553,6 +558,7 @@ describe("importChaodaysDiet", () => {
     ]);
     expect(vitals?.weightKg).toBe(60);
     expect(vitals?.bodyFatPct).toBe(20);
+    expect(vitals?.waistCm).toBe(78.5);
     expect(vitals?.bpReadings).toEqual([{ systolic: 120, diastolic: 80, pulse: 70, time: "08:30" }]);
     expect(vitals?.spo2Readings).toEqual([{ spo2: 98, pulse: 71, time: "08:30" }]);
   });

@@ -244,6 +244,8 @@ export const vitals = pgTable(
     day: date("day").notNull(),
     weightKg: numeric("weight_kg"),
     bodyFatPct: numeric("body_fat_pct"),
+    /** Waist circumference in centimetres. One value a day, like the two above. */
+    waistCm: numeric("waist_cm"),
     bpReadings: jsonb("bp_readings")
       .$type<{ systolic: number; diastolic: number; pulse: number | null; time: string }[]>()
       .notNull()

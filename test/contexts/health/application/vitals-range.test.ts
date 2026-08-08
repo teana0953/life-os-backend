@@ -8,6 +8,7 @@ function record(overrides: Partial<VitalsRecord> & { day: string }): VitalsRecor
     userId: "user-1",
     weightKg: null,
     bodyFatPct: null,
+    waistCm: null,
     bpReadings: [],
     glucoseReadings: [],
     spo2Readings: [],
@@ -54,6 +55,24 @@ describe("getVitalsRange", () => {
     expect(result.series.weight).toEqual([
       { day: "2026-07-01", time: "", value: 52 },
       { day: "2026-07-03", time: "", value: 51.7 },
+    ]);
+  });
+
+  it("includes waist measurements in the built series, in date order", async () => {
+    // Fed out of order deliberately. With the days already sorted going in,
+    // deleting `series.waist.sort(...)` changed nothing and the whole suite
+    // stayed green — a pre-sorted fixture cannot tell a sort from its absence.
+    const repo = new FakeVitalsRepository([
+      record({ day: "2026-07-05", waistCm: 77.2 }),
+      record({ day: "2026-07-03" }),
+      record({ day: "2026-07-01", waistCm: 78.5 }),
+    ]);
+
+    const result = await getVitalsRange(repo, "user-1", "2026-07-01", "2026-07-31");
+
+    expect(result.series.waist).toEqual([
+      { day: "2026-07-01", time: "", value: 78.5 },
+      { day: "2026-07-05", time: "", value: 77.2 },
     ]);
   });
 });
