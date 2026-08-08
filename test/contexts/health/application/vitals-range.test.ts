@@ -58,11 +58,14 @@ describe("getVitalsRange", () => {
     ]);
   });
 
-  it("includes waist measurements in the built series", async () => {
+  it("includes waist measurements in the built series, in date order", async () => {
+    // Fed out of order deliberately. With the days already sorted going in,
+    // deleting `series.waist.sort(...)` changed nothing and the whole suite
+    // stayed green — a pre-sorted fixture cannot tell a sort from its absence.
     const repo = new FakeVitalsRepository([
-      record({ day: "2026-07-01", waistCm: 78.5 }),
-      record({ day: "2026-07-03" }),
       record({ day: "2026-07-05", waistCm: 77.2 }),
+      record({ day: "2026-07-03" }),
+      record({ day: "2026-07-01", waistCm: 78.5 }),
     ]);
 
     const result = await getVitalsRange(repo, "user-1", "2026-07-01", "2026-07-31");
