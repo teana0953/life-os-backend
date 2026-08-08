@@ -232,6 +232,13 @@
       "when": 1786154257293,
       "tag": "0032_split-activity-edit-detail",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786172928110,
+      "tag": "0033_vitals-waist",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ export interface VitalsDay {
   day: string;
   weightKg: number | null;
   bodyFatPct: number | null;
+  waistCm: number | null;
   bpReadings: BpReading[];
   glucoseReadings: GlucoseReading[];
   spo2Readings: Spo2Reading[];
@@ -22,10 +23,11 @@ export async function getVitalsDay(repository: VitalsRepository, userId: string,
       day: record.day,
       weightKg: record.weightKg,
       bodyFatPct: record.bodyFatPct,
+      waistCm: record.waistCm,
       bpReadings: record.bpReadings,
       glucoseReadings: record.glucoseReadings,
       spo2Readings: record.spo2Readings,
     };
   }
-  return { day, weightKg: null, bodyFatPct: null, bpReadings: [], glucoseReadings: [], spo2Readings: [] };
+  return { day, weightKg: null, bodyFatPct: null, waistCm: null, bpReadings: [], glucoseReadings: [], spo2Readings: [] };
 }

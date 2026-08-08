@@ -7,6 +7,7 @@ function record(overrides: Partial<VitalsRecord> & { day: string }): VitalsRecor
     userId: "user-1",
     weightKg: null,
     bodyFatPct: null,
+    waistCm: null,
     bpReadings: [],
     glucoseReadings: [],
     spo2Readings: [],

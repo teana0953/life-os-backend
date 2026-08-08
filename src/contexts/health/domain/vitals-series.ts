@@ -19,6 +19,7 @@ export interface GlucosePoint extends Point {
 export interface VitalsSeries {
   weight: Point[];
   bodyFat: Point[];
+  waist: Point[];
   systolic: Point[];
   diastolic: Point[];
   pulse: Point[];
@@ -47,6 +48,7 @@ export function buildVitalsSeries(records: VitalsRecord[]): VitalsSeries {
   const series: VitalsSeries = {
     weight: [],
     bodyFat: [],
+    waist: [],
     systolic: [],
     diastolic: [],
     pulse: [],
@@ -59,6 +61,7 @@ export function buildVitalsSeries(records: VitalsRecord[]): VitalsSeries {
 
     if (record.weightKg != null) series.weight.push({ day, time: "", value: round1(record.weightKg) });
     if (record.bodyFatPct != null) series.bodyFat.push({ day, time: "", value: round1(record.bodyFatPct) });
+    if (record.waistCm != null) series.waist.push({ day, time: "", value: round1(record.waistCm) });
 
     for (const r of record.bpReadings) {
       series.systolic.push({ day, time: r.time, value: Math.round(r.systolic) });
@@ -78,6 +81,7 @@ export function buildVitalsSeries(records: VitalsRecord[]): VitalsSeries {
 
   series.weight.sort(byDayThenTime);
   series.bodyFat.sort(byDayThenTime);
+  series.waist.sort(byDayThenTime);
   series.systolic.sort(byDayThenTime);
   series.diastolic.sort(byDayThenTime);
   series.pulse.sort(byDayThenTime);

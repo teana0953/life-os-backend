@@ -184,6 +184,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
       day: input.day,
       weightKg: input.weightKg,
       bodyFatPct: input.bodyFatPct,
+      waistCm: input.waistCm,
       bpReadings: input.bpReadings,
       glucoseReadings: input.glucoseReadings,
       spo2Readings: input.spo2Readings,
@@ -342,6 +343,7 @@ const EMPTY_DAY = {
   day: "2026-07-18",
   weight_kg: null,
   body_fat_pct: null,
+  waist_cm: null,
   bp_readings: [],
   glucose_readings: [],
   spo2_readings: [],
@@ -386,6 +388,7 @@ describe("vitals HTTP routes", () => {
       day: "2026-07-18",
       weight_kg: 65.5,
       body_fat_pct: 22.1,
+      waist_cm: 78.5,
       bp_readings: [
         { systolic: 120, diastolic: 80, pulse: 70, time: "08:30" },
         { systolic: 118, diastolic: 78, pulse: 72, time: "21:00" },
@@ -545,6 +548,10 @@ describe("vitals HTTP routes", () => {
   it.each([
     ["a negative weight", { weight_kg: -1 }],
     ["a body-fat percentage over 100", { body_fat_pct: 150 }],
+    // Metres instead of centimetres, and a digit too many. Both are the
+    // typo this range exists to refuse — a waist is neither 0.78 nor 780.
+    ["a waist in metres", { waist_cm: 0.78 }],
+    ["a waist with an extra digit", { waist_cm: 780 }],
     ["a negative systolic", { bp_readings: [{ systolic: -1, diastolic: 80 }] }],
     ["a negative glucose value", { glucose_readings: [{ label: "餐前", value: -5 }] }],
     ["an SpO2 over 100", { spo2_readings: [{ spo2: 150 }] }],
@@ -578,6 +585,7 @@ describe("vitals HTTP routes", () => {
       day: "2026-07-01",
       weightKg: 52,
       bodyFatPct: null,
+      waistCm: null,
       bpReadings: [
         { systolic: 118, diastolic: 76, pulse: 70, time: "08:00" },
         { systolic: 122, diastolic: 80, pulse: null, time: "20:00" },
@@ -590,6 +598,7 @@ describe("vitals HTTP routes", () => {
       day: "2026-07-03",
       weightKg: 51.7,
       bodyFatPct: null,
+      waistCm: null,
       bpReadings: [],
       glucoseReadings: [],
       spo2Readings: [],

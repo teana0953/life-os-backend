@@ -175,6 +175,7 @@ class InMemoryVitalsRepository implements VitalsRepository {
       day: input.day,
       weightKg: input.weightKg,
       bodyFatPct: input.bodyFatPct,
+      waistCm: input.waistCm,
       bpReadings: input.bpReadings,
       glucoseReadings: input.glucoseReadings,
       spo2Readings: input.spo2Readings,

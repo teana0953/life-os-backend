@@ -87,6 +87,10 @@ export async function importChaodaysWeight(
       day,
       weightKg: weight,
       bodyFatPct: bodyFat,
+      // chaodays has no waist figure, so this import must carry forward
+      // whatever the user recorded here. `set` is a whole-row upsert, so a
+      // field left out is a field erased.
+      waistCm: existing?.waistCm ?? null,
       bpReadings: existing?.bpReadings ?? [],
       glucoseReadings: existing?.glucoseReadings ?? [],
       spo2Readings: existing?.spo2Readings ?? [],

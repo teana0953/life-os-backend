@@ -38,6 +38,8 @@ export interface VitalsRecord {
   weightKg: number | null;
   /** Body fat percentage; null when not measured. */
   bodyFatPct: number | null;
+  /** Waist circumference in cm; null when not measured. */
+  waistCm: number | null;
   bpReadings: BpReading[];
   glucoseReadings: GlucoseReading[];
   spo2Readings: Spo2Reading[];
