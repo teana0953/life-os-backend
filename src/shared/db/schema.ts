@@ -840,6 +840,14 @@ export const splitActivity = pgTable(
   (t) => [
     index("split_activity_group_idx").on(t.groupId),
     index("split_activity_created_idx").on(t.createdAt),
+    // The groupless half of the timeline's visibility predicate
+    // (`audience_user_ids @> array[me]`). GIN because that is the only access
+    // method with an operator class for array containment; partial because
+    // the CHECK below makes the column null for every grouped row, and those
+    // rows are answered by `split_activity_group_idx` instead (issue #73).
+    index("split_activity_audience_idx")
+      .using("gin", t.audienceUserIds)
+      .where(sql`audience_user_ids is not null`),
     check("split_activity_audience_xor_group", sql`(group_id is null) <> (audience_user_ids is null)`),
     check(
       "split_activity_settlement_has_direction",

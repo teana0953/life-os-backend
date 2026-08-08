@@ -25,20 +25,39 @@ import type { ListActivityOptions, SplitActivityRepository } from "../domain/spl
  *   its `split_share` rows, which cascade away with the expense — and a
  *   deletion is precisely the event this table exists to preserve.
  *
- * The two branches are mutually exclusive by a CHECK constraint on the table,
- * so exactly one applies to any row.
+ * The two branches are mutually exclusive by a CHECK constraint on the table
+ * (`(group_id is null) <> (audience_user_ids is null)`), so exactly one
+ * applies to any row — which is what makes the OR below equivalent to the
+ * `CASE` it replaces, and why each half carries its own `group_id` test
+ * rather than relying on the other half to be false.
+ *
+ * **Written as an OR of two indexable halves, not a `CASE`** (issue #73).
+ * Postgres cannot use an index for a `CASE`: the planner sees one opaque
+ * boolean over the whole row, so the only plan available was a backward walk
+ * of `split_activity_created_idx` filtering row by row. That costs
+ * O(everything everyone wrote after the caller's Nth newest visible entry) —
+ * not O(the caller's own entries) — so the endpoint got monotonically slower
+ * with *other people's* activity. An OR of two sargable halves can be a
+ * BitmapOr of `split_activity_group_idx` and the GIN
+ * `split_activity_audience_idx` instead.
+ *
+ * `@> array[...]` rather than `= any(...)`: they agree on every value this
+ * column holds (non-null uuids, and never a null element), but only the
+ * containment operator has a GIN operator class.
  */
-function visibleTo(db: Db, userId: string) {
+// Exported for `test/db/split-activity-visibility.test.ts`, which builds an
+// EXPLAIN around this exact expression. A test carrying its own copy of the
+// predicate would keep passing after a revert to the unindexable spelling —
+// it would be measuring its own copy.
+export function visibleTo(db: Db, userId: string) {
   return sql`(
-    case when ${splitActivity.groupId} is null
-      then ${userId}::uuid = any(${splitActivity.audienceUserIds})
-      else ${exists(
-        db
-          .select({ one: sql`1` })
-          .from(expenseGroupMember)
-          .where(and(eq(expenseGroupMember.groupId, splitActivity.groupId), eq(expenseGroupMember.userId, userId))),
-      )}
-    end
+    (${splitActivity.groupId} is not null and ${exists(
+      db
+        .select({ one: sql`1` })
+        .from(expenseGroupMember)
+        .where(and(eq(expenseGroupMember.groupId, splitActivity.groupId), eq(expenseGroupMember.userId, userId))),
+    )})
+    or (${splitActivity.groupId} is null and ${splitActivity.audienceUserIds} @> array[${userId}::uuid])
   )`;
 }
 
