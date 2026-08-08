@@ -835,6 +835,27 @@ export const splitActivity = pgTable(
     currency: text("currency"),
     description: text("description"),
     audienceUserIds: uuid("audience_user_ids").array(),
+    /**
+     * What an `expense_updated` edit actually touched, from a fixed
+     * vocabulary (issue #74). Without it the timeline's whole purpose fails
+     * for the edits that matter most: a change to the split alters what
+     * somebody owes, and it used to render as "someone modified this" with
+     * the amount identical on both sides — a line that reads as nothing
+     * happening.
+     *
+     * An empty array is a real answer ("an edit that changed nothing"), not a
+     * missing one. NULL means "not an edit entry".
+     */
+    changedFields: text("changed_fields").array(),
+    /**
+     * Who joined and who left the split, **as their display names at the
+     * time**, never as foreign keys: an entry has to stay readable after the
+     * expense it describes is gone, and it is the person dropped from a split
+     * whose balance just moved without them being told (design.md D2 —
+     * everything an entry needs to render, it carries).
+     */
+    addedDisplayNames: text("added_display_names").array(),
+    removedDisplayNames: text("removed_display_names").array(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -849,6 +870,20 @@ export const splitActivity = pgTable(
       .using("gin", t.audienceUserIds)
       .where(sql`audience_user_ids is not null`),
     check("split_activity_audience_xor_group", sql`(group_id is null) <> (audience_user_ids is null)`),
+    // A closed vocabulary, checked in the database: a typo'd field name is a
+    // change the reader is never told about, and it would otherwise be
+    // written happily and only surface as a blank line in the timeline.
+    check(
+      "split_activity_changed_fields_vocabulary",
+      sql`changed_fields is null or changed_fields <@ array['amount', 'currency', 'description', 'day', 'payer', 'shares']::text[]`,
+    ),
+    // Only an edit has an edit's detail. Left unchecked, a later write path
+    // could attach a participant diff to a `settlement_created` row, where
+    // nothing renders it and nothing contradicts it either.
+    check(
+      "split_activity_edit_detail_only_on_updates",
+      sql`type = 'expense_updated' or (changed_fields is null and added_display_names is null and removed_display_names is null)`,
+    ),
     check(
       "split_activity_settlement_has_direction",
       sql`(type in ('settlement_created', 'settlement_deleted')) = (actor_is_payer is not null)`,

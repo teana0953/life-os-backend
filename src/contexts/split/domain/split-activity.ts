@@ -55,6 +55,25 @@ export interface SplitActivity {
    */
   previousAmount: number | null;
   /**
+   * What an `expense_updated` edit touched: any of `amount`, `currency`,
+   * `description`, `day`, `payer`, `shares`. `null` on every other type.
+   *
+   * An **empty** list means an edit that changed nothing — an ordinary event,
+   * since the update endpoint is a whole replace — and is deliberately
+   * distinguishable from `null`. Without this field an edit that moved only
+   * the split rendered as "someone modified this" with the amount identical
+   * on both sides, which reads as nothing having happened while somebody's
+   * balance quietly moved (issue #74).
+   */
+  changedFields: string[] | null;
+  /**
+   * Who joined and who left the split, as the names they had at the time.
+   * Names rather than ids for the same reason the rest of the entry is a
+   * snapshot: it has to render after the expense is gone.
+   */
+  addedDisplayNames: string[] | null;
+  removedDisplayNames: string[] | null;
+  /**
    * A repayment's direction, and `null` for everything that is not one:
    * `true` = the actor paid the counterpart, `false` = the counterpart paid
    * the actor.

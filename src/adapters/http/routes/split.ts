@@ -217,6 +217,12 @@ function activityToJson(entry: SplitActivity) {
     counterpart_display_name: entry.counterpartDisplayName,
     amount: entry.amount,
     previous_amount: entry.previousAmount,
+    // What the edit touched, and who joined or left it. `null` on every
+    // non-edit type; an empty `changed_fields` is an edit that changed
+    // nothing, which is a different statement from "not an edit".
+    changed_fields: entry.changedFields,
+    added_display_names: entry.addedDisplayNames,
+    removed_display_names: entry.removedDisplayNames,
     // A settlement's direction, relative to the actor — the client turns the
     // pair (`actor_is_payer`, whether the reader is the actor) into "you paid
     // Ben" or "Ben paid you". `null` on every non-settlement type.

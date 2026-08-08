@@ -225,6 +225,13 @@
       "when": 1786153580038,
       "tag": "0031_split-activity-audience-gin",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786154257293,
+      "tag": "0032_split-activity-edit-detail",
+      "breakpoints": true
     }
   ]
 }
