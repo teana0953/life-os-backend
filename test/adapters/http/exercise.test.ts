@@ -26,6 +26,7 @@ import {
   stubSplitFriendChecker,
   stubSplitSpendingRepository,
 } from "./split-stubs";
+import { stubModelClient } from "./assistant-stubs";
 
 function notImplemented(): never {
   throw new Error("not implemented in this test's fakes");
@@ -347,6 +348,7 @@ function buildApp() {
     splitSettlementRepository: stubSettlementRepository,
     splitActivityRepository: stubSplitActivityRepository,
     splitSpendingRepository: stubSplitSpendingRepository,
+    modelClient: stubModelClient,
     ping: async () => {},
   });
   return { app, exerciseRepository, dailyTargetRepository };

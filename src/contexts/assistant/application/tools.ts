@@ -1,6 +1,7 @@
 import { getMonthlySummary } from "../../finance/application/get-monthly-summary";
 import { listBudgetsWithProgress } from "../../finance/application/list-budgets-with-progress";
 import { listCategories } from "../../finance/application/list-categories";
+import { listTransactions } from "../../finance/application/list-transactions";
 import type { FinanceBudgetRepository } from "../../finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../finance/domain/finance-category-repository";
 import type { FinanceTransactionRepository } from "../../finance/domain/finance-transaction-repository";
@@ -58,12 +59,32 @@ export interface Proposal {
 
 const MONTH = { type: "string", description: "YYYY-MM. Omit for the current month." } as const;
 
+/**
+ * How many transactions one listing may return. The bound is the server's,
+ * not the model's: a model that asks for 500 and gets 500 turns one careless
+ * question into a month of records leaving the account for a free tier.
+ */
+const TRANSACTION_LIST_MAX = 50;
+const TRANSACTION_LIST_DEFAULT = 20;
+
 /** The tool list, in the order the model sees it. Asserted whole by a test. */
 export const ASSISTANT_TOOLS: AssistantTool[] = [
   {
     name: "get_monthly_summary",
     description: "This month's spending and income per currency, and per category. Use for 'how much did I spend on X'.",
     parameters: { type: "object", properties: { month: MONTH } },
+  },
+  {
+    name: "list_transactions",
+    description:
+      "Individual transactions in a month, newest first. Use for questions an aggregate cannot answer, like 'which dinner was that'. The server caps how many rows come back.",
+    parameters: {
+      type: "object",
+      properties: {
+        month: MONTH,
+        limit: { type: "number", description: "How many rows at most. The server enforces its own maximum." },
+      },
+    },
   },
   {
     name: "list_categories",
@@ -106,6 +127,22 @@ export async function runTool(context: ToolContext, name: string, args: Record<s
   switch (name) {
     case "get_monthly_summary":
       return { result: await getMonthlySummary(context.transactions, context.userId, month) };
+    case "list_transactions": {
+      // The clamp is the server's decision (spec: "a listing the model cannot
+      // widen") — whatever the model asks for lands in 1..TRANSACTION_LIST_MAX.
+      const requested = typeof args.limit === "number" && Number.isFinite(args.limit) ? Math.floor(args.limit) : TRANSACTION_LIST_DEFAULT;
+      const limit = Math.min(Math.max(requested, 1), TRANSACTION_LIST_MAX);
+      const [year, monthNo] = month.split("-").map(Number);
+      const lastDay = new Date(Date.UTC(year, monthNo, 0)).getUTCDate();
+      const rows = await listTransactions(context.transactions, context.userId, `${month}-01`, `${month}-${String(lastDay).padStart(2, "0")}`);
+      return {
+        result: rows
+          .slice()
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, limit)
+          .map((t) => ({ id: t.id, date: t.date, type: t.type, amount: t.amount, currency: t.currency, category_id: t.categoryId, note: t.note })),
+      };
+    }
     case "list_categories":
       return { result: await listCategories(context.categories, context.userId) };
     case "list_budgets":
@@ -113,6 +150,11 @@ export async function runTool(context: ToolContext, name: string, args: Record<s
     case "get_split_balances":
       return { result: await getBalances(context.balances, context.userId, context.today) };
     case "propose_transaction":
+      // A bad argument is an answer, not a card: a proposal with an undefined
+      // amount would render as a blank the user might accept.
+      if (typeof args.amount !== "number" || !Number.isFinite(args.amount)) {
+        return { result: { error: "amount must be a number" } };
+      }
       // Returns the proposal and writes nothing. The tool result the model
       // sees says so too, so it does not go on to claim the record was saved.
       return {

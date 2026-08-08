@@ -40,6 +40,7 @@ import {
   stubSplitFriendChecker,
   stubSplitSpendingRepository,
 } from "./split-stubs";
+import { stubModelClient } from "./assistant-stubs";
 
 const PROJECT_ID = "life-os-test";
 const ISSUER = `https://securetoken.google.com/${PROJECT_ID}`;
@@ -653,6 +654,7 @@ function buildApp() {
     splitSettlementRepository: stubSettlementRepository,
     splitActivityRepository: stubSplitActivityRepository,
     splitSpendingRepository: stubSplitSpendingRepository,
+    modelClient: stubModelClient,
     ping: async () => {},
   });
   return { app, foodDictionaryRepository, mealRepository, dailyTargetRepository };

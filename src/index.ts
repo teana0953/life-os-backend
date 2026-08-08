@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { createApp } from "./adapters/http/app";
+import { GeminiModelClient } from "./contexts/assistant/adapters/gemini-model-client";
 import { DrizzleFinanceBudgetRepository } from "./contexts/finance/adapters/drizzle-finance-budget-repository";
 import { DrizzleFinanceCategoryRepository } from "./contexts/finance/adapters/drizzle-finance-category-repository";
 import { DrizzleFinanceTransactionRepository } from "./contexts/finance/adapters/drizzle-finance-transaction-repository";
@@ -165,6 +166,8 @@ export default {
       // (both read split_expense/split_share) — reuse the same instance
       // rather than constructing a second repository for one query.
       splitSpendingRepository: deps.splitExpenseRepository,
+      // Stateless: the caller's key arrives per request and is kept nowhere.
+      modelClient: new GeminiModelClient(),
       vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
       allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
       ping: async () => {

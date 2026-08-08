@@ -52,8 +52,14 @@ export interface ModelClient {
    * @param apiKey the caller's own key — used for this request and kept
    *   nowhere. It is a parameter rather than constructor state so that no
    *   instance can outlive the request that supplied it.
+   * @param system provider-neutral system instruction (Gemini has a dedicated
+   *   `systemInstruction` field; other providers have equivalents).
+   * @param rounds every completed tool round so far, oldest first. Grouped —
+   *   not a flat result list — because a provider must replay the model's own
+   *   `functionCall` turn before the matching `functionResponse` turn, and a
+   *   flat list loses which calls belonged together.
    */
-  turn(apiKey: string, messages: AssistantMessage[], tools: AssistantTool[], toolResults: ToolResult[]): Promise<ModelTurn>;
+  turn(apiKey: string, system: string, messages: AssistantMessage[], tools: AssistantTool[], rounds: ToolRound[]): Promise<ModelTurn>;
 }
 
 /** The answer to one `ToolCall`, fed back on the next turn. */
@@ -61,4 +67,10 @@ export interface ToolResult {
   id: string;
   name: string;
   result: unknown;
+}
+
+/** One completed round of tool use: what the model asked for, and every answer. */
+export interface ToolRound {
+  calls: ToolCall[];
+  results: ToolResult[];
 }

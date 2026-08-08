@@ -24,6 +24,7 @@ import {
   stubSplitFriendChecker,
   stubSplitSpendingRepository,
 } from "./split-stubs";
+import { stubModelClient } from "./assistant-stubs";
 
 // This suite only exercises /health and /api/me; the health-context routes have their own test file.
 function notImplemented(): never {
@@ -301,6 +302,7 @@ function buildApp(
     splitSettlementRepository: stubSettlementRepository,
     splitActivityRepository: stubSplitActivityRepository,
     splitSpendingRepository: stubSplitSpendingRepository,
+    modelClient: stubModelClient,
     ping: overrides.ping ?? (async () => {}),
     allowedWebOrigin: overrides.allowedWebOrigin,
   });
