@@ -1,7 +1,8 @@
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DrizzleExpenseGroupRepository } from "../../src/contexts/split/adapters/drizzle-expense-group-repository";
 import { DrizzleSettlementRepository } from "../../src/contexts/split/adapters/drizzle-settlement-repository";
-import { DrizzleSplitActivityRepository } from "../../src/contexts/split/adapters/drizzle-split-activity-repository";
+import { DrizzleSplitActivityRepository, visibleTo } from "../../src/contexts/split/adapters/drizzle-split-activity-repository";
 import { DrizzleSplitExpenseRepository } from "../../src/contexts/split/adapters/drizzle-split-expense-repository";
 import { createTestDb, insertUser, type TestDb } from "./harness";
 
@@ -168,6 +169,88 @@ describe("DrizzleSplitActivityRepository.listForUser visibility (real Postgres)"
     await settlements.delete(SP, C, NOW);
 
     await groups.archive(g2.id, NOW, D);
+  });
+
+  /// The two spellings of the visibility rule, run side by side over the same
+  /// world. The rewrite is a performance change, and the thing a performance
+  /// change must not do here is move the boundary: an entry carries somebody
+  /// else's amounts and descriptions, so a widened predicate is a leak, not a
+  /// wrong number.
+  ///
+  /// The old spelling is kept literally in this test — not imported — because
+  /// its whole purpose is to be the thing that no longer exists in `src`.
+  async function idsUnderOldPredicate(userId: string): Promise<string[]> {
+    const rows = await harness.db.execute<{ id: string }>(sql`
+      SELECT id FROM split_activity
+       WHERE (
+         case when group_id is null
+           then ${userId}::uuid = any(audience_user_ids)
+           else exists (
+             select 1 from expense_group_member m
+              where m.group_id = split_activity.group_id and m.user_id = ${userId}::uuid
+           )
+         end
+       )
+       ORDER BY created_at DESC, id DESC
+    `);
+    return rows.rows.map((row) => row.id).sort();
+  }
+
+  it("the sargable rewrite returns exactly what the CASE returned, for everyone", async () => {
+    // Every person in the world, plus one who is in none of it: the halves of
+    // an OR can widen as easily as narrow, and a non-participant seeing one
+    // extra row is the failure that matters most.
+    const OUTSIDER = "99999999-9999-9999-9999-999999999999";
+    await insertUser(harness.db, OUTSIDER, "out@example.com", "Out");
+
+    for (const userId of [A, B, C, D, OUTSIDER]) {
+      const now = (await activity.listForUser(userId, { limit: 1000 })).map((entry) => entry.id).sort();
+      expect(now, `visibility changed for ${userId}`).toEqual(await idsUnderOldPredicate(userId));
+    }
+    // The comparison is only worth something if it is comparing non-empty
+    // sets: two predicates that both return nothing agree perfectly.
+    expect((await activity.listForUser(A, { limit: 1000 })).length).toBeGreaterThan(4);
+  });
+
+  it("stays proportional to the caller's own entries, not to everyone else's", async () => {
+    // The shape of the original problem (issue #73): with the predicate as a
+    // `CASE`, the only plan was a backward walk of the created_at index
+    // filtering row by row, so the work scaled with what *other people* had
+    // written since the caller's newest entry. Two thousand unrelated rows
+    // is what makes the difference visible to the planner at all — at fixture
+    // size a sequential scan is genuinely cheapest and every spelling looks
+    // the same.
+    const OUTSIDER = "99999999-9999-9999-9999-999999999999";
+    await insertUser(harness.db, OUTSIDER, "out@example.com", "Out");
+    await harness.db.execute(sql`
+      INSERT INTO split_activity (type, actor_user_id, group_id, subject_id, audience_user_ids, created_at)
+      SELECT 'expense_created', ${OUTSIDER}::uuid, NULL, gen_random_uuid(), array[${OUTSIDER}::uuid],
+             now() + (g || ' seconds')::interval
+        FROM generate_series(1, 2000) AS g
+    `);
+    // Without stats the planner is working from defaults, and the plan it
+    // picks says nothing about the predicate.
+    await harness.db.execute(sql`ANALYZE split_activity`);
+
+    // The repository's own predicate, not a copy of it: a test holding its
+    // own spelling would keep passing after a revert to the unindexable one.
+    const plan = await harness.db.execute<{ "QUERY PLAN": string }>(sql`
+      EXPLAIN ANALYZE
+      SELECT id FROM split_activity
+       WHERE ${visibleTo(harness.db, A)}
+       ORDER BY created_at DESC, id DESC
+       LIMIT 20
+    `);
+    const text = plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
+    const removed = [...text.matchAll(/Rows Removed by Filter: (\d+)/g)].reduce(
+      (sum, match) => sum + Number(match[1]),
+      0,
+    );
+
+    // A's own visible entries number in the single digits. The old plan threw
+    // away all two thousand of the outsider's rows to find them; anything of
+    // that order means the predicate is still being applied row by row.
+    expect(removed, `plan discarded ${removed} rows:\n${text}`).toBeLessThan(200);
   });
 
   it("shows a group's members its expenses and settlements, and nothing from the other group", async () => {

@@ -1,0 +1,1 @@
+CREATE INDEX "split_activity_audience_idx" ON "split_activity" USING gin ("audience_user_ids") WHERE audience_user_ids is not null;
