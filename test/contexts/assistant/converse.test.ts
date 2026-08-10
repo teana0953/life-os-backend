@@ -152,6 +152,22 @@ describe("the tool loop", () => {
     expect(model.seenSystem[0]).toContain("health");
   });
 
+  it("tells the model to decline questions that are not about the caller's records", async () => {
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith());
+
+    // The prompt is the only lever here: with BYOK the provider runs the
+    // model, so nothing server-side can stop an off-topic answer. This guards
+    // the instruction's presence, not the model's obedience — it goes red if
+    // the out-of-scope rule is dropped from the prompt, and it cannot prove
+    // any given question is refused.
+    const system = model.seenSystem[0];
+    expect(system).toContain("out of scope");
+    expect(system).toContain("general knowledge");
+    expect(system).toContain("Decline");
+  });
+
   it("carries the provider's opaque per-call token into the round it replays", async () => {
     // The loop pushes `turn.toolCalls` into the round as-is, so the token
     // survives by object identity alone — nothing here says it must. A
