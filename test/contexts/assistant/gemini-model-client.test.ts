@@ -124,6 +124,93 @@ describe("mapping the neutral types to Gemini", () => {
   });
 });
 
+/**
+ * Gemini 3 attaches an opaque `thoughtSignature` to each `functionCall` part
+ * and rejects the replay of a call that comes back without its own —
+ * `400 INVALID_ARGUMENT`, verified against the live API. Dropping it does not
+ * degrade the assistant, it ends every tool loop on round two, so these guard
+ * the whole path: read off the right part, carried on the neutral type,
+ * handed back byte-for-byte.
+ */
+describe("the provider's opaque per-call token", () => {
+  const SIG_A = "sig-AAAA-first-call";
+  const SIG_B = "sig-BBBB-second-call";
+  const SIG_TEXT = "sig-TEXT-not-a-call";
+
+  const TWO_SIGNED_CALLS = {
+    candidates: [
+      {
+        content: {
+          parts: [
+            // A signed *text* part too: it is not a call, so its token must
+            // not end up on either call below.
+            { text: "checking. ", thoughtSignature: SIG_TEXT },
+            { functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } }, thoughtSignature: SIG_A },
+            { functionCall: { name: "list_categories", args: {} }, thoughtSignature: SIG_B },
+          ],
+        },
+      },
+    ],
+  };
+
+  it("comes off the same part as the call it belongs to — each call its own", async () => {
+    const { client } = clientCapturing(json(200, TWO_SIGNED_CALLS));
+
+    const turn = await client.turn(KEY, "sys", [{ role: "user", content: "q" }], [A_TOOL], []);
+
+    // Two *different* tokens, in a fixed order, so reusing one for both
+    // calls — or reading the text part's — cannot pass.
+    expect(turn.toolCalls).toEqual([
+      {
+        id: "get_monthly_summary#0",
+        name: "get_monthly_summary",
+        arguments: { month: "2026-08" },
+        providerToken: SIG_A,
+      },
+      { id: "list_categories#1", name: "list_categories", arguments: {}, providerToken: SIG_B },
+    ]);
+  });
+
+  it("goes back verbatim, on the replayed call's own part", async () => {
+    const { client, captured } = clientCapturing(json(200, TEXT_REPLY));
+
+    await client.turn(
+      KEY,
+      "sys",
+      [{ role: "user", content: "q" }],
+      [A_TOOL],
+      [
+        {
+          calls: [
+            { id: "a#0", name: "get_monthly_summary", arguments: { month: "2026-08" }, providerToken: SIG_A },
+            { id: "b#1", name: "list_categories", arguments: {}, providerToken: SIG_B },
+          ],
+          results: [
+            { id: "a#0", name: "get_monthly_summary", result: 42 },
+            { id: "b#1", name: "list_categories", result: ["food"] },
+          ],
+        },
+      ],
+    );
+
+    // Whole-shape equality, not "the body mentions SIG_A somewhere": the
+    // failure this guards against is the token landing on the wrong part.
+    const contents = captured().body.contents as unknown[];
+    expect(contents[1]).toEqual({
+      role: "model",
+      parts: [
+        { functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } }, thoughtSignature: SIG_A },
+        { functionCall: { name: "list_categories", args: {} }, thoughtSignature: SIG_B },
+      ],
+    });
+  });
+
+  // No test for "a call with no token sends no `thoughtSignature`": every way
+  // of writing that passes. The body is captured after `JSON.stringify`, which
+  // drops an `undefined` value, so omitting the key and assigning `undefined`
+  // are the same bytes — a guard here could not fail, which is worse than none.
+});
+
 async function failureFrom(client: GeminiModelClient): Promise<ModelFailure> {
   try {
     await client.turn(KEY, "sys", [{ role: "user", content: "q" }], [A_TOOL], []);
