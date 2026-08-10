@@ -22,6 +22,20 @@ import {
 const GEMINI_MODEL = "gemini-3.6-flash";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+/**
+ * What Gemini wants on a replayed `functionCall` that never carried a
+ * signature of its own. Not a placeholder we invented — the provider's own
+ * documented opt-out for exactly this case.
+ *
+ * It is needed because Gemini signs only the **first** `functionCall` part of
+ * a parallel-call turn; the rest arrive legitimately unsigned, and there is
+ * nothing for a client to echo back. Omitting the field instead is rejected.
+ * Both halves verified against the live API on 2026-08-10 with the identical
+ * body otherwise: field omitted → `400 INVALID_ARGUMENT "Function call is
+ * missing a thought_signature"`; this string → `200`.
+ */
+const NO_SIGNATURE = "skip_thought_signature_validator";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -110,13 +124,14 @@ export class GeminiModelClient implements ModelClient {
       // exactly why the port keeps rounds together instead of a flat list.
       contents.push({
         role: "model",
-        // The token goes back verbatim on its own call's part: Gemini rejects
-        // a replayed `functionCall` that arrives without one outright (400
-        // INVALID_ARGUMENT), so dropping it ends every tool loop on round two.
-        // `undefined` needs no special case — `JSON.stringify` omits the key.
+        // The token goes back verbatim on its own call's part, and a call
+        // that never had one goes back with [NO_SIGNATURE] — *not* with the
+        // field left off, which Gemini rejects (400 INVALID_ARGUMENT) and
+        // which would end every parallel-call tool loop on round two, since
+        // only the first call of such a turn is signed at all.
         parts: round.calls.map((call) => ({
           functionCall: { name: call.name, args: call.arguments },
-          thoughtSignature: call.providerToken,
+          thoughtSignature: call.providerToken ?? NO_SIGNATURE,
         })),
       });
       contents.push({

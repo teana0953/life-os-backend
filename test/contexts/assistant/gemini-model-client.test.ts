@@ -100,7 +100,18 @@ describe("mapping the neutral types to Gemini", () => {
       // A round replays as the model's own functionCall turn followed by the
       // matching functionResponse turn — Gemini rejects results that arrive
       // without the call that asked for them.
-      { role: "model", parts: [{ functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } } }] },
+      // This round's call carries no token, so it replays with the
+      // provider's documented opt-out rather than with the field missing —
+      // see the `NO_SIGNATURE` note in the adapter.
+      {
+        role: "model",
+        parts: [
+          {
+            functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } },
+            thoughtSignature: "skip_thought_signature_validator",
+          },
+        ],
+      },
       // A non-object result is wrapped: functionResponse.response must be an object.
       { role: "user", parts: [{ functionResponse: { name: "get_monthly_summary", response: { result: 42 } } }] },
     ]);
@@ -260,17 +271,24 @@ describe("the provider's opaque per-call token", () => {
       role: "model",
       parts: [
         { functionCall: { name: "get_monthly_summary", args: { month: "2026-09" } }, thoughtSignature: SIG_C },
-        // No token of its own, and it must not borrow a neighbour's.
-        { functionCall: { name: "list_categories", args: {} } },
+        // No token of its own: it must not borrow a neighbour's, and it must
+        // not go out bare either — Gemini rejects an unsigned replayed call
+        // (verified live), so it carries the provider's documented opt-out.
+        {
+          functionCall: { name: "list_categories", args: {} },
+          thoughtSignature: "skip_thought_signature_validator",
+        },
         { functionCall: { name: "get_monthly_summary", args: { month: "2026-10" } }, thoughtSignature: SIG_D },
       ],
     });
   });
 
-  // No test for "a call with no token sends no `thoughtSignature`": every way
-  // of writing that passes. The body is captured after `JSON.stringify`, which
-  // drops an `undefined` value, so omitting the key and assigning `undefined`
-  // are the same bytes — a guard here could not fail, which is worse than none.
+  // An earlier revision left this case unguarded on the grounds that omitting
+  // the key and assigning `undefined` are the same bytes after
+  // `JSON.stringify`, so no assertion could tell them apart. True, and beside
+  // the point: neither of those is the required behaviour. Gemini answers a
+  // replayed call with no `thoughtSignature` with 400, so the sentinel above
+  // is the third option, it is distinguishable, and it is asserted.
 });
 
 async function failureFrom(client: GeminiModelClient): Promise<ModelFailure> {
