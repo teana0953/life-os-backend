@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'GRAPHFLOW GATE (per request): decide whether THIS request runs through /graphflow, and state the decision plus a one-line reason before touching code. Do not reuse an earlier decision from this session. See the graphflow gate section in CLAUDE.md.'"
+          }
+        ]
+      }
+    ]
+  }
+}
