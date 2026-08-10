@@ -3,6 +3,20 @@
 Architecture conventions for this repo. Read before adding or modifying any
 backend code (human or AI agent).
 
+## AI development: graphflow gate (mandatory judgment)
+
+Before starting any AI-assisted development task in this repo, explicitly
+decide whether to run it through the graphflow workflow engine
+(`/graphflow`), and state the decision plus a one-line reason **before
+touching code**. Either outcome is acceptable; skipping the judgment is not.
+
+- **Use graphflow** for multi-stage work: feature development, non-trivial
+  bugfixes, refactors — anything that benefits from a design → implement →
+  review pipeline or spans multiple files/contexts.
+- **Skip graphflow** for small mechanical changes (typos, single-file
+  tweaks, doc edits, renames) — the workflow overhead outweighs the benefit
+  there.
+
 ## Architecture: Clean Architecture + DDD (hexagonal naming, context-first structure)
 
 ```
