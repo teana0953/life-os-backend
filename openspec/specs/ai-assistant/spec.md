@@ -123,6 +123,22 @@ into a month of records leaving the account.
 - **THEN** the assistant says it cannot see those, rather than reaching for
   them
 
+The assistant SHALL also stay off questions that are not about the caller's
+records at all — general knowledge, brands, news, recipes, medicine, code,
+chit-chat. It is a finance assistant on the caller's own key, not a general
+chatbot; answering "which McDonald's burger is the classic" spends the
+caller's quota on something the product never promised and invites trust in
+answers no tool here can check. The prompt is the only lever: with BYOK the
+provider runs the model, so this is an instruction the assistant carries, not
+a filter the server can enforce.
+
+#### Scenario: A question about the world
+
+- **WHEN** the caller asks something unrelated to their finance and split
+  records
+- **THEN** the assistant declines in one short sentence and says what it can
+  help with instead, rather than answering
+
 #### Scenario: A listing the model cannot widen
 
 - **WHEN** the model asks for more transactions than the server allows
