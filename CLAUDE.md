@@ -3,12 +3,32 @@
 Architecture conventions for this repo. Read before adding or modifying any
 backend code (human or AI agent).
 
-## AI development: graphflow gate (mandatory judgment)
+## AI development: graphflow gate (mandatory judgment, per request)
 
-Before starting any AI-assisted development task in this repo, explicitly
-decide whether to run it through the graphflow workflow engine
-(`/graphflow`), and state the decision plus a one-line reason **before
-touching code**. Either outcome is acceptable; skipping the judgment is not.
+The gate is evaluated **per user request, never per session**. Before
+starting any AI-assisted development task in this repo, explicitly decide
+whether to run it through the graphflow workflow engine (`/graphflow`), and
+state the decision plus a one-line reason **before touching code**. Either
+outcome is acceptable; skipping the judgment is not.
+
+**An earlier decision in this session does not carry over.** Re-judge from
+scratch — and restate the decision — every time one of these happens:
+
+- a new request arrives, however short the phrasing
+- the scope outgrows what the last judgment covered (more files, new
+  behaviour, a design question appears)
+- work resumes after review, or a commit is appended to an
+  already-reviewed branch/PR
+- the task type changes (doc tweak → feature, one-liner → refactor)
+
+Never reason like this:
+
+- "this session already decided to skip graphflow"
+- "same task continues, so the earlier decision stands"
+- "the user didn't ask for graphflow this time"
+
+User silence is not a decision to skip. Making the call and stating it is
+yours to do, once per request.
 
 - **Use graphflow** for multi-stage work: feature development, non-trivial
   bugfixes, refactors — anything that benefits from a design → implement →
