@@ -151,4 +151,38 @@ describe("the tool loop", () => {
     expect(model.seenSystem[0]).toContain("2026-08-08");
     expect(model.seenSystem[0]).toContain("health");
   });
+
+  it("carries the provider's opaque per-call token into the round it replays", async () => {
+    // The loop pushes `turn.toolCalls` into the round as-is, so the token
+    // survives by object identity alone — nothing here says it must. A
+    // refactor that rebuilds the calls (`.map(c => ({id, name, arguments}))`,
+    // the obvious tidy-up) drops it silently, and the adapter then replays a
+    // `functionCall` with no `thoughtSignature`: Gemini answers 400
+    // INVALID_ARGUMENT and every tool loop dies on its second round. That is
+    // the exact outage the adapter change exists to fix, reintroduced one
+    // layer up where the adapter's own tests cannot see it.
+    const model = new ScriptedModel((call) =>
+      call === 1
+        ? {
+            text: "",
+            toolCalls: [
+              {
+                id: "c",
+                name: "get_monthly_summary",
+                arguments: {},
+                providerToken: "opaque-token-from-the-provider",
+              },
+            ],
+          }
+        : { text: "done", toolCalls: [] },
+    );
+    const context = contextWith({
+      transactions: { getMonthlySummaryRaw: async () => ({ totals: [], byCategory: [] }) } as never,
+    });
+
+    await converse(model, "key", ASK, context);
+
+    // The second turn is the one that replays round 1.
+    expect(model.seenRounds[1][0].calls[0].providerToken).toBe("opaque-token-from-the-provider");
+  });
 });

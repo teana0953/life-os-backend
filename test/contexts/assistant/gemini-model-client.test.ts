@@ -222,14 +222,21 @@ describe("the provider's opaque per-call token", () => {
             { id: "b#1", name: "list_categories", result: ["food"] },
           ],
         },
+        // Round 2 mirrors the shape the *parse* side is hardened against —
+        // a repeated call name and a call with no token of its own. Without
+        // it, rebuilding the replayed parts from a name→token map, or from a
+        // compacted queue of the round's tokens, is green on the replay side
+        // while being the very mistake the parse side proves fatal.
         {
           calls: [
             { id: "c#2", name: "get_monthly_summary", arguments: { month: "2026-09" }, providerToken: SIG_C },
-            { id: "d#3", name: "list_categories", arguments: {}, providerToken: SIG_D },
+            { id: "d#3", name: "list_categories", arguments: {} },
+            { id: "e#4", name: "get_monthly_summary", arguments: { month: "2026-10" }, providerToken: SIG_D },
           ],
           results: [
             { id: "c#2", name: "get_monthly_summary", result: 50 },
             { id: "d#3", name: "list_categories", result: ["exercise"] },
+            { id: "e#4", name: "get_monthly_summary", result: 7 },
           ],
         },
       ],
@@ -253,7 +260,9 @@ describe("the provider's opaque per-call token", () => {
       role: "model",
       parts: [
         { functionCall: { name: "get_monthly_summary", args: { month: "2026-09" } }, thoughtSignature: SIG_C },
-        { functionCall: { name: "list_categories", args: {} }, thoughtSignature: SIG_D },
+        // No token of its own, and it must not borrow a neighbour's.
+        { functionCall: { name: "list_categories", args: {} } },
+        { functionCall: { name: "get_monthly_summary", args: { month: "2026-10" } }, thoughtSignature: SIG_D },
       ],
     });
   });
