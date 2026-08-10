@@ -23,6 +23,22 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+
+  /**
+   * An opaque token the provider attached to this call and requires back,
+   * verbatim, when the call is replayed on the next request. Never read or
+   * interpreted here — captured, carried, handed back.
+   *
+   * Gemini 3 calls it `thought_signature` and rejects a replayed
+   * `functionCall` that lacks one with `400 INVALID_ARGUMENT`, so a tool loop
+   * that drops it cannot get past its first round. Provider-neutral in name
+   * because the next adapter will have its own word for the same idea, and
+   * `undefined` when a provider issues none.
+   *
+   * Lives only inside one `converse` call: rounds are built and spent within
+   * a single request and never reach the client, so nothing has to store it.
+   */
+  providerToken?: string;
 }
 
 /** What a model turn produced: prose, tool calls, or both. */

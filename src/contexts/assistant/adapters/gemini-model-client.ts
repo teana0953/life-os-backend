@@ -11,9 +11,30 @@ import {
 /**
  * One model, not configurable: the free-tier workhorse. A second model — or a
  * second provider — is a new adapter, not a parameter.
+ *
+ * Was `gemini-2.5-flash` until Google closed it to new accounts —
+ * `404 NOT_FOUND "no longer available to new users"`, which meant every key
+ * created after that date could not use the assistant at all while existing
+ * keys kept working. Pinned to a version rather than the `gemini-flash-latest`
+ * alias: an alias moves the model under us and this adapter's whole contract
+ * (tool calling, the token below) is model-behaviour.
  */
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-3.6-flash";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+/**
+ * What Gemini wants on a replayed `functionCall` that never carried a
+ * signature of its own. Not a placeholder we invented — the provider's own
+ * documented opt-out for exactly this case.
+ *
+ * It is needed because Gemini signs only the **first** `functionCall` part of
+ * a parallel-call turn; the rest arrive legitimately unsigned, and there is
+ * nothing for a client to echo back. Omitting the field instead is rejected.
+ * Both halves verified against the live API on 2026-08-10 with the identical
+ * body otherwise: field omitted → `400 INVALID_ARGUMENT "Function call is
+ * missing a thought_signature"`; this string → `200`.
+ */
+const NO_SIGNATURE = "skip_thought_signature_validator";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -68,6 +89,8 @@ function classifyFailure(status: number, body: unknown): ModelFailure {
 interface GeminiPart {
   text?: string;
   functionCall?: { name?: unknown; args?: unknown };
+  /** Gemini 3's opaque per-part token — see `ToolCall.providerToken`. */
+  thoughtSignature?: unknown;
 }
 
 /**
@@ -101,7 +124,15 @@ export class GeminiModelClient implements ModelClient {
       // exactly why the port keeps rounds together instead of a flat list.
       contents.push({
         role: "model",
-        parts: round.calls.map((call) => ({ functionCall: { name: call.name, args: call.arguments } })),
+        // The token goes back verbatim on its own call's part, and a call
+        // that never had one goes back with [NO_SIGNATURE] — *not* with the
+        // field left off, which Gemini rejects (400 INVALID_ARGUMENT) and
+        // which would end every parallel-call tool loop on round two, since
+        // only the first call of such a turn is signed at all.
+        parts: round.calls.map((call) => ({
+          functionCall: { name: call.name, args: call.arguments },
+          thoughtSignature: call.providerToken ?? NO_SIGNATURE,
+        })),
       });
       contents.push({
         role: "user",
@@ -150,6 +181,10 @@ export class GeminiModelClient implements ModelClient {
           id: `${call.name}#${toolCalls.length}`,
           name: call.name,
           arguments: isRecord(call.args) ? call.args : {},
+          // The token rides on the same part as the call it belongs to, so it
+          // is read here and nowhere else — pairing them later, by name or by
+          // order, is exactly the mistake that loses it.
+          ...(typeof part.thoughtSignature === "string" ? { providerToken: part.thoughtSignature } : {}),
         });
       }
     }

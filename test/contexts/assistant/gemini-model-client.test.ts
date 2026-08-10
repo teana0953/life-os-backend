@@ -57,6 +57,16 @@ describe("where the key travels", () => {
     // fails the header assertion and the URL assertion at once.
     expect(captured().headers.get("x-goog-api-key")).toBe(KEY);
     expect(captured().url).not.toContain(KEY);
+    // The model name is a constant that defines the whole contract — tool
+    // calling and token signatures are model-specific behaviour. An
+    // accidental revert (e.g. merge conflict misresolution) would ship the
+    // old `gemini-2.5-flash`, which gives a 404 to new accounts. This guard
+    // catches that: the URL must include the model we built the adapter for.
+    // This is a change-detector, which is normally avoided, but here the
+    // constant IS the contract.
+    expect(captured().url).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent",
+    );
   });
 });
 
@@ -90,7 +100,18 @@ describe("mapping the neutral types to Gemini", () => {
       // A round replays as the model's own functionCall turn followed by the
       // matching functionResponse turn — Gemini rejects results that arrive
       // without the call that asked for them.
-      { role: "model", parts: [{ functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } } }] },
+      // This round's call carries no token, so it replays with the
+      // provider's documented opt-out rather than with the field missing —
+      // see the `NO_SIGNATURE` note in the adapter.
+      {
+        role: "model",
+        parts: [
+          {
+            functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } },
+            thoughtSignature: "skip_thought_signature_validator",
+          },
+        ],
+      },
       // A non-object result is wrapped: functionResponse.response must be an object.
       { role: "user", parts: [{ functionResponse: { name: "get_monthly_summary", response: { result: 42 } } }] },
     ]);
@@ -122,6 +143,152 @@ describe("mapping the neutral types to Gemini", () => {
       { id: "list_categories#1", name: "list_categories", arguments: {} },
     ]);
   });
+});
+
+/**
+ * Gemini 3 attaches an opaque `thoughtSignature` to each `functionCall` part
+ * and rejects the replay of a call that comes back without its own —
+ * `400 INVALID_ARGUMENT`, verified against the live API. Dropping it does not
+ * degrade the assistant, it ends every tool loop on round two, so these guard
+ * the whole path: read off the right part, carried on the neutral type,
+ * handed back byte-for-byte.
+ */
+describe("the provider's opaque per-call token", () => {
+  const SIG_A = "sig-AAAA-first-call";
+  const SIG_B = "sig-BBBB-second-call";
+  const SIG_C = "sig-CCCC-third-call";
+  const SIG_D = "sig-DDDD-fourth-call";
+  const SIG_TEXT = "sig-TEXT-not-a-call";
+
+  const TWO_SIGNED_CALLS = {
+    candidates: [
+      {
+        content: {
+          parts: [
+            // A signed *text* part too: it is not a call, so its token must
+            // not end up on either call below.
+            { text: "checking. ", thoughtSignature: SIG_TEXT },
+            { functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } }, thoughtSignature: SIG_A },
+            // A call with no signature in the middle: this kills the "by
+            // sequence index" mutation (M5) by shifting all indices after it.
+            // The same function name repeated with different arguments kills
+            // the "by call name" mutation (M4): both get_monthly_summary calls
+            // would map to the same signature if reading off a name→signature
+            // map instead of the part.
+            { functionCall: { name: "list_categories", args: {} } },
+            { functionCall: { name: "get_monthly_summary", args: { month: "2026-09" } }, thoughtSignature: SIG_B },
+          ],
+        },
+      },
+    ],
+  };
+
+  it("comes off the same part as the call it belongs to — each call its own", async () => {
+    const { client } = clientCapturing(json(200, TWO_SIGNED_CALLS));
+
+    const turn = await client.turn(KEY, "sys", [{ role: "user", content: "q" }], [A_TOOL], []);
+
+    // Three calls with mixed signatures: the middle one has none. Matching by
+    // name would give the second get_monthly_summary SIG_A instead of SIG_B
+    // (both map to the same key). Matching by sequence index would give the
+    // second call (list_categories) SIG_A — off by one (actually off by where
+    // the missing token is in the sequence). Only reading each signature off
+    // its own part passes.
+    expect(turn.toolCalls).toEqual([
+      {
+        id: "get_monthly_summary#0",
+        name: "get_monthly_summary",
+        arguments: { month: "2026-08" },
+        providerToken: SIG_A,
+      },
+      { id: "list_categories#1", name: "list_categories", arguments: {} },
+      {
+        id: "get_monthly_summary#2",
+        name: "get_monthly_summary",
+        arguments: { month: "2026-09" },
+        providerToken: SIG_B,
+      },
+    ]);
+  });
+
+  it("goes back verbatim, on the replayed call's own part — both rounds", async () => {
+    const { client, captured } = clientCapturing(json(200, TEXT_REPLY));
+
+    // Two rounds with distinct signatures: a three-turn tool loop needs the
+    // second round's tokens when it plays back, but a one-round test cannot
+    // catch a mutation that only assigns tokens to the first round.
+    await client.turn(
+      KEY,
+      "sys",
+      [{ role: "user", content: "q" }],
+      [A_TOOL],
+      [
+        {
+          calls: [
+            { id: "a#0", name: "get_monthly_summary", arguments: { month: "2026-08" }, providerToken: SIG_A },
+            { id: "b#1", name: "list_categories", arguments: {}, providerToken: SIG_B },
+          ],
+          results: [
+            { id: "a#0", name: "get_monthly_summary", result: 42 },
+            { id: "b#1", name: "list_categories", result: ["food"] },
+          ],
+        },
+        // Round 2 mirrors the shape the *parse* side is hardened against —
+        // a repeated call name and a call with no token of its own. Without
+        // it, rebuilding the replayed parts from a name→token map, or from a
+        // compacted queue of the round's tokens, is green on the replay side
+        // while being the very mistake the parse side proves fatal.
+        {
+          calls: [
+            { id: "c#2", name: "get_monthly_summary", arguments: { month: "2026-09" }, providerToken: SIG_C },
+            { id: "d#3", name: "list_categories", arguments: {} },
+            { id: "e#4", name: "get_monthly_summary", arguments: { month: "2026-10" }, providerToken: SIG_D },
+          ],
+          results: [
+            { id: "c#2", name: "get_monthly_summary", result: 50 },
+            { id: "d#3", name: "list_categories", result: ["exercise"] },
+            { id: "e#4", name: "get_monthly_summary", result: 7 },
+          ],
+        },
+      ],
+    );
+
+    // Whole-shape equality, not "the body mentions SIG_A somewhere": the
+    // failure this guards against is the token landing on the wrong part.
+    const contents = captured().body.contents as unknown[];
+    // First round's model turn: contains[1]
+    expect(contents[1]).toEqual({
+      role: "model",
+      parts: [
+        { functionCall: { name: "get_monthly_summary", args: { month: "2026-08" } }, thoughtSignature: SIG_A },
+        { functionCall: { name: "list_categories", args: {} }, thoughtSignature: SIG_B },
+      ],
+    });
+    // Second round's model turn: contents[3]
+    // Without this assertion, a mutation that only assigns tokens to round 1
+    // would still pass.
+    expect(contents[3]).toEqual({
+      role: "model",
+      parts: [
+        { functionCall: { name: "get_monthly_summary", args: { month: "2026-09" } }, thoughtSignature: SIG_C },
+        // No token of its own: it must not borrow a neighbour's, and it must
+        // not go out bare either — Gemini rejects an unsigned replayed call
+        // (verified live), so it carries the provider's documented opt-out.
+        {
+          functionCall: { name: "list_categories", args: {} },
+          thoughtSignature: "skip_thought_signature_validator",
+        },
+        { functionCall: { name: "get_monthly_summary", args: { month: "2026-10" } }, thoughtSignature: SIG_D },
+      ],
+    });
+  });
+
+  // An earlier revision left this case unguarded on the grounds that omitting
+  // the key and assigning `undefined` are the same bytes after
+  // `JSON.stringify`, so no assertion could tell them apart. True, and beside
+  // the point: neither of those is the required behaviour. Gemini answers a
+  // replayed call with no `thoughtSignature` with 400, so the sentinel above
+  // is the third option, it is distinguishable, and it is asserted.
 });
 
 async function failureFrom(client: GeminiModelClient): Promise<ModelFailure> {
@@ -187,6 +354,38 @@ describe("the three failures stay three", () => {
     expect(failure.reason).toBe("model_unavailable");
     expect(failure.message).not.toContain(KEY);
   });
+
+  it(
+    "a 400 INVALID_ARGUMENT without API_KEY_INVALID — e.g. missing thought_signature — "
+      + "is unknown, not mistaken for a key rejection",
+    async () => {
+      // A real example: missing thought_signature on a replayed tool call
+      const { client } = clientCapturing(
+        json(400, {
+          error: {
+            code: 400,
+            message: "Invalid request: Request contains an invalid argument.",
+            status: "INVALID_ARGUMENT",
+            details: [
+              {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                reason: "INVALID_REQUEST",
+                domain: "googleapis.com",
+              },
+            ],
+          },
+        }),
+      );
+
+      const failure = await failureFrom(client);
+
+      // The point of this test: must be `unknown`, not `key_rejected` — we
+      // misclassifying this as a key error would send the user to re-enter a
+      // valid key when the problem is our adapter not carrying tokens.
+      expect(failure.reason).toBe("unknown");
+      expect(failure.message).not.toContain(KEY);
+    },
+  );
 
   it("anything else — a 503 — is unknown, not misfiled into a caller-blaming bucket", async () => {
     const { client } = clientCapturing(json(503, { error: { code: 503, message: `overloaded while serving ${KEY}`, status: "UNAVAILABLE" } }));
