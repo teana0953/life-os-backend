@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { users } from "../../../shared/db/schema";
 import type { User } from "../domain/user";
+import type { UserDisplayNameRepository } from "../domain/user-display-name-repository";
 import type { GetOrCreateUserInput, UserRepository } from "../domain/user-repository";
 
 type UserRow = typeof users.$inferSelect;
@@ -27,7 +28,7 @@ function toDomain(row: UserRow): User {
  * the Neon client (which throws on a malformed DATABASE_URL) happens on first
  * use — inside the HTTP error boundary — instead of crashing the Worker.
  */
-export class DrizzleUserRepository implements UserRepository {
+export class DrizzleUserRepository implements UserRepository, UserDisplayNameRepository {
   constructor(private readonly getDb: () => Db) {}
 
   async getOrCreate(input: GetOrCreateUserInput): Promise<User> {
@@ -64,6 +65,16 @@ export class DrizzleUserRepository implements UserRepository {
   async updateTimezone(userId: string, timezone: string): Promise<void> {
     const db = this.getDb();
     await db.update(users).set({ timezone }).where(eq(users.id, userId));
+  }
+
+  async updateDisplayName(userId: string, displayName: string): Promise<User | null> {
+    const db = this.getDb();
+    const [row] = await db
+      .update(users)
+      .set({ displayName })
+      .where(eq(users.id, userId))
+      .returning();
+    return row ? toDomain(row) : null;
   }
 
   async getById(userId: string): Promise<User | null> {

@@ -133,6 +133,7 @@ export default {
       projectId: env.FIREBASE_PROJECT_ID,
       jwks,
       userRepository: deps.userRepository,
+      userDisplayNameRepository: deps.userRepository,
       foodDictionaryRepository: deps.foodDictionaryRepository,
       mealRepository: deps.mealRepository,
       dailyTargetRepository: deps.dailyTargetRepository,

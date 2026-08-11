@@ -25,6 +25,20 @@ The system SHALL expose `GET /api/me` as a protected route returning the authent
 - **WHEN** an authenticated client whose account has never been granted administrator sends `GET /api/me`
 - **THEN** the response's `is_admin` is false
 
+### Requirement: User-chosen display name
+
+The system SHALL let an authenticated user replace their persisted display name through `PATCH /api/me` with `{ display_name }`. The value SHALL be trimmed, non-empty, and at most 50 characters. The updated profile SHALL be returned and subsequent profile reads SHALL retain the chosen name rather than restoring the Firebase claim.
+
+#### Scenario: Display name is updated
+
+- **WHEN** an authenticated user sends `PATCH /api/me` with a valid display name
+- **THEN** the response and the next `GET /api/me` contain the trimmed new name
+
+#### Scenario: Invalid display name is rejected
+
+- **WHEN** the display name is blank or longer than 50 characters
+- **THEN** the request is rejected with 400 and the stored name is unchanged
+
 ### Requirement: Administrator flag
 
 A user record SHALL carry an administrator flag that defaults to false. The flag
@@ -43,4 +57,3 @@ the system SHALL NOT expose an endpoint that sets it.
 #### Scenario: Flag is readable by the authorization layer
 - **WHEN** an authenticated request reaches an admin-only endpoint
 - **THEN** the system resolves the caller's user record and reads its administrator flag to decide whether to proceed
-
