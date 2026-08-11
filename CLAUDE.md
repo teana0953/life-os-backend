@@ -3,16 +3,35 @@
 Architecture conventions for this repo. Read before adding or modifying any
 backend code (human or AI agent).
 
-## AI development: graphflow gate (mandatory judgment, per request)
+## AI development: graphflow is mandatory (flow choice is the per-request judgment)
 
-The gate is evaluated **per user request, never per session**. Before
-starting any AI-assisted development task in this repo, explicitly decide
-whether to run it through the graphflow workflow engine (`/graphflow`), and
-state the decision plus a one-line reason **before touching code**. Either
-outcome is acceptable; skipping the judgment is not.
+**Every AI-assisted development task in this repo runs through the graphflow
+workflow engine — `/graphflow:graphflow`, plugin version v0.2.1 or later.**
+Running the work by hand instead of through graphflow is not an option. The
+only per-request judgment left is **which flow**: `light` or `full`.
 
-**An earlier decision in this session does not carry over.** Re-judge from
-scratch — and restate the decision — every time one of these happens:
+```
+/graphflow:graphflow run <graph> --flow light   # small, low-risk
+/graphflow:graphflow run <graph> --flow full    # everything else
+```
+
+`--flow light` (added in v0.2.0) prunes the plan-approval gate and the
+secondary review legs; script verification, at least one code review, and the
+final ship gate stay in **both** flows. Light trims process overhead, never
+the quality floor.
+
+- **`--flow light`** — single file, low risk, no interface/UI change: typo
+  fixes, doc edits, renames, mechanical tweaks, one-line bugfixes.
+- **`--flow full`** — everything else: feature development, non-trivial
+  bugfixes, refactors, anything spanning multiple files/contexts, anything
+  touching a public interface or the UI.
+- **Unsure → ask the user.** Do not silently pick light to save time.
+
+State the chosen flow plus a one-line reason **before touching code**.
+
+**The flow judgment is per user request, never per session.** An earlier
+choice does not carry over. Re-judge from scratch — and restate it — every
+time one of these happens:
 
 - a new request arrives, however short the phrasing
 - the scope outgrows what the last judgment covered (more files, new
@@ -23,19 +42,18 @@ scratch — and restate the decision — every time one of these happens:
 
 Never reason like this:
 
-- "this session already decided to skip graphflow"
-- "same task continues, so the earlier decision stands"
+- "this session already decided the flow"
+- "same task continues, so the earlier choice stands"
 - "the user didn't ask for graphflow this time"
+- "this one is too small for graphflow" — too small means `--flow light`,
+  not skipping the engine
 
-User silence is not a decision to skip. Making the call and stating it is
+User silence is not permission to skip. Making the call and stating it is
 yours to do, once per request.
 
-- **Use graphflow** for multi-stage work: feature development, non-trivial
-  bugfixes, refactors — anything that benefits from a design → implement →
-  review pipeline or spans multiple files/contexts.
-- **Skip graphflow** for small mechanical changes (typos, single-file
-  tweaks, doc edits, renames) — the workflow overhead outweighs the benefit
-  there.
+Reference: <https://github.com/teana0953/graphflow>. If the installed plugin
+is older than v0.2.1, `--flow` is unavailable — update it (`/plugin update
+graphflow`) before starting.
 
 ## Architecture: Clean Architecture + DDD (hexagonal naming, context-first structure)
 

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'GRAPHFLOW GATE (per request): decide whether THIS request runs through /graphflow, and state the decision plus a one-line reason before touching code. Do not reuse an earlier decision from this session. See the graphflow gate section in CLAUDE.md.'"
+            "command": "echo 'GRAPHFLOW REQUIRED (per request): every AI-assisted dev task runs through /graphflow:graphflow (plugin v0.2.1 or later); running it by hand is not an option. Judge ONLY which flow: --flow light (single file, low risk, no interface/UI change) or --flow full (everything else); unsure means ask the user. State the flow plus a one-line reason before touching code. Do not reuse an earlier decision from this session. See the graphflow section in CLAUDE.md.'"
           }
         ]
       }
