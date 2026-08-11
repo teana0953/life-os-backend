@@ -13,6 +13,7 @@ import type { VitalsRepository } from "../../../src/contexts/health/domain/vital
 import type { ExerciseRepository } from "../../../src/contexts/health/domain/exercise-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
+import type { UserDisplayNameRepository } from "../../../src/contexts/user/domain/user-display-name-repository";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 import {
@@ -151,7 +152,7 @@ beforeAll(async () => {
   jwks = createLocalJWKSet(keySet);
 });
 
-class InMemoryUserRepository implements UserRepository {
+class InMemoryUserRepository implements UserRepository, UserDisplayNameRepository {
   private usersByFirebaseUid = new Map<string, User>();
   private nextId = 1;
 
@@ -183,6 +184,13 @@ class InMemoryUserRepository implements UserRepository {
     }
   }
 
+  async updateDisplayName(userId: string, displayName: string): Promise<User | null> {
+    const user = await this.getById(userId);
+    if (!user) return null;
+    user.displayName = displayName;
+    return user;
+  }
+
   async getById(userId: string): Promise<User | null> {
     for (const user of this.usersByFirebaseUid.values()) {
       if (user.id === userId) return user;
@@ -192,12 +200,25 @@ class InMemoryUserRepository implements UserRepository {
 }
 
 function buildApp(
-  overrides: { ping?: () => Promise<void>; userRepository?: UserRepository; allowedWebOrigin?: string } = {},
+  overrides: {
+    ping?: () => Promise<void>;
+    userRepository?: UserRepository & Partial<UserDisplayNameRepository>;
+    allowedWebOrigin?: string;
+  } = {},
 ) {
+  const userRepository = overrides.userRepository ?? new InMemoryUserRepository();
   return createApp({
     projectId: PROJECT_ID,
     jwks,
-    userRepository: overrides.userRepository ?? new InMemoryUserRepository(),
+    userRepository,
+    userDisplayNameRepository: {
+      updateDisplayName: async (userId, displayName) => {
+        if (!userRepository.updateDisplayName) {
+          throw new Error("display-name repository not configured");
+        }
+        return userRepository.updateDisplayName(userId, displayName);
+      },
+    },
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
@@ -475,5 +496,59 @@ describe("GET /api/me", () => {
     const body = await res.json();
     expect(body).toEqual({ error: "internal" });
     expect(JSON.stringify(body)).not.toContain("secret");
+  });
+});
+
+describe("PATCH /api/me", () => {
+  it("requires authentication", async () => {
+    const res = await buildApp().request("/api/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: "New name" }),
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("trims, persists, and returns the chosen display name", async () => {
+    const repo = new InMemoryUserRepository();
+    const app = buildApp({ userRepository: repo });
+    const token = await validToken();
+
+    const updated = await app.request("/api/me", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ display_name: "  小明  " }),
+    });
+    const reread = await app.request("/api/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(updated.status).toBe(200);
+    expect((await updated.json()) as { display_name: string }).toMatchObject({
+      display_name: "小明",
+    });
+    expect((await reread.json()) as { display_name: string }).toMatchObject({
+      display_name: "小明",
+    });
+  });
+
+  it.each(["   ", "x".repeat(51)])("rejects invalid display name %j", async (displayName) => {
+    const app = buildApp();
+    const token = await validToken();
+
+    const res = await app.request("/api/me", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ display_name: displayName }),
+    });
+
+    expect(res.status).toBe(400);
   });
 });

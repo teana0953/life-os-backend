@@ -36,6 +36,7 @@ import type { PushSubscriptionRepository } from "../../contexts/notifications/do
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
 import type { CareLogRepository } from "../../contexts/notifications/domain/care-log";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
+import type { UserDisplayNameRepository } from "../../contexts/user/domain/user-display-name-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
 import {
   createCreateSharedFoodItemHandler,
@@ -90,7 +91,7 @@ import {
   createUpdateMealItemHandler,
   createUpdateMealTimeHandler,
 } from "./routes/meals";
-import { createMeHandler } from "./routes/me";
+import { createMeHandler, createUpdateMeHandler } from "./routes/me";
 import {
   createGetVapidPublicKeyHandler,
   createSubscribeWebPushHandler,
@@ -182,6 +183,8 @@ export interface CreateAppOptions {
   projectId: string;
   jwks: JWTVerifyGetKey;
   userRepository: UserRepository;
+  /** Separate write capability; optional only for route-focused test apps that never call PATCH /api/me. */
+  userDisplayNameRepository?: UserDisplayNameRepository;
   foodDictionaryRepository: FoodDictionaryRepository;
   mealRepository: MealRepository;
   dailyTargetRepository: DailyTargetRepository;
@@ -271,7 +274,17 @@ export function createApp(options: CreateAppOptions) {
   app.get("/health", createHealthHandler({ ping: options.ping }));
 
   const authMiddleware = createAuthMiddleware({ projectId: options.projectId, jwks: options.jwks });
-  app.get("/api/me", authMiddleware, createMeHandler({ userRepository: options.userRepository }));
+  const meOptions = {
+    userRepository: options.userRepository,
+    userDisplayNameRepository:
+      options.userDisplayNameRepository ?? {
+        updateDisplayName: async () => {
+          throw new Error("display-name repository not configured");
+        },
+      },
+  };
+  app.get("/api/me", authMiddleware, createMeHandler(meOptions));
+  app.patch("/api/me", authMiddleware, createUpdateMeHandler(meOptions));
 
   const foodDictionaryOptions = { userRepository: options.userRepository, foodDictionaryRepository: options.foodDictionaryRepository };
   app.get("/api/food-items/favorites", authMiddleware, createListFavoriteFoodItemsHandler(foodDictionaryOptions));
