@@ -26,6 +26,11 @@ type ErrorChainDescription = {
 function redact(value: string): string {
   let result = value.replace(/postgres(?:ql)?:\/\/\S+/gi, "[redacted-connection-string]");
   result = result.replace(/params:.*/is, "[redacted-params]");
+  // Postgres formats unique/foreign-key violation detail as
+  // `Key (col)=(value) already exists.` — the column name is a useful
+  // identifier for the failure class, but the value is row data (e.g. a
+  // user's email or firebase_uid) and must not be logged.
+  result = result.replace(/(Key\s*\([^)]*\))=\([^)]*\)/gi, "$1=([redacted])");
   if (result.length > MAX_FIELD_LENGTH) {
     result = `${result.slice(0, MAX_FIELD_LENGTH)}…[truncated]`;
   }

@@ -78,6 +78,19 @@ describe("describeErrorChain", () => {
     expect(layer.detail).toContain("constraint violated");
   });
 
+  it("redacts the row value from a pg unique-violation detail while keeping the column name", () => {
+    const pgError = Object.assign(new Error("duplicate key value violates unique constraint"), {
+      detail: "Key (email)=(alice@example.com) already exists.",
+    });
+
+    const result = describeErrorChain(pgError);
+    const layer = result.layers[0];
+
+    expect(layer.detail).not.toContain("alice@example.com");
+    expect(layer.detail).toContain("Key (email)");
+    expect(layer.detail).toContain("already exists");
+  });
+
   it("does not throw when the cause getter itself throws", () => {
     const malicious = new Error("malicious");
     Object.defineProperty(malicious, "cause", {
