@@ -1,3 +1,4 @@
+import { describeErrorChain } from "../../../adapters/http/error-logging";
 import type { UserRepository } from "../../user/domain/user-repository";
 import type { CareDayInstanceManager } from "../domain/care-day-instance";
 
@@ -8,9 +9,15 @@ export interface CareReminderWorkflowParams {
   timezone: string;
 }
 
-/** Deterministic instance id: one instance per (user, local day) — W1 in design.md. */
-function instanceId(userId: string, localDate: string): string {
-  return `care-day:${userId}:${localDate}`;
+/**
+ * Deterministic instance id: one instance per (user, local day) — W1 in
+ * design.md. Cloudflare Workflows instance ids must match
+ * `^[a-zA-Z0-9_][a-zA-Z0-9-_]*$` (max 100 chars) — `:` is NOT allowed, so
+ * `_` separates the fields (both `userId` and `localDate` already contain
+ * `-`, so `_` keeps the field boundaries readable).
+ */
+export function careDayInstanceId(userId: string, localDate: string): string {
+  return `care-day_${userId}_${localDate}`;
 }
 
 /**
@@ -37,14 +44,21 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
   async ensureToday(userId: string, localDate: string): Promise<void> {
     try {
       const timezone = await this.resolveTimezone(userId);
-      await this.workflow.create({ id: instanceId(userId, localDate), params: { userId, localDate, timezone } });
-    } catch {
-      // Deterministic id collision = an instance already exists for today — the expected, silent outcome.
+      await this.workflow.create({
+        id: careDayInstanceId(userId, localDate),
+        params: { userId, localDate, timezone },
+      });
+    } catch (err) {
+      // Expected outcome includes a deterministic id collision (an instance
+      // already exists for today), but also any real Workflows API failure —
+      // there's no documented way to tell them apart from the error shape,
+      // so log everything rather than risk staying silent on a real failure.
+      console.error("ensureToday: workflow.create failed", describeErrorChain(err));
     }
   }
 
   async restartToday(userId: string, localDate: string): Promise<void> {
-    const id = instanceId(userId, localDate);
+    const id = careDayInstanceId(userId, localDate);
     try {
       const handle = await this.workflow.get(id);
       await handle.terminate();
@@ -54,14 +68,16 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
     try {
       const timezone = await this.resolveTimezone(userId);
       await this.workflow.create({ id, params: { userId, localDate, timezone } });
-    } catch {
+    } catch (err) {
       // Best-effort (key_decisions "即時生效機制"): a failure here costs at
       // most today's remaining latency — the daily cron and the chained
       // spawn from a still-running prior instance both self-correct. NOTE:
       // since terminate() above already ran, a real (non-collision) failure
       // here leaves NO instance running for the rest of today until the
       // next daily cron repair pass (see design.md's W1 section) — accepted
-      // as part of the same known 24h self-heal window.
+      // as part of the same known 24h self-heal window. Logged (not
+      // silenced) so that window is visible instead of invisible.
+      console.error("restartToday: workflow.create failed", describeErrorChain(err));
     }
   }
 }
