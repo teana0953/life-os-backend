@@ -3,6 +3,7 @@ import { sendTestPush } from "../../../contexts/notifications/application/send-t
 import { subscribeWebPush } from "../../../contexts/notifications/application/subscribe-web-push";
 import { unsubscribeWebPush } from "../../../contexts/notifications/application/unsubscribe-web-push";
 import type { CareDayInstanceManager } from "../../../contexts/notifications/domain/care-day-instance";
+import type { CareOccurrenceRepository } from "../../../contexts/notifications/domain/care-occurrence";
 import type { PushSender } from "../../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../../contexts/notifications/domain/push-subscription";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -17,6 +18,8 @@ export interface PushHandlerOptions {
   vapidPublicKey: string;
   /** Optional: a new subscription best-effort restarts today's instance so a `no_subscriptions` slot delivers within seconds (key_decisions "即時生效機制"). */
   careDayInstanceManager?: CareDayInstanceManager;
+  /** Optional, paired with `careDayInstanceManager`: does the actual expediting of a `no_subscriptions` slot — see `subscribeWebPush`. */
+  careOccurrenceRepository?: CareOccurrenceRepository;
 }
 
 /** Protected `GET /api/push/vapid-public-key`: the server's configured VAPID public key (empty string if unset). */
@@ -28,14 +31,18 @@ export function createGetVapidPublicKeyHandler(options: Pick<PushHandlerOptions,
 
 /** Protected `POST /api/push/subscribe`: register (or, on a repeat `endpoint`, replace) a Web Push subscription. */
 export function createSubscribeWebPushHandler(
-  options: Pick<PushHandlerOptions, "userRepository" | "pushSubscriptionRepository" | "careDayInstanceManager">,
+  options: Pick<PushHandlerOptions, "userRepository" | "pushSubscriptionRepository" | "careDayInstanceManager" | "careOccurrenceRepository">,
 ) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const body = await c.req.json<Record<string, unknown>>();
 
     const notify = options.careDayInstanceManager
-      ? { instanceManager: options.careDayInstanceManager, userRepository: options.userRepository }
+      ? {
+          instanceManager: options.careDayInstanceManager,
+          userRepository: options.userRepository,
+          careOccurrenceRepo: options.careOccurrenceRepository,
+        }
       : undefined;
     const subscription = await subscribeWebPush(
       options.pushSubscriptionRepository,

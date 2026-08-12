@@ -225,6 +225,14 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
   all(): CareOccurrence[] {
     return [...this.bySlot.values()];
   }
+
+  async expediteNoSubscriptionsRetry(userId: string, localDate: string): Promise<void> {
+    for (const occ of this.bySlot.values()) {
+      if (occ.userId === userId && occ.localDate === localDate && occ.lastSendOutcome === "no_subscriptions") {
+        occ.lastAttemptAt = new Date(0);
+      }
+    }
+  }
 }
 
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
@@ -391,8 +399,9 @@ describe("dispatchDueRounds", () => {
   // D12 revised for the Workflows architecture (design.md): no_subscriptions
   // now retries at RETRY_INTERVAL_MINUTES like failed/expired, not
   // "unconditionally due" every round — immediate delivery on subscribe is
-  // instead provided by subscribeWebPush's restartToday hook, outside this
-  // function's scope.
+  // instead provided by subscribeWebPush calling
+  // CareOccurrenceRepository.expediteNoSubscriptionsRetry (see the next
+  // test), not by restartToday alone.
   it("a no_subscriptions slot waits the retry floor before becoming due again", async () => {
     careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
 
@@ -408,6 +417,28 @@ describe("dispatchDueRounds", () => {
 
     // +10 minutes: the retry floor has elapsed.
     await dispatchDueRounds(new Date(FRIDAY_0900_TAIPEI.getTime() + 10 * 60_000), "user-1", TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(1);
+  });
+
+  // D12': expediteNoSubscriptionsRetry (called by subscribeWebPush, NOT by
+  // this function) is what actually delivers "near-instant after subscribe"
+  // — merely restarting the instance and re-running dispatchDueRounds against
+  // an unchanged occurrence row does NOT, since nextDueAt only reads
+  // lastAttemptAt/lastSendOutcome off that row.
+  it("expediteNoSubscriptionsRetry makes a no_subscriptions slot due immediately, well inside the retry floor", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, deps());
+    expect(pushSender.sentTo).toHaveLength(0);
+    expect(careOccurrenceRepo.all()[0].lastSendOutcome).toBe("no_subscriptions");
+
+    await addSubscription("user-1");
+    await careOccurrenceRepo.expediteNoSubscriptionsRetry("user-1", "2026-07-24");
+
+    // +1 minute: would still be inside the 10-minute retry floor if the
+    // occurrence row had not been expedited — proves the mutation, not mere
+    // elapsed time, is what makes this fire.
+    await dispatchDueRounds(new Date(FRIDAY_0900_TAIPEI.getTime() + 60_000), "user-1", TAIPEI, deps());
     expect(pushSender.sentTo).toHaveLength(1);
   });
 
@@ -504,6 +535,7 @@ describe("dispatchDueRounds", () => {
       upsertBySlot: careOccurrenceRepo.upsertBySlot.bind(careOccurrenceRepo),
       recordAttempt: careOccurrenceRepo.recordAttempt.bind(careOccurrenceRepo),
       listPastUnlogged: careOccurrenceRepo.listPastUnlogged.bind(careOccurrenceRepo),
+      expediteNoSubscriptionsRetry: careOccurrenceRepo.expediteNoSubscriptionsRetry.bind(careOccurrenceRepo),
       claimAttempt: async () => false,
     };
 

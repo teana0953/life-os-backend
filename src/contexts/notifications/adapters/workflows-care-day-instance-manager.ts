@@ -57,7 +57,11 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
     } catch {
       // Best-effort (key_decisions "即時生效機制"): a failure here costs at
       // most today's remaining latency — the daily cron and the chained
-      // spawn from a still-running prior instance both self-correct.
+      // spawn from a still-running prior instance both self-correct. NOTE:
+      // since terminate() above already ran, a real (non-collision) failure
+      // here leaves NO instance running for the rest of today until the
+      // next daily cron repair pass (see design.md's W1 section) — accepted
+      // as part of the same known 24h self-heal window.
     }
   }
 }

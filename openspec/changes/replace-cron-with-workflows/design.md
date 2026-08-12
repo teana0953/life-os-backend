@@ -64,6 +64,16 @@ broken chain (an instance crashed without reaching step 3, or was terminated)
 self-heals within 24h. First deploy has no chain yet — the PR/deploy checklist below
 covers bootstrapping it.
 
+`restartToday` (`WorkflowsCareDayInstanceManager`) is itself one specific way this can
+happen: it `terminate()`s the existing instance, then `create()`s a fresh one; the
+`create()` call is wrapped in a swallowing `catch` (deliberately — see its own doc
+comment), so a `terminate()` that succeeds followed by a `create()` that fails for a
+real reason (not the expected id-collision case) leaves the user with **no** running
+instance for the rest of today, silently, until the same 24h daily-Cron repair pass
+above picks it up. Accepted as part of the same known 24h self-heal window, not a new
+risk — called out explicitly here because `restartToday` is the one path that can
+itself create the gap it is meant to shrink.
+
 ## Key decisions
 
 ### D6'' — atomic dispatch claim (revises D6; supersedes this repo's own earlier D6' draft)
@@ -176,9 +186,16 @@ model) so a subscribe at `09:01` got the `09:00` reminder within the minute. A
 sleep-based instance cannot busy-loop for free: `no_subscriptions` now retries at the
 ordinary `RETRY_INTERVAL_MINUTES` floor, like a failed/expired round. The "subscribe at
 09:01, get the 09:00 reminder immediately" behavior is preserved by a **different**
-mechanism instead — `subscribeWebPush` now best-effort restarts today's instance,
-which re-derives due state (including this slot) on its very next wake, typically
-within seconds rather than a full retry interval.
+mechanism instead — `subscribeWebPush` now best-effort restarts today's instance AND
+calls `CareOccurrenceRepository.expediteNoSubscriptionsRetry(userId, localDate)`,
+which rewinds `last_attempt_at` (to the epoch) on every occurrence still stuck on
+`no_subscriptions` for that day. **Both halves are required**: restarting the instance
+alone re-runs `planNextWake`/`dispatchSlot` against the *same* occurrence rows and so
+recomputes the exact same `RETRY_INTERVAL_MINUTES`-out due time — it is
+`expediteNoSubscriptionsRetry` mutating those rows, not the restart itself, that makes
+the next wake see the slot as immediately due. This call is scoped to
+`subscribeWebPush` only (not the schedule/timezone-change restart paths), since only a
+fresh subscription can make a `no_subscriptions` slot's outcome stale.
 
 ### D7' — the daily Cron's job changes from "dispatch" to "repair"
 

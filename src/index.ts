@@ -189,6 +189,7 @@ export function getCached(env: Env) {
     pushSender: deps.pushSender,
     careItemRepository: deps.careItemRepository,
     careLogRepository: deps.careLogRepository,
+    careOccurrenceRepository: deps.careOccurrenceRepository,
     careDayInstanceManager: deps.careDayInstanceManager,
     financeCategoryRepository: deps.financeCategoryRepository,
     financeTransactionRepository: deps.financeTransactionRepository,

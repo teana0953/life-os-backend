@@ -81,4 +81,17 @@ export interface CareOccurrenceRepository {
    * re-scanning all history forever.
    */
   listPastUnlogged(careScheduleId: string, todayLocalDate: string): Promise<CareOccurrence[]>;
+  /**
+   * "A subscription may have just arrived" nudge (D12' in
+   * replace-cron-with-workflows/design.md): rewinds `lastAttemptAt` to the
+   * epoch for every `userId` occurrence on `localDate` whose
+   * `lastSendOutcome` is `"no_subscriptions"`, so `nextDueAt` treats each as
+   * immediately due instead of waiting out `RETRY_INTERVAL_MINUTES`.
+   * Restarting the Workflows instance alone does NOT achieve this — the
+   * instance's own next wake still recomputes `nextDueAt` from unchanged
+   * occurrence rows, so without this call the "near-instant delivery after
+   * subscribing" claim silently does not hold. Only `no_subscriptions` rows
+   * are touched — a genuine failed/expired round keeps its own retry cadence.
+   */
+  expediteNoSubscriptionsRetry(userId: string, localDate: string): Promise<void>;
 }

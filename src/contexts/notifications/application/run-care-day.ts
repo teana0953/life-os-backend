@@ -70,9 +70,13 @@ function nextDueAt(occurrence: CareOccurrence, schedule: CareSchedule): Date | n
     // tick made "unconditionally due" free (a subscribe at 09:01 got the
     // 09:00 reminder within the same minute for no extra cost). An instance
     // that only wakes on a schedule cannot do that without busy-looping —
-    // instead it re-wakes at the ordinary retry cadence, and
-    // `subscribeWebPush` separately restarts today's instance so a genuine
-    // subscribe is still near-instant (key_decisions "no_subscriptions 分岔").
+    // instead it re-wakes at the ordinary retry cadence. Near-instant
+    // delivery after a genuine subscribe is instead achieved by
+    // `subscribeWebPush` calling `CareOccurrenceRepository.
+    // expediteNoSubscriptionsRetry`, which rewinds THIS occurrence's
+    // `lastAttemptAt` before this function ever runs again — restarting the
+    // Workflows instance alone does not change what this branch returns,
+    // since it only re-reads unchanged occurrence rows.
     return new Date(occurrence.lastAttemptAt.getTime() + RETRY_INTERVAL_MINUTES * 60_000);
   }
 

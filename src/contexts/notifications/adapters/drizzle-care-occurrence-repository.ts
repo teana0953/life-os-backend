@@ -121,4 +121,18 @@ export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository
       );
     return rows.map((row) => toDomain(row.occurrence));
   }
+
+  async expediteNoSubscriptionsRetry(userId: string, localDate: string): Promise<void> {
+    const db = this.getDb();
+    await db
+      .update(careOccurrence)
+      .set({ lastAttemptAt: new Date(0) })
+      .where(
+        and(
+          eq(careOccurrence.userId, userId),
+          eq(careOccurrence.localDate, localDate),
+          eq(careOccurrence.lastSendOutcome, "no_subscriptions"),
+        ),
+      );
+  }
 }
