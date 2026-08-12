@@ -22,6 +22,7 @@ import { ensureCareDayInstances } from "./contexts/notifications/application/ens
 import { DrizzlePushSubscriptionRepository } from "./contexts/notifications/adapters/drizzle-push-subscription-repository";
 import { DrizzleCareItemRepository } from "./contexts/notifications/adapters/drizzle-care-item-repository";
 import { DrizzleCareLogRepository } from "./contexts/notifications/adapters/drizzle-care-log-repository";
+import { DrizzleCareDayInstancePointerStore } from "./contexts/notifications/adapters/drizzle-care-day-instance-pointer-store";
 import { DrizzleCareOccurrenceRepository } from "./contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import { CareReminderWorkflow } from "./contexts/notifications/adapters/care-reminder-workflow";
 import { WorkflowsCareDayInstanceManager, type CareReminderWorkflowParams } from "./contexts/notifications/adapters/workflows-care-day-instance-manager";
@@ -116,7 +117,7 @@ function buildDeps(env: Env) {
     careItemRepository: new DrizzleCareItemRepository(getDb),
     careLogRepository: new DrizzleCareLogRepository(getDb),
     careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
-    careDayInstanceManager: new WorkflowsCareDayInstanceManager(env.CARE_REMINDER_WORKFLOW, userRepository),
+    careDayInstanceManager: new WorkflowsCareDayInstanceManager(env.CARE_REMINDER_WORKFLOW, userRepository, new DrizzleCareDayInstancePointerStore(getDb)),
     financeCategoryRepository: new DrizzleFinanceCategoryRepository(getDb),
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),

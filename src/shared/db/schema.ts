@@ -607,6 +607,25 @@ export const careOccurrence = pgTable(
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
 );
 
+// care_day_instance_pointer: one row per user, recording which
+// `CareReminderWorkflow` instance id `restartToday` most recently created for
+// that user's `local_date` (fix/restart-instance-tracking — restartToday's
+// own bug, not W1's original design). Only the restartToday path ever writes
+// this table; `ensureToday`/spawn-tomorrow use the deterministic id and never
+// touch it, so this adds no per-day DB write to the cron/spawn paths. `PRIMARY
+// KEY (user_id)` doubles as the concurrency guard for restartToday's
+// CAS-based `setCurrentIfMatch` (INSERT ... ON CONFLICT (user_id) DO UPDATE
+// ... setWhere, in DrizzleCareDayInstancePointerStore) — see
+// workflows-care-day-instance-manager.ts for why the CAS is needed.
+export const careDayInstancePointer = pgTable("care_day_instance_pointer", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => users.id),
+  localDate: date("local_date").notNull(),
+  instanceId: text("instance_id").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // friendship: one row per pair of friends (add-friends/design.md). The pair is
 // normalized so `user_a_id < user_b_id` (compared as lowercase canonical UUID
 // strings, the only form where Postgres' uuid byte order and JS string order

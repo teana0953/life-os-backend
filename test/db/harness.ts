@@ -137,6 +137,9 @@ const TABLES = [
   // PGlite test; CASCADE also handles care_schedule -> care_item.
   "care_occurrence",
   "care_log",
+  // care_day_instance_pointer added for fix/restart-instance-tracking's
+  // setCurrentIfMatch CAS PGlite test.
+  "care_day_instance_pointer",
   "care_schedule",
   "care_item",
   "users",
