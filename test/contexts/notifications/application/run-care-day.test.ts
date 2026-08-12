@@ -788,6 +788,22 @@ describe("planNextWake (pure)", () => {
     expect(result).toEqual(new Date("2026-07-24T01:00:00Z")); // 09:00 Taipei
   });
 
+  it("still returns an immediate wake for a not-yet-materialized slot that's past due but still inside FIRST_FIRE_GRACE_MINUTES", () => {
+    // Reproduces the restartToday/subscribeWebPush shape: a fresh instance's
+    // very first plan-next-wake runs BEFORE any dispatch round has ever
+    // touched this slot, so "past due" here does not mean "already
+    // dispatched" — the slot must still get a wake or it silently never fires.
+    const now = new Date("2026-07-24T01:05:00Z"); // 09:05 Taipei — 5 min past a 09:00 slot, within the 10-min grace.
+    const result = planNextWake(now, TAIPEI, "2026-07-24", [{ schedule: slot({ id: "s1", timeOfDay: "09:00" }), occurrence: null, answered: false }]);
+    expect(result).toEqual(now); // wake immediately so dispatch-due-rounds still lands inside the grace window.
+  });
+
+  it("drops a not-yet-materialized slot once FIRST_FIRE_GRACE_MINUTES has fully closed", () => {
+    const now = new Date("2026-07-24T01:15:00Z"); // 09:15 Taipei — 15 min past a 09:00 slot, past the 10-min grace.
+    const result = planNextWake(now, TAIPEI, "2026-07-24", [{ schedule: slot({ id: "s1", timeOfDay: "09:00" }), occurrence: null, answered: false }]);
+    expect(result).toEqual(new Date("2026-07-24T16:00:00Z")); // only the midnight candidate remains — markMissed handles it tomorrow.
+  });
+
   it("takes the minimum across several slots and the local midnight boundary", () => {
     const now = new Date("2026-07-24T00:00:00Z"); // 08:00 Taipei
     const result = planNextWake(now, TAIPEI, "2026-07-24", [

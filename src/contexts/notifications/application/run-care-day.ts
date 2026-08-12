@@ -277,7 +277,9 @@ export interface SlotSnapshot {
  * reads the clock forward or reuses a stale computation, per D1'.
  */
 export function planNextWake(now: Date, timeZone: string, todayLocalDate: string, slots: SlotSnapshot[]): Date | null {
-  if (localParts(now, timeZone).date !== todayLocalDate) return null;
+  const nowParts = localParts(now, timeZone);
+  if (nowParts.date !== todayLocalDate) return null;
+  const nowMinute = localMinute(todayLocalDate, nowParts.hhmm);
 
   const candidates: number[] = [nextLocalMidnightInstant(now, timeZone).getTime()];
 
@@ -285,12 +287,22 @@ export function planNextWake(now: Date, timeZone: string, todayLocalDate: string
     if (answered) continue;
 
     if (!occurrence) {
+      // Mirrors dispatchSlot's own not-yet-materialized gate exactly (same
+      // candidateMinute/nowMinute/FIRST_FIRE_GRACE_MINUTES check) so the two
+      // can never disagree about whether this slot is still alive. A future
+      // first-fire needs a wake at its own instant; a past-due but
+      // still-within-grace first-fire ALSO needs a wake — this branch can run
+      // as an instance's very first plan-next-wake, before any dispatch round
+      // has ever touched this slot (restartToday/subscribeWebPush spin up a
+      // fresh instance mid-day), so "already past" does not imply "already
+      // dispatched" here. Wake immediately (`now`) so the next
+      // dispatch-due-rounds still lands inside the grace window; once the
+      // window has closed the slot is dead for today — markMissed picks it up
+      // tomorrow.
+      const candidateMinute = localMinute(todayLocalDate, schedule.timeOfDay);
+      if (candidateMinute < nowMinute - FIRST_FIRE_GRACE_MINUTES) continue; // grace window closed — dead for today.
       const slotInstantMs = utcInstantFor(todayLocalDate, schedule.timeOfDay, timeZone).getTime();
-      // A future first-fire needs a wake; one already past (and, since this
-      // runs right after a dispatch round, therefore past its
-      // FIRST_FIRE_GRACE_MINUTES window too) is dead for today — no wake to
-      // schedule for it; markMissed picks it up tomorrow.
-      if (slotInstantMs > now.getTime()) candidates.push(slotInstantMs);
+      candidates.push(Math.max(slotInstantMs, now.getTime()));
       continue;
     }
 
