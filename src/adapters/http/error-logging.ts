@@ -1,8 +1,20 @@
 // Fallback logging for the onError boundary in app.ts: when an error doesn't
 // match any of the known instanceof branches, we still want to know *why* it
 // happened (e.g. a Postgres error buried under a DrizzleQueryError wrapper),
-// without leaking secrets (connection strings, SQL params, row values) into
-// logs, and without ever throwing or looping while trying to log.
+// without ever throwing or looping while trying to log.
+//
+// redact() below covers three known-shape leaks: connection strings
+// (postgres://user:pass@host/db), drizzle's "params: ..." suffix appended to
+// query-error messages, and the value half of pg's constraint-violation
+// detail line ("Key (col)=(value) already exists." -> value redacted, column
+// name kept). It does NOT scrub row values that Postgres embeds directly in
+// an error *message* for other error classes (e.g. `invalid input syntax for
+// type uuid: "<value>"`, `numeric field overflow`) — those pass through
+// unredacted. This is a deliberate tradeoff, not an oversight: message text
+// also carries diagnostic content (table/column/type names) that looks the
+// same as row data to a generic filter, and stripping one strips the other.
+// Callers relying on this module to keep row values out of logs in the
+// general case are relying on something it does not do.
 
 const MAX_DEPTH = 8;
 const MAX_FIELD_LENGTH = 2000;
