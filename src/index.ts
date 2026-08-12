@@ -125,62 +125,89 @@ function buildDeps(env: Env) {
   };
 }
 
+/**
+ * Per-isolate cache for `deps`/`app`, keyed on the `env` object's identity.
+ * `fetch` and `scheduled` both go through `getCached` instead of calling
+ * `buildDeps`/`createApp` directly, so a warm isolate reuses one build across
+ * requests instead of reconstructing all 28 repositories and re-registering
+ * every route each time (see goal.md — CPU-time errors on Workers Free).
+ *
+ * Cache key is `env` by object identity (`===`), not a deep comparison. In
+ * this Workers runtime the same isolate is observed to be handed the same
+ * `env` object across requests, and a genuinely new `env` (a new isolate, or
+ * secret rotation) is a different object, so identity is enough to tell them
+ * apart. This is the one thing this cache has to get right: `buildDeps`
+ * captures `env` at construction time (`getDb` reads `env.DATABASE_URL`,
+ * `pushSender` reads the VAPID keys, `createApp` reads
+ * `env.FIREBASE_PROJECT_ID`), while a Hono handler's own `c.env` is always
+ * the `env` passed into *this* `fetch` call. A wrong cache hit would silently
+ * serve a request with a stale `env`'s secrets while Hono itself sees the
+ * current one.
+ */
+let cached: { env: Env; deps: ReturnType<typeof buildDeps>; app: ReturnType<typeof createApp> } | undefined;
+
+function getCached(env: Env) {
+  if (cached && cached.env === env) return cached;
+
+  const deps = buildDeps(env);
+  const app = createApp({
+    projectId: env.FIREBASE_PROJECT_ID,
+    jwks,
+    userRepository: deps.userRepository,
+    userDisplayNameRepository: deps.userRepository,
+    foodDictionaryRepository: deps.foodDictionaryRepository,
+    mealRepository: deps.mealRepository,
+    dailyTargetRepository: deps.dailyTargetRepository,
+    waterRepository: deps.waterRepository,
+    bowelRepository: deps.bowelRepository,
+    vitalsRepository: deps.vitalsRepository,
+    exerciseRepository: deps.exerciseRepository,
+    menstrualRepository: deps.menstrualRepository,
+    bodyProfileRepository: deps.bodyProfileRepository,
+    healthCalendarRepository: deps.healthCalendarRepository,
+    chaodaysClient: deps.chaodaysClient,
+    pushSubscriptionRepository: deps.pushSubscriptionRepository,
+    pushSender: deps.pushSender,
+    careItemRepository: deps.careItemRepository,
+    careLogRepository: deps.careLogRepository,
+    financeCategoryRepository: deps.financeCategoryRepository,
+    financeTransactionRepository: deps.financeTransactionRepository,
+    financeBudgetRepository: deps.financeBudgetRepository,
+    financeNetWorthRepository: deps.financeNetWorthRepository,
+    installmentPlanRepository: deps.installmentPlanRepository,
+    budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
+    friendshipRepository: deps.friendshipRepository,
+    friendInviteRepository: deps.friendInviteRepository,
+    expenseGroupRepository: deps.expenseGroupRepository,
+    splitExpenseRepository: deps.splitExpenseRepository,
+    splitBalanceRepository: deps.splitBalanceRepository,
+    splitFriendChecker: deps.splitFriendChecker,
+    splitSettlementRepository: deps.splitSettlementRepository,
+    splitActivityRepository: deps.splitActivityRepository,
+    // DrizzleSplitExpenseRepository also implements SplitSpendingRepository
+    // (both read split_expense/split_share) — reuse the same instance
+    // rather than constructing a second repository for one query.
+    splitSpendingRepository: deps.splitExpenseRepository,
+    // Stateless: the caller's key arrives per request and is kept nowhere.
+    modelClient: new GeminiModelClient(),
+    vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
+    allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
+    ping: async () => {
+      await deps.getDb().execute(sql`select 1`);
+    },
+  });
+
+  cached = { env, deps, app };
+  return cached;
+}
+
 export default {
   fetch(request, env, ctx) {
-    const deps = buildDeps(env);
-
-    const app = createApp({
-      projectId: env.FIREBASE_PROJECT_ID,
-      jwks,
-      userRepository: deps.userRepository,
-      userDisplayNameRepository: deps.userRepository,
-      foodDictionaryRepository: deps.foodDictionaryRepository,
-      mealRepository: deps.mealRepository,
-      dailyTargetRepository: deps.dailyTargetRepository,
-      waterRepository: deps.waterRepository,
-      bowelRepository: deps.bowelRepository,
-      vitalsRepository: deps.vitalsRepository,
-      exerciseRepository: deps.exerciseRepository,
-      menstrualRepository: deps.menstrualRepository,
-      bodyProfileRepository: deps.bodyProfileRepository,
-      healthCalendarRepository: deps.healthCalendarRepository,
-      chaodaysClient: deps.chaodaysClient,
-      pushSubscriptionRepository: deps.pushSubscriptionRepository,
-      pushSender: deps.pushSender,
-      careItemRepository: deps.careItemRepository,
-      careLogRepository: deps.careLogRepository,
-      financeCategoryRepository: deps.financeCategoryRepository,
-      financeTransactionRepository: deps.financeTransactionRepository,
-      financeBudgetRepository: deps.financeBudgetRepository,
-      financeNetWorthRepository: deps.financeNetWorthRepository,
-      installmentPlanRepository: deps.installmentPlanRepository,
-      budgetAlertNotifier: new PushBudgetAlertNotifier(deps.pushSubscriptionRepository, deps.pushSender),
-      friendshipRepository: deps.friendshipRepository,
-      friendInviteRepository: deps.friendInviteRepository,
-      expenseGroupRepository: deps.expenseGroupRepository,
-      splitExpenseRepository: deps.splitExpenseRepository,
-      splitBalanceRepository: deps.splitBalanceRepository,
-      splitFriendChecker: deps.splitFriendChecker,
-      splitSettlementRepository: deps.splitSettlementRepository,
-      splitActivityRepository: deps.splitActivityRepository,
-      // DrizzleSplitExpenseRepository also implements SplitSpendingRepository
-      // (both read split_expense/split_share) — reuse the same instance
-      // rather than constructing a second repository for one query.
-      splitSpendingRepository: deps.splitExpenseRepository,
-      // Stateless: the caller's key arrives per request and is kept nowhere.
-      modelClient: new GeminiModelClient(),
-      vapidPublicKey: env.VAPID_PUBLIC_KEY ?? "",
-      allowedWebOrigin: env.ALLOWED_WEB_ORIGIN,
-      ping: async () => {
-        await deps.getDb().execute(sql`select 1`);
-      },
-    });
-
-    return app.fetch(request, env, ctx);
+    return getCached(env).app.fetch(request, env, ctx);
   },
 
   scheduled(_event, env, ctx) {
-    const deps = buildDeps(env);
+    const deps = getCached(env).deps;
     ctx.waitUntil(
       runCareTick(new Date(), {
         careItemRepo: deps.careItemRepository,
