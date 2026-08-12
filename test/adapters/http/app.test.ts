@@ -1,6 +1,6 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
 import type { DailyTargetRepository } from "../../../src/contexts/health/domain/daily-target-repository";
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
@@ -496,6 +496,48 @@ describe("GET /api/me", () => {
     const body = await res.json();
     expect(body).toEqual({ error: "internal" });
     expect(JSON.stringify(body)).not.toContain("secret");
+  });
+
+  it("logs the innermost cause of a multi-layer error but still returns a clean 500", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pgError = Object.assign(new Error("duplicate key value"), {
+      code: "23505",
+      detail: "constraint violated, params: sensitive-uid-999",
+    });
+    const wrapped = new Error("DrizzleQueryError: insert into users failed, postgres://user:hunter2@host/db", {
+      cause: pgError,
+    });
+    const app = buildApp({
+      userRepository: {
+        async getOrCreate() {
+          throw wrapped;
+        },
+        async updateTimezone() {
+          throw new Error("not implemented in this test's fakes");
+        },
+        async getById() {
+          throw new Error("not implemented in this test's fakes");
+        },
+      },
+    });
+    const token = await validToken();
+
+    const res = await app.request("/api/me", { headers: { Authorization: `Bearer ${token}` } });
+    const bodyText = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(bodyText).toBe(JSON.stringify({ error: "internal" }));
+    expect(bodyText).not.toContain("hunter2");
+    expect(bodyText).not.toContain("sensitive-uid-999");
+    expect(bodyText).not.toContain("DrizzleQueryError");
+    expect(bodyText).not.toContain("duplicate key value");
+
+    const loggedText = consoleErrorSpy.mock.calls.map((call) => JSON.stringify(call)).join("\n");
+    expect(loggedText).toContain("23505");
+    expect(loggedText).not.toContain("hunter2");
+    expect(loggedText).not.toContain("sensitive-uid-999");
+
+    consoleErrorSpy.mockRestore();
   });
 });
 

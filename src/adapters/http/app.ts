@@ -38,6 +38,7 @@ import type { CareLogRepository } from "../../contexts/notifications/domain/care
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import type { UserDisplayNameRepository } from "../../contexts/user/domain/user-display-name-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
+import { logInternalError } from "./error-logging";
 import {
   createCreateSharedFoodItemHandler,
   createUpdateSharedFoodItemHandler,
@@ -267,7 +268,7 @@ export function createApp(options: CreateAppOptions) {
           return c.json({ error: "gemini_unavailable" }, 502);
       }
     }
-    console.error(err);
+    logInternalError(err);
     return c.json({ error: "internal" }, 500);
   });
 
