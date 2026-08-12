@@ -16,7 +16,7 @@ export interface PushHandlerOptions {
   pushSubscriptionRepository: PushSubscriptionRepository;
   pushSender: PushSender;
   vapidPublicKey: string;
-  /** Optional: a new subscription best-effort restarts today's instance so a `no_subscriptions` slot delivers within seconds (key_decisions "即時生效機制"). */
+  /** Optional: care/timezone/push-subscription changes best-effort restart today's instance (key_decisions "即時生效機制"). */
   careDayInstanceManager?: CareDayInstanceManager;
   /** Optional, paired with `careDayInstanceManager`: does the actual expediting of a `no_subscriptions` slot — see `subscribeWebPush`. */
   careOccurrenceRepository?: CareOccurrenceRepository;
