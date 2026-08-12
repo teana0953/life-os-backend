@@ -45,15 +45,59 @@ defines a plain port (`ensureToday`/`restartToday`); only
 `workflows-care-day-instance-manager.ts` and `care-reminder-workflow.ts` touch the
 actual Workflows binding/types, keeping the dependency rule intact (CLAUDE.md).
 
-**W1 — one instance per (user, local day).** Deterministic id
-`care-day:{userId}:{localDate}`. `CareReminderWorkflow.run`:
+**W1 — one instance per (user, local day), except transiently across a `restartToday`.**
+The **daily** path (the Cron's `ensureToday`, and the workflow's own `spawn-tomorrow`)
+still uses the deterministic id `care-day_{userId}_{localDate}`. The **restart** path
+(`restartToday` — see below) no longer does: it now creates under a fresh
+`care-day_{userId}_{localDate}_r{randomUUID}` id, so a user may transiently have more
+than one instance running for the same (user, local day). `CareReminderWorkflow.run`
+(now a thin wrapper around `care-reminder-loop.ts`'s `runCareReminderDay`, extracted so
+it can run under a test double that actually rejects what the real Workflows API
+rejects — see Testing below):
 
 1. `step.do("mark-missed")` — `markMissedForUserDay` (moved from every Cron tick to
    once per instance-day; same insert-if-absent semantics, unchanged frequency-per-slot
    since a slot only ever needs marking once).
-2. Loop: `step.do("plan-next-wake")` (`buildSlotSnapshots` + `planNextWake`) →
-   `step.sleepUntil` → `step.do("dispatch-due-rounds")` (`dispatchDueRounds`) — until
-   `planNextWake` returns `null` (today's local date has rolled past).
+2. Loop: `step.do("plan-next-wake")` (`buildSlotSnapshots` + `planNextWake`, returning
+   both the planned wake instant and the instant it was planned at) → if the wake is
+   still in the future, `step.sleep` for that **relative** duration; if it is already
+   due (`planNextWake` legitimately returns "now" for a slot inside
+   `FIRST_FIRE_GRACE_MINUTES`, or an overdue retry), skip sleeping and dispatch
+   immediately → `step.do("dispatch-due-rounds")` (`dispatchDueRounds`) — until the
+   local date `buildSlotSnapshots` re-derives from the live clock no longer matches
+   `params.localDate`, the day this instance was spawned to own, at which point the
+   step returns `null` and the loop exits. **This must compare against the instance's
+   own `params.localDate`, not against a value re-derived from the same clock read
+   `planNextWake` itself also uses inside the same step** — two computations of the
+   same `now`/`timeZone` can never disagree, so a same-step self-comparison is
+   structurally unreachable and the loop would never exit (an earlier revision of
+   this change had exactly that bug: `spawn-tomorrow` could never run). Mutation-
+   verified in both directions in `care-reminder-loop.test.ts`'s "BLOCKER" describe
+   block: forcing the exit check to always-false (never exits) hits the free-plan
+   step-budget ceiling instead of resolving; forcing it always-true (exits
+   immediately) fails the assertion that the day's own slot got dispatched before
+   the exit.
+
+   **No more `step.sleepUntil`.** The original design called `sleepUntil` with the
+   wake instant `planNextWake` computed; the real Workflows API rejects `sleepUntil`
+   for any instant that has become the past by the time the step actually executes,
+   which a due-now-and-inside-grace slot always is (Cloudflare error: `You can't sleep
+   until a time in the past, time-traveler`) — it crashed the instance outright,
+   killing every reminder still owed that day. Switching to a **relative** `step.sleep`
+   removes the failure mode at its root: a positive duration has no "already in the
+   past" to be rejected for.
+
+   **Busy-loop floor.** An immediately-due wake dispatches with no sleep at all, which
+   could in principle busy-loop against the free plan's 3,000-steps/day ceiling. The
+   loop tracks whether the **previous** round actually changed anything (a signature
+   over the relevant slots' `lastAttemptAt`/`lastSendOutcome`/answered state, compared
+   between consecutive `plan-next-wake` results) — not a raw count of consecutive
+   immediate wakes. Two different slots both inside their own grace window legitimately
+   produce two consecutive immediate wakes with real progress each time and must not be
+   delayed; only a genuinely stuck round (no state changed since the last plan) falls
+   back to a fixed 5-minute floor. Worst case with the floor engaged: ~288 rounds/day x
+   3 steps ≈ 900, comfortably under budget — a 1-minute floor would not be (1,440
+   rounds x 3 > 3,000).
 3. `step.do("spawn-tomorrow")` — creates tomorrow's instance by its deterministic id;
    an id collision (the daily cron's repair pass beat it there) is silently ignored.
 
@@ -64,15 +108,53 @@ broken chain (an instance crashed without reaching step 3, or was terminated)
 self-heals within 24h. First deploy has no chain yet — the PR/deploy checklist below
 covers bootstrapping it.
 
-`restartToday` (`WorkflowsCareDayInstanceManager`) is itself one specific way this can
-happen: it `terminate()`s the existing instance, then `create()`s a fresh one; the
-`create()` call is wrapped in a swallowing `catch` (deliberately — see its own doc
-comment), so a `terminate()` that succeeds followed by a `create()` that fails for a
-real reason (not the expected id-collision case) leaves the user with **no** running
-instance for the rest of today, silently, until the same 24h daily-Cron repair pass
-above picks it up. Accepted as part of the same known 24h self-heal window, not a new
-risk — called out explicitly here because `restartToday` is the one path that can
-itself create the gap it is meant to shrink.
+**Immediate-effect restarts create a NEW instance id, not the deterministic one.**
+`restartToday` (`WorkflowsCareDayInstanceManager`) best-effort `terminate()`s the
+existing deterministic-id instance, then `create()`s a fresh one under
+`care-day_{userId}_{localDate}_r{randomUUID}` — deliberately **not** the deterministic
+id. The real Workflows API rejects `create()` for any id used before, even one that
+was just `terminate()`d, for as long as it stays within its retention window — so the
+original terminate-then-create-same-id sequence's `create()` call failed on
+**every single restart**, not as an edge case: `restartToday` fires on every schedule
+edit, every timezone change, and every new push subscription, so this silently killed
+every reminder left in the day on every one of those actions. `randomUUID`, not
+`Date.now()`, because two restarts inside the same millisecond would collide with each
+other for the identical reason.
+
+**Consequence: a user can transiently have more than one `CareReminderWorkflow`
+instance running for the same (user, local day).** The old deterministic instance
+(if `terminate()` itself failed, e.g. it had already finished) or a
+previously-restarted suffixed instance has no id `restartToday` can find and terminate
+— there is no Workflows "list instances by prefix" API — so it may keep running
+alongside the new one. This is the tradeoff this design accepts in exchange for
+`restartToday` actually working at all:
+
+- **No risk of a duplicate send.** Every instance, old or new, dispatches through the
+  same `claimAttempt` leased claim (D6'' below) before ever calling the push sender —
+  that claim, not "only one instance exists," is what actually prevents a double
+  notification, and it is now the **only** thing preventing one. A loop-level test
+  (`test/contexts/notifications/adapters/care-reminder-loop.test.ts`, "two instances
+  racing the same user/day never double-send") runs two `runCareReminderDay`
+  executions concurrently over shared state and asserts a due slot is sent exactly
+  once; mutating `claimAttempt` to always win turns it red. `test/db/
+  care-occurrence-claim.test.ts`'s PGlite (a)/(b)/(c) cases separately prove the claim
+  primitive itself is atomic under a real concurrent DB — the loop-level test proves
+  the *loop* actually goes through that guarded path, which the DB-level test alone
+  cannot.
+- **Known, accepted limitation: a leftover instance keeps its own stale schedule of
+  wakes.** Each instance re-reads live DB state on every wake (D1' below) — including
+  the current schedule/timezone — so it never *acts on* stale data, only wakes up on a
+  stale *schedule*. Concretely: if a user changes their timezone again while an old
+  suffixed instance is still alive, that instance keeps waking against wall-clock times
+  in the *previous* timezone until it naturally winds down for the day (its own
+  `planNextWake` returning `null`) or the daily Cron's repair pass eventually leaves it
+  to run out. This affects only *when* a reminder might fire a little early/late in that
+  narrow window, never a duplicate send.
+- Failing at `create()` for a genuinely different reason (not the expected
+  already-used-id case, which no longer applies here since the id is always fresh) is
+  still swallowed and logged — same as before — costing at most today's remaining
+  latency; the daily Cron's repair pass and the chained spawn from a still-running
+  prior instance both self-correct within 24h.
 
 ## Key decisions
 
@@ -122,6 +204,18 @@ on a fresh row — exactly one wins; (b) a second claimant loses while the first
 lease has not expired; (c) a second claimant **wins** once the lease has expired — the
 entire reason the lease exists, not a CAS. Mutation-verified: reverting the lease
 condition to a plain `IS NULL` check turns (c) red.
+
+**This claim is now load-bearing for more than replay safety.** Since `restartToday`
+can leave more than one instance running concurrently for the same (user, local day)
+(see W1 above), `claimAttempt` is the **only** thing standing between that and a
+duplicate push notification — not "one instance per day" anymore. The PGlite tests
+above prove the claim primitive is atomic against a real concurrent Postgres; they do
+not exercise two actual workflow loops racing each other. A dedicated loop-level test
+does: `test/contexts/notifications/adapters/care-reminder-loop.test.ts`'s "two
+instances racing the same user/day never double-send" runs two `runCareReminderDay`
+executions concurrently over one shared set of in-memory repositories and asserts a
+due slot is sent exactly once. Mutation-verified: forcing `claimAttempt` to always
+return `true` turns it red.
 
 ### D1' — local→UTC conversion is for sleeping only, never for deciding "is it due" (extends D1)
 
@@ -236,6 +330,30 @@ the instance's own next wake" if it fails.
 - Every load-bearing guard (grace-vs-retry separation, claim-result gating, the DST gap
   branch, the leased-claim expiry) is mutation-verified: the fix reverted, the
   corresponding test(s) go red, the fix restored.
+- `test/contexts/notifications/adapters/care-reminder-loop.test.ts`: the extracted
+  wake/dispatch loop (`runCareReminderDay`) under a **strict** step double
+  (`strict-workflows-fakes.ts`'s `StrictWorkflowStep`) that actually rejects what the
+  real Workflows API rejects — a non-positive `sleep` duration, and a step-count
+  ceiling mirroring the free plan's 3,000 steps/day. Covers: a grace-window slot
+  dispatches without ever attempting an invalid sleep (the direct regression test for
+  the `sleepUntil`-on-a-past-instant crash); a not-yet-due slot sleeps a relative,
+  positive duration; a `null` plan result breaks the loop and spawns tomorrow without
+  dispatching; sustained no-progress rounds fall back to the 5-minute busy-loop floor
+  and stay within budget's shape; two genuinely-progressing immediate wakes in a row
+  (two different slots both inside grace) are NOT delayed by that floor; two concurrent
+  loop executions over shared state never double-send a slot (see D6'' above). Every
+  one of these is mutation-verified (the corresponding fix reverted turns its test red,
+  fix restored) — see the PR/commit for the exact mutations exercised.
+- `test/contexts/notifications/adapters/workflows-care-day-instance-manager.test.ts`:
+  under a strict binding double (`StrictWorkflowBinding`) that rejects `create()` for
+  any id used before (even a terminated one) and `get()` for an unknown id — mirroring
+  the real API limit whose absence let the original terminate-then-create-same-id bug
+  ship undetected. Covers: `restartToday` against an existing deterministic instance
+  terminates it and **successfully** creates a new instance under a different id (the
+  regression test for Bug B — the old code's `create()` failed every time under this
+  double, silently, exactly as it did against the real API); two consecutive restarts
+  produce two distinct ids; `ensureToday`'s existing collision-is-a-no-op semantics is
+  unchanged under the strict double.
 
 ## Deployment note
 

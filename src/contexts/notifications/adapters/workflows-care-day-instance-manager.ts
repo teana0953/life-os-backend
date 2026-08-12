@@ -58,25 +58,34 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
   }
 
   async restartToday(userId: string, localDate: string): Promise<void> {
-    const id = careDayInstanceId(userId, localDate);
+    const deterministicId = careDayInstanceId(userId, localDate);
     try {
-      const handle = await this.workflow.get(id);
+      const handle = await this.workflow.get(deterministicId);
       await handle.terminate();
     } catch {
       // No existing instance to terminate (or it already finished) — fine, create fresh below.
     }
     try {
+      // A fresh suffixed id, NOT the deterministic one above: Cloudflare
+      // rejects create() for any id used before, even a just-terminated one,
+      // while it is still within its retention window — so re-creating with
+      // `deterministicId` here would deterministically fail every single
+      // time (goal.md Bug B). The suffix is `crypto.randomUUID()`, not e.g.
+      // `Date.now()`, because two restarts in the same millisecond would
+      // otherwise collide with each other for the exact same reason. This
+      // does cost the "one instance per (user, local day)" id determinism on
+      // THIS path only — see design.md's W1 section for the accepted
+      // consequence (a restarted-away instance can't be found and terminated
+      // by a later restart; multiple instances may run concurrently for a
+      // while) and D6'' for why that no longer risks a duplicate send.
+      const id = `${deterministicId}_r${crypto.randomUUID()}`;
       const timezone = await this.resolveTimezone(userId);
       await this.workflow.create({ id, params: { userId, localDate, timezone } });
     } catch (err) {
-      // Best-effort (key_decisions "即時生效機制"): a failure here costs at
+      // Best-effort (design.md's "即時生效機制"): a failure here costs at
       // most today's remaining latency — the daily cron and the chained
-      // spawn from a still-running prior instance both self-correct. NOTE:
-      // since terminate() above already ran, a real (non-collision) failure
-      // here leaves NO instance running for the rest of today until the
-      // next daily cron repair pass (see design.md's W1 section) — accepted
-      // as part of the same known 24h self-heal window. Logged (not
-      // silenced) so that window is visible instead of invisible.
+      // spawn from a still-running prior instance both self-correct. Logged
+      // (not silenced) so a real failure here is still visible.
       console.error("restartToday: workflow.create failed", describeErrorChain(err));
     }
   }
