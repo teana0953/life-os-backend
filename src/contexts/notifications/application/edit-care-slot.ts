@@ -67,8 +67,8 @@ export async function editCareSlot(deps: EditCareSlotDeps, userId: string, input
       // NULL "preserved" — writing back `status: done` with no completion
       // time is the shape this whole branch exists to keep out of the data.
       // No current writer can produce such a row (answerCareSlot always
-      // stamps, run-care-tick only writes missed+null), so this guards
-      // legacy/imported rows.
+      // stamps, run-care-day's markMissed only writes missed+null), so this
+      // guards legacy/imported rows.
       doneTime = existing?.status === "done" && existing.doneTime ? existing.doneTime : new Date();
     }
   }

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { DrizzleCareOccurrenceRepository } from "../../../../src/contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import type { Db } from "../../../../src/shared/db/client";
@@ -175,6 +175,34 @@ function fakeDbForListPastUnlogged(rows: unknown[]): Db {
     }),
   } as unknown as Db;
 }
+
+/**
+ * `expediteNoSubscriptionsRetry` is the actual mechanism behind D12'
+ * "near-instant delivery after a fresh subscribe": it rewinds
+ * `lastAttemptAt` to the epoch, filtered to `userId` + `localDate` +
+ * `lastSendOutcome = "no_subscriptions"`. Losing any one of those three
+ * filter terms would either touch nothing (silent no-op — the reported
+ * gap) or, worse, touch every user's/every day's/a genuinely-failed
+ * occurrence's retry timing.
+ */
+describe("DrizzleCareOccurrenceRepository.expediteNoSubscriptionsRetry", () => {
+  it("rewinds last_attempt_at to the epoch, filtered to userId + localDate + no_subscriptions", async () => {
+    const saw: RecordAttemptCall = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForRecordAttempt(saw));
+
+    await repo.expediteNoSubscriptionsRetry("user-1", "2026-08-11");
+
+    expect(saw.table).toBe(careOccurrence);
+    expect(saw.values).toEqual({ lastAttemptAt: new Date(0) });
+    expect(saw.where).toEqual(
+      and(
+        eq(careOccurrence.userId, "user-1"),
+        eq(careOccurrence.localDate, "2026-08-11"),
+        eq(careOccurrence.lastSendOutcome, "no_subscriptions"),
+      ),
+    );
+  });
+});
 
 describe("DrizzleCareOccurrenceRepository.listPastUnlogged", () => {
   it("maps the joined { occurrence } rows back to CareOccurrence", async () => {

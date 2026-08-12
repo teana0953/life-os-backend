@@ -107,3 +107,101 @@ export function localMinute(date: string, hhmm: string): number {
   const [hour, minute] = hhmm.split(":").map(Number);
   return Math.floor((parseLocalDateUTC(date) + hour * 60 * 60 * 1000 + minute * 60 * 1000) / 60000);
 }
+
+/**
+ * `timeZone`'s UTC offset at `instantMs`, defined as
+ * `(local wall clock at instantMs, re-interpreted as if it were itself a UTC
+ * timestamp) - instantMs`. E.g. for `America/New_York` in EST (UTC-5) this is
+ * `-5h`: the local wall clock reads 5 hours *behind* the real UTC instant.
+ */
+function offsetMsAt(instantMs: number, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(instantMs));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const asUtcMs = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  return asUtcMs - instantMs;
+}
+
+/**
+ * The UTC instant at which `hhmm` on `localDate` occurs in `timeZone` — the
+ * one place in this file that does local→UTC conversion (D1' in
+ * replace-cron-with-workflows/design.md; every other function here compares
+ * local wall-clock values and never needs this). Used only to compute how
+ * long a Workflow instance should `sleepUntil`; deciding whether a slot is
+ * *due* always stays on local wall-clock comparison (`localMinute`/
+ * `localParts`), recomputed fresh on every wake — this function is not a
+ * substitute for that and must not be used to pre-derive "today's due times"
+ * once and cache them.
+ *
+ * Algorithm: sample `timeZone`'s offset a day before and a day after the
+ * target wall-clock value. Equal offsets (the common case) mean no DST
+ * transition nearby — one offset applies throughout, solved directly. When
+ * they differ, a transition falls within that day; binary-search it to
+ * minute resolution (matching `hhmm`'s own granularity — and needed because
+ * `Intl.DateTimeFormat`'s formatted parts are whole seconds, so comparing
+ * offsets at a non-minute-aligned instant is unreliable by up to 1ms), then
+ * classify:
+ * - **both** the before- and after-offset candidates land on the correct side
+ *   of the transition and round-trip back to `localDate`/`hhmm` → a
+ *   fall-back **overlap** (the wall-clock time occurs twice) → return the
+ *   **earlier** of the two (first occurrence).
+ * - **neither** does → a spring-forward **gap** (the wall-clock time never
+ *   occurs) → return the transition instant itself (the first legal instant
+ *   after the gap).
+ * - exactly one does → the ordinary case, despite the transition being
+ *   nearby in the sampling window.
+ */
+export function utcInstantFor(localDate: string, hhmm: string, timeZone: string): Date {
+  const [year, month, day] = localDate.split("-").map(Number);
+  const [hour, minute] = hhmm.split(":").map(Number);
+  // The wall-clock value, provisionally labeled as if it were itself a UTC
+  // timestamp — not a real instant yet, just a fixed point to offset from.
+  const targetWallMs = Date.UTC(year, month - 1, day, hour, minute);
+
+  const DAY_MS = MS_PER_DAY;
+  let lo = targetWallMs - DAY_MS;
+  let hi = targetWallMs + DAY_MS;
+  const offsetLo = offsetMsAt(lo, timeZone);
+  const offsetHi = offsetMsAt(hi, timeZone);
+
+  if (offsetLo === offsetHi) {
+    // No DST transition within a day of the target: one offset applies throughout.
+    return new Date(targetWallMs - offsetLo);
+  }
+
+  // A transition falls within the window (`offsetLo` applies at `lo`,
+  // `offsetHi` from the transition instant onward): binary-search that
+  // instant to minute resolution. `lo`/`hi` start minute-aligned
+  // (`targetWallMs` ± a whole day), and every `mid` is floored to a minute
+  // too, so the search stays minute-aligned throughout.
+  while (hi - lo > 60_000) {
+    const mid = lo + Math.floor((hi - lo) / 2 / 60_000) * 60_000;
+    if (offsetMsAt(mid, timeZone) === offsetLo) lo = mid;
+    else hi = mid;
+  }
+  const transitionMs = hi; // first instant observed with `offsetHi`.
+
+  const candidateEarly = targetWallMs - offsetLo;
+  const candidateLate = targetWallMs - offsetHi;
+  const validEarly = candidateEarly < transitionMs && offsetMsAt(candidateEarly, timeZone) === offsetLo;
+  const validLate = candidateLate >= transitionMs && offsetMsAt(candidateLate, timeZone) === offsetHi;
+
+  if (validEarly && validLate) return new Date(Math.min(candidateEarly, candidateLate)); // overlap: first occurrence.
+  if (validEarly) return new Date(candidateEarly);
+  if (validLate) return new Date(candidateLate);
+  return new Date(transitionMs); // gap: first legal instant after it.
+}
+
+/** The UTC instant of the next local midnight (00:00) in `timeZone`, strictly after `now`. */
+export function nextLocalMidnightInstant(now: Date, timeZone: string): Date {
+  const { date } = localParts(now, timeZone);
+  return utcInstantFor(nextLocalDate(date), "00:00", timeZone);
+}

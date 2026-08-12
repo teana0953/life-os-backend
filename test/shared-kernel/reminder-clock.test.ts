@@ -3,7 +3,9 @@ import {
   localMinute,
   localParts,
   nextLocalDate,
+  nextLocalMidnightInstant,
   previousLocalDate,
+  utcInstantFor,
   weekdayOf,
   weeksSince,
 } from "../../src/shared-kernel/reminder-clock";
@@ -88,5 +90,60 @@ describe("localMinute", () => {
 
   it("is the same instant for the same date+time", () => {
     expect(localMinute("2026-07-24", "09:00")).toBe(localMinute("2026-07-24", "09:00"));
+  });
+});
+
+describe("utcInstantFor", () => {
+  it("resolves an ordinary Asia/Taipei (UTC+8, no DST) time by simple offset subtraction", () => {
+    // 09:00 local - 8h -> 01:00Z.
+    expect(utcInstantFor("2026-07-24", "09:00", "Asia/Taipei")).toEqual(new Date("2026-07-24T01:00:00Z"));
+  });
+
+  it("round-trips with localParts for an ordinary America/New_York (UTC-4, DST) time", () => {
+    const instant = utcInstantFor("2026-07-24", "09:00", "America/New_York");
+    expect(instant).toEqual(new Date("2026-07-24T13:00:00Z"));
+    expect(localParts(instant, "America/New_York")).toEqual({ date: "2026-07-24", hhmm: "09:00", weekday: 5 });
+  });
+
+  // 2026-03-08 is the US spring-forward date: clocks jump from 02:00 EST
+  // straight to 03:00 EDT, so 02:30 never occurs (D1' in
+  // replace-cron-with-workflows/design.md — take the first legal instant
+  // after the gap, i.e. 03:00 EDT = 07:00Z).
+  it("spring-forward gap: a non-existent local time resolves to the first instant after the gap", () => {
+    const instant = utcInstantFor("2026-03-08", "02:30", "America/New_York");
+    expect(instant).toEqual(new Date("2026-03-08T07:00:00Z"));
+  });
+
+  it("spring-forward gap: an ordinary time on the same day, safely on either side of the transition, is unaffected", () => {
+    expect(utcInstantFor("2026-03-08", "01:00", "America/New_York")).toEqual(new Date("2026-03-08T06:00:00Z")); // still EST
+    expect(utcInstantFor("2026-03-08", "03:30", "America/New_York")).toEqual(new Date("2026-03-08T07:30:00Z")); // already EDT
+  });
+
+  // 2026-11-01 is the US fall-back date: clocks fall from 02:00 EDT back to
+  // 01:00 EST, so 01:30 occurs twice — once at 01:30 EDT (05:30Z) and once at
+  // 01:30 EST (06:30Z). Take the first occurrence (D1').
+  it("fall-back overlap: a doubled local time resolves to its first (earlier) occurrence", () => {
+    const instant = utcInstantFor("2026-11-01", "01:30", "America/New_York");
+    expect(instant).toEqual(new Date("2026-11-01T05:30:00Z"));
+  });
+
+  it("fall-back overlap: an ordinary time on the same day, safely on either side of the transition, is unaffected", () => {
+    expect(utcInstantFor("2026-11-01", "00:30", "America/New_York")).toEqual(new Date("2026-11-01T04:30:00Z")); // still EDT
+    expect(utcInstantFor("2026-11-01", "03:00", "America/New_York")).toEqual(new Date("2026-11-01T08:00:00Z")); // already EST
+  });
+});
+
+describe("nextLocalMidnightInstant", () => {
+  it("returns the UTC instant of the next local midnight in Asia/Taipei", () => {
+    // 2026-07-24 18:15 Taipei -> next local midnight is 2026-07-25 00:00 Taipei = 2026-07-24T16:00:00Z.
+    const result = nextLocalMidnightInstant(new Date("2026-07-24T10:15:00Z"), "Asia/Taipei");
+    expect(result).toEqual(new Date("2026-07-24T16:00:00Z"));
+  });
+
+  it("returns the UTC instant of the next local midnight across a DST transition", () => {
+    // 2026-03-08 10:00 EST (2026-03-08T15:00:00Z) -> next local midnight is
+    // 2026-03-09 00:00 EDT (offset already -4h by then) = 2026-03-09T04:00:00Z.
+    const result = nextLocalMidnightInstant(new Date("2026-03-08T15:00:00Z"), "America/New_York");
+    expect(result).toEqual(new Date("2026-03-09T04:00:00Z"));
   });
 });

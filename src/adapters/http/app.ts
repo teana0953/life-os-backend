@@ -35,6 +35,8 @@ import type { PushSender } from "../../contexts/notifications/domain/push-sender
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
 import type { CareLogRepository } from "../../contexts/notifications/domain/care-log";
+import type { CareDayInstanceManager } from "../../contexts/notifications/domain/care-day-instance";
+import type { CareOccurrenceRepository } from "../../contexts/notifications/domain/care-occurrence";
 import type { UserRepository } from "../../contexts/user/domain/user-repository";
 import type { UserDisplayNameRepository } from "../../contexts/user/domain/user-display-name-repository";
 import { createAuthMiddleware, type AuthVariables } from "./middleware/auth";
@@ -203,6 +205,10 @@ export interface CreateAppOptions {
   vapidPublicKey: string;
   careItemRepository: CareItemRepository;
   careLogRepository: CareLogRepository;
+  /** Optional: care/timezone/push-subscription changes best-effort restart today's instance (key_decisions "即時生效機制"). */
+  careDayInstanceManager?: CareDayInstanceManager;
+  /** Optional, paired with `careDayInstanceManager`: lets a fresh push subscription actually expedite a `no_subscriptions` slot (see `subscribeWebPush`). */
+  careOccurrenceRepository?: CareOccurrenceRepository;
   financeCategoryRepository: FinanceCategoryRepository;
   financeTransactionRepository: FinanceTransactionRepository;
   financeBudgetRepository: FinanceBudgetRepository;
@@ -428,13 +434,19 @@ export function createApp(options: CreateAppOptions) {
     pushSubscriptionRepository: options.pushSubscriptionRepository,
     pushSender: options.pushSender,
     vapidPublicKey: options.vapidPublicKey,
+    careDayInstanceManager: options.careDayInstanceManager,
+    careOccurrenceRepository: options.careOccurrenceRepository,
   };
   app.get("/api/push/vapid-public-key", authMiddleware, createGetVapidPublicKeyHandler(pushOptions));
   app.post("/api/push/subscribe", authMiddleware, createSubscribeWebPushHandler(pushOptions));
   app.delete("/api/push/subscribe", authMiddleware, createUnsubscribeWebPushHandler(pushOptions));
   app.post("/api/push/test", authMiddleware, createTestPushHandler(pushOptions));
 
-  app.put("/api/user/timezone", authMiddleware, createSetUserTimezoneHandler({ userRepository: options.userRepository }));
+  app.put(
+    "/api/user/timezone",
+    authMiddleware,
+    createSetUserTimezoneHandler({ userRepository: options.userRepository, careDayInstanceManager: options.careDayInstanceManager }),
+  );
 
   // The assistant (ai-assistant): reads finance and split records through the
   // same use cases as everything else, under the caller's identity, and its
@@ -456,6 +468,7 @@ export function createApp(options: CreateAppOptions) {
     userRepository: options.userRepository,
     careItemRepository: options.careItemRepository,
     careLogRepository: options.careLogRepository,
+    careDayInstanceManager: options.careDayInstanceManager,
   };
   app.post("/api/care/items", authMiddleware, createCreateCareItemHandler(careOptions));
   app.get("/api/care/items", authMiddleware, createListCareItemsHandler(careOptions));
