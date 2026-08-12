@@ -143,10 +143,13 @@ alongside the new one. This is the tradeoff this design accepts in exchange for
   cannot.
 - **Known, accepted limitation: a leftover instance keeps its own stale schedule of
   wakes.** Each instance re-reads live DB state on every wake (D1' below) — including
-  the current schedule/timezone — so it never *acts on* stale data, only wakes up on a
-  stale *schedule*. Concretely: if a user changes their timezone again while an old
-  suffixed instance is still alive, that instance keeps waking against wall-clock times
-  in the *previous* timezone until it naturally winds down for the day (its own
+  the current schedule — so it never *acts on* stale schedule data, only wakes up on a
+  stale *timing*. `timezone`, unlike the schedule, is fixed once in `params` when the
+  instance is spawned (`runCareReminderDay` destructures it once and never re-queries
+  it in the loop) and is never updated from later DB changes for the lifetime of that
+  instance. Concretely: if a user changes their timezone again while an old suffixed
+  instance is still alive, that instance keeps waking against wall-clock times in the
+  *previous* timezone until it naturally winds down for the day (its own
   `planNextWake` returning `null`) or the daily Cron's repair pass eventually leaves it
   to run out. This affects only *when* a reminder might fire a little early/late in that
   narrow window, never a duplicate send.

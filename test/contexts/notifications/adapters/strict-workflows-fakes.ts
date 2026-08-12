@@ -17,8 +17,9 @@ import type { CareReminderStep } from "../../../../src/contexts/notifications/ad
  * `sleepUntil` for a past instant the same way — this repo's fix eliminates
  * `sleepUntil` entirely in favor of relative `sleep`, so THIS is the shape
  * the same real constraint takes here: exercised by
- * care-reminder-loop.test.ts's "does not sleep when the wake instant is not
- * in the future" test, whose mutant is calling `sleep` with a `waitMs <= 0`).
+ * care-reminder-loop.test.ts's "restart-grace: a slot within
+ * FIRST_FIRE_GRACE_MINUTES dispatches without any invalid (non-positive)
+ * sleep" test, whose mutant is calling `sleep` with a `waitMs <= 0`).
  */
 export class StrictWorkflowStep implements CareReminderStep {
   private clock: Date;
