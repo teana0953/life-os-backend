@@ -62,11 +62,16 @@ export class StrictWorkflowStep implements CareReminderStep {
  * Strict Workflows binding: `create()` rejects ANY id used before (even a
  * terminated one — Cloudflare Workflows instance ids are unique for their
  * whole retention window, not just while running); `get()` rejects an id
- * that was never created. Mirrors just the two calls
- * `WorkflowsCareDayInstanceManager` makes (`create`, `get(...).terminate()`).
+ * that was never created; `terminate()` rejects an id that is not currently
+ * running (real Workflows returns an error terminating an already-terminated
+ * or already-completed instance — modeled here so a fix that calls
+ * `terminate()` twice on the same instance can't pass by accident). Mirrors
+ * just the two calls `WorkflowsCareDayInstanceManager` makes (`create`,
+ * `get(...).terminate()`).
  */
 export class StrictWorkflowBinding {
   private readonly everCreated = new Set<string>();
+  private readonly running = new Set<string>();
   readonly createCalls: string[] = [];
 
   async create(opts: { id: string; params: unknown }): Promise<{ id: string }> {
@@ -75,6 +80,7 @@ export class StrictWorkflowBinding {
       throw new Error(`Workflows: instance id "${opts.id}" already exists (create() rejects reuse of any id created before, even a terminated one, within the retention window)`);
     }
     this.everCreated.add(opts.id);
+    this.running.add(opts.id);
     return { id: opts.id };
   }
 
@@ -84,8 +90,42 @@ export class StrictWorkflowBinding {
     }
     return {
       terminate: async () => {
+        if (!this.running.has(id)) {
+          throw new Error(`Workflows: instance "${id}" is not running (already terminated/completed)`);
+        }
         // Terminating does not free the id — `create()` above still rejects it.
+        this.running.delete(id);
       },
     };
+  }
+
+  /** Ids currently running — never created, or created then terminated, are excluded. */
+  runningIds(): string[] {
+    return [...this.running];
+  }
+}
+
+/**
+ * In-memory `CareDayInstancePointerStore` fake for tests that don't need
+ * PGlite: single-row-per-user map, same CAS contract as
+ * `DrizzleCareDayInstancePointerStore` — `setCurrentIfMatch` only advances
+ * the pointer when the stored `(localDate, instanceId)` still equals
+ * `expected`.
+ */
+export class InMemoryCareDayInstancePointerStore {
+  private readonly rows = new Map<string, { localDate: string; instanceId: string }>();
+
+  async getCurrent(userId: string, localDate: string): Promise<string | null> {
+    const row = this.rows.get(userId);
+    if (!row || row.localDate !== localDate) return null;
+    return row.instanceId;
+  }
+
+  async setCurrentIfMatch(userId: string, localDate: string, expected: string | null, newInstanceId: string): Promise<boolean> {
+    const row = this.rows.get(userId);
+    const current = row && row.localDate === localDate ? row.instanceId : null;
+    if (current !== expected) return false;
+    this.rows.set(userId, { localDate, instanceId: newInstanceId });
+    return true;
   }
 }

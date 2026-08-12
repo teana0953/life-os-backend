@@ -1,0 +1,56 @@
+version: 1
+name: fix-restart-instance-tracking
+budget: 900k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  plan:
+    kind: task
+    role: planner
+    tier: heavy
+    prompt: "規劃 {{ inputs.goal }},產出步驟與檔案清單。goal 要求評估多種修法並說明取捨——計畫裡要明講選了哪一種、為什麼、以及被放棄的那幾種各自的代價"
+    output_schema: plan
+
+  approve-plan:
+    kind: gate
+    after: [plan]
+    show: "{{ nodes.plan.output }}"
+    flow: full-only
+
+  implement:
+    kind: task
+    role: implementer
+    after: [approve-plan]
+    prompt: "依照這份已核可的實作計畫動手,逐步完成並自我驗證:{{ nodes.plan.output }}"
+
+  typecheck:
+    kind: script
+    after: [implement]
+    run: "npm run typecheck"
+
+  test:
+    kind: script
+    after: [implement]
+    run: "npx vitest run --no-file-parallelism"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [implement]
+
+  fix:
+    kind: task
+    role: fixer
+    after: [typecheck, test, code-review]
+    when: any-fail
+    goto: [typecheck, test, code-review]
+    max_iterations: 3
+
+  ship:
+    kind: gate
+    after: [typecheck, test, code-review]
+    when: all-pass
+    show: "{{ nodes.code-review.output }}"

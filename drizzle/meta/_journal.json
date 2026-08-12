@@ -239,6 +239,13 @@
       "when": 1786172928110,
       "tag": "0033_vitals-waist",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786528205180,
+      "tag": "0034_clean_red_ghost",
+      "breakpoints": true
     }
   ]
 }

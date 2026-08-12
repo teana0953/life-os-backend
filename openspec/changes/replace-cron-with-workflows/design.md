@@ -45,12 +45,105 @@ defines a plain port (`ensureToday`/`restartToday`); only
 `workflows-care-day-instance-manager.ts` and `care-reminder-workflow.ts` touch the
 actual Workflows binding/types, keeping the dependency rule intact (CLAUDE.md).
 
-**W1 — one instance per (user, local day), except transiently across a `restartToday`.**
-The **daily** path (the Cron's `ensureToday`, and the workflow's own `spawn-tomorrow`)
-still uses the deterministic id `care-day_{userId}_{localDate}`. The **restart** path
-(`restartToday` — see below) no longer does: it now creates under a fresh
-`care-day_{userId}_{localDate}_r{randomUUID}` id, so a user may transiently have more
-than one instance running for the same (user, local day). `CareReminderWorkflow.run`
+**W1 — one instance per (user, local day).** The **daily** path (the Cron's
+`ensureToday`, and the workflow's own `spawn-tomorrow`) uses the deterministic id
+`care-day_{userId}_{localDate}` and is found by construction — neither ever touches the
+pointer table below. The **restart** path (`restartToday` — see below) creates under a
+fresh `care-day_{userId}_{localDate}_r{randomUUID}` id instead (Cloudflare rejects
+`create()` for any id used before, even a just-terminated one, so the deterministic id
+can only ever be created once per day). Restart's id therefore isn't derivable from
+`(userId, localDate)` — `fix/restart-instance-tracking`'s `care_day_instance_pointer`
+table (one row per user: `local_date`, `instance_id`) is what makes it findable again:
+`restartToday` reads it, creates a fresh instance FIRST, only then compare-and-swaps the
+pointer to that freshly created id (`DrizzleCareDayInstancePointerStore.setCurrentIfMatch`,
+a single `INSERT ... ON CONFLICT ... setWhere` — atomic in Postgres, not a read-then-write
+from application code), and only then terminates whatever the pointer named before. This
+restores the "one instance per (user, local day)" invariant as the steady state for
+every completed `restartToday` call — subject to residual risk (d) below, an interrupted
+call's own cleanup step failing to run at all —
+including across any number of consecutive restarts and across two `restartToday` calls
+landing at once — both when both calls read the identical pointer state (the CAS lets
+only one caller treat itself as "current"; the other terminates the instance it already
+created for itself rather than leaving it untracked) and when the calls are sequential
+rather than simultaneous, a second call reading and winning against the pointer value the
+first call's CAS just committed. The create-before-CAS ordering is what makes the
+sequential case sound: **the pointer can never name an id that has not been created yet**,
+so a call that reads a non-null pointer value is always reading something real, and
+terminating it is always terminating something real — never a no-op that lets a
+soon-to-exist duplicate survive unmatched.
+
+*(An earlier revision of this design accepted "a restarted-away instance can't be found
+and terminated by a later restart; multiple instances may run concurrently for a
+while" as a permanent tradeoff. Production evidence on 2026-08-12 — two `_r`-suffixed
+instances alive simultaneously for one user after two saves 35 seconds apart — showed
+that tradeoff firing on every one of `restartToday`'s three call sites, not as a rare
+edge case. A first attempt at `fix/restart-instance-tracking` wrote the pointer BEFORE
+`create()` and added a post-create "reconciliation" re-check to catch a later call
+superseding it in between — that attempt was proven unsound in review (a probe test
+forcing a further interleaving — the superseding call's own `terminate()` landing on an
+id that had not been created yet, followed by its CAS winning before the original call's
+own reconciliation check ran — still produced two live instances). **This design instead
+reorders create-before-CAS**, which removes the class of bug structurally rather than
+adding another check on top of the ordering that produced it.)*
+
+**Residual risks (deliberately accepted, not hidden):**
+- **(a) `setCurrentIfMatch` fails, or cannot be verified to have succeeded, after the
+  instance was already created.** An unverifiable CAS is always treated as a loss (never
+  assumed to have won) — see `restartToday`'s `wonRace` variable — so the call terminates
+  the instance it just created, for itself, rather than risk leaving an untracked live
+  instance. The cost of guessing wrong (the CAS actually DID land, silently) is that the
+  pointer briefly names a now-terminated id: for a short window NO instance is current
+  for that user/day. This self-heals at the next `restartToday` (which reads the dead id
+  back out, terminates it as a harmless no-op, and creates a fresh one) or within 24h via
+  the daily Cron's `ensureToday` repair pass regardless. A temporary coverage gap is the
+  deliberately chosen failure mode over a permanent orphan, which would never self-heal
+  (nothing ever again derives an orphaned id to look it up).
+- **(b) Two `restartToday` calls landing within the same instant, at the exact
+  `pointerStore.getCurrent` read, could in principle still both observe the pointer
+  mid-write** if Postgres's own MVCC snapshot isolation didn't serialize the two
+  `setCurrentIfMatch` statements — it does (a single `INSERT ... ON CONFLICT` is always
+  atomic per row in Postgres), so this is not actually a gap; it is listed here only to
+  record that the guarantee rests on that specific Postgres property, not on any
+  ordering promise this application code makes on its own.
+- **(c) `pointerStore.getCurrent` fails on a call where a pointer row for today already
+  exists.** `recorded` degrades to `null`. Unlike before this reordering, this is NOT a
+  complete no-op: `create()` still runs (a wasted create, since this call was never going
+  to have accurate information regardless), and the CAS below races a stale
+  `expected: null` against the real (non-null) stored value — which fails, since the
+  real adapter's `expected: null` condition is `local_date <> today`, false here. The
+  call falls into the ordinary "lost the race" branch and terminates only the instance it
+  just created for itself; the actually-current instance (whatever `recorded` would have
+  named, had the read succeeded) is never touched, because it was never read and so is
+  never named in a `terminate()` call at all — it simply keeps running, untouched, rather
+  than being wrongly targeted. Costs latency only.
+- **(d) The winner's request is interrupted after its CAS commits but before its
+  `terminate(recorded)` call finishes.** This repo has seen exactly this shape of
+  interruption before: PR #97, a Workers "Exceeded CPU Time Limits" cutting off an
+  in-flight request mid-execution. Under create-before-CAS, the pointer has, by
+  construction, already moved past `recorded` the instant the CAS commits — nothing
+  about the ordering fix makes `recorded`'s cleanup itself atomic with the swap. If the
+  request dies in that gap, `recorded` becomes a **permanent orphan**: no pointer value
+  will ever name it again, so no future `restartToday` call, and no daily-Cron
+  `ensureToday` repair pass (which only ever looks at the deterministic id and the
+  pointer's *current* value), will ever rediscover it to terminate it. This is exactly
+  the failure mode (a) above describes as "would never self-heal" and says this design
+  avoids — (a) avoids it for the *CAS-unverifiable* case by treating the call as a loser
+  before it ever wins, but that guard does nothing for a crash **after** a confirmed win.
+  Considered and rejected: moving `terminate(recorded)` before `create()` closes this
+  particular window but reopens a worse one — every CAS failure (e.g. a DB outage) would
+  then self-terminate `recorded` before attempting to create its replacement, so an
+  outage that fails every `restartToday` call for a user/day would leave that user/day
+  with **zero** running instances instead of today's "at least `recorded` is still
+  alive." Accepted as-is for now: an orphaned `recorded` instance is inert (it holds no
+  pointer, `claimAttempt` still prevents it from double-sending anything it does
+  dispatch) rather than harmful, and is bounded by the instance's own natural lifetime
+  (it exits its loop once the local date rolls over, same as any instance). Not yet
+  covered by an automated repair pass or an alert; a future change could have
+  `ensureToday`'s daily sweep also `terminate()` any instance whose id is neither the
+  deterministic one nor the current pointer value, closing this window without
+  reintroducing the DB-outage problem above.
+
+`CareReminderWorkflow.run`
 (now a thin wrapper around `care-reminder-loop.ts`'s `runCareReminderDay`, extracted so
 it can run under a test double that actually rejects what the real Workflows API
 rejects — see Testing below):
@@ -108,51 +201,94 @@ broken chain (an instance crashed without reaching step 3, or was terminated)
 self-heals within 24h. First deploy has no chain yet — the PR/deploy checklist below
 covers bootstrapping it.
 
-**Immediate-effect restarts create a NEW instance id, not the deterministic one.**
-`restartToday` (`WorkflowsCareDayInstanceManager`) best-effort `terminate()`s the
-existing deterministic-id instance, then `create()`s a fresh one under
-`care-day_{userId}_{localDate}_r{randomUUID}` — deliberately **not** the deterministic
-id. The real Workflows API rejects `create()` for any id used before, even one that
-was just `terminate()`d, for as long as it stays within its retention window — so the
-original terminate-then-create-same-id sequence's `create()` call failed on
-**every single restart**, not as an edge case: `restartToday` fires on every schedule
-edit, every timezone change, and every new push subscription, so this silently killed
-every reminder left in the day on every one of those actions. `randomUUID`, not
-`Date.now()`, because two restarts inside the same millisecond would collide with each
-other for the identical reason.
+**Immediate-effect restarts create a NEW instance id, not the deterministic one, but
+now find and terminate the PREVIOUS restart's instance too (fix/restart-instance-
+tracking).** `restartToday` (`WorkflowsCareDayInstanceManager`) reads
+`care_day_instance_pointer` for `(userId, localDate)`, `create()`s a fresh
+`care-day_{userId}_{localDate}_r{randomUUID}` instance FIRST, only then compare-and-swaps
+the pointer to that id, and only once that swap has won does it best-effort `terminate()`
+whatever the pointer named before (falling back to the deterministic id too, when it
+differs — e.g. on the day's first restart, cleaning up the instance the daily Cron's
+`ensureToday` created). The new id is deliberately **not** the deterministic one: the
+real Workflows API rejects `create()` for any id used before, even one that was just
+`terminate()`d, for as long as it stays within its retention window, so the original
+terminate-then-create-same-id sequence's `create()` call failed on **every single
+restart**, not as an edge case (PR #98). `randomUUID`, not `Date.now()`, because two
+restarts inside the same millisecond would collide with each other for the identical
+reason.
 
-**Consequence: a user can transiently have more than one `CareReminderWorkflow`
-instance running for the same (user, local day).** The old deterministic instance
-(if `terminate()` itself failed, e.g. it had already finished) or a
-previously-restarted suffixed instance has no id `restartToday` can find and terminate
-— there is no Workflows "list instances by prefix" API — so it may keep running
-alongside the new one. This is the tradeoff this design accepts in exchange for
-`restartToday` actually working at all:
+**Create-before-CAS, not CAS-before-create — this is the load-bearing ordering decision
+of this fix's second round.** A first attempt at this fix wrote the pointer BEFORE
+`create()`, then re-read the pointer after `create()` resolved as a "reconciliation"
+check, on the theory that a later call superseding it in between could be caught after
+the fact. Code review found that ordering unsound (see the retired analysis this section
+used to contain); a probe test forcing a further interleaving proved it: the superseding
+call's own `terminate()` on the not-yet-created id was a silent no-op, and the
+superseding call's CAS could still win before the original call's own reconciliation
+check ran — so BOTH instances survived. **Reordering to create-then-CAS removes the bug
+class instead of patching around the interleaving that exposed it**: because the pointer
+is only ever advanced to an id AFTER that id has already been successfully created, no
+caller can ever read a pointer value that names something not yet real. Every `terminate()`
+call this method makes — on `recorded` (something a CAS write, by construction, always
+wrote only after creating it) or on `newId` (which this call created moments earlier) —
+is therefore always a real termination, never a no-op racing a not-yet-finished
+`create()`. No post-CAS reconciliation step is needed, or exists, in this design.
 
-- **No risk of a duplicate send.** Every instance, old or new, dispatches through the
-  same `claimAttempt` leased claim (D6'' below) before ever calling the push sender —
-  that claim, not "only one instance exists," is what actually prevents a double
-  notification, and it is now the **only** thing preventing one. A loop-level test
-  (`test/contexts/notifications/adapters/care-reminder-loop.test.ts`, "two instances
-  racing the same user/day never double-send") runs two `runCareReminderDay`
-  executions concurrently over shared state and asserts a due slot is sent exactly
-  once; mutating `claimAttempt` to always win turns it red. `test/db/
-  care-occurrence-claim.test.ts`'s PGlite (a)/(b)/(c) cases separately prove the claim
-  primitive itself is atomic under a real concurrent DB — the loop-level test proves
-  the *loop* actually goes through that guarded path, which the DB-level test alone
-  cannot.
-- **Known, accepted limitation: a leftover instance keeps its own stale schedule of
-  wakes.** Each instance re-reads live DB state on every wake (D1' below) — including
-  the current schedule — so it never *acts on* stale schedule data, only wakes up on a
-  stale *timing*. `timezone`, unlike the schedule, is fixed once in `params` when the
-  instance is spawned (`runCareReminderDay` destructures it once and never re-queries
-  it in the loop) and is never updated from later DB changes for the lifetime of that
-  instance. Concretely: if a user changes their timezone again while an old suffixed
-  instance is still alive, that instance keeps waking against wall-clock times in the
-  *previous* timezone until it naturally winds down for the day (its own
-  `planNextWake` returning `null`) or the daily Cron's repair pass eventually leaves it
-  to run out. This affects only *when* a reminder might fire a little early/late in that
-  narrow window, never a duplicate send.
+**The tradeoff: every call now unconditionally `create()`s before it knows whether it
+will "win".** A call that loses the CAS (or can't tell — see `restartToday`'s `wonRace`
+variable, and residual risk (a) above) has already created an instance nobody will ever
+point at, and must terminate it itself. That is one wasted create+terminate pair per lost
+race — strictly worse than the previous design's "the loser skips `create()` entirely"
+for the *same-read* race, but the previous design did not actually cover the *sequential*
+race at all, so this trades a small, always-bounded cost for closing a real gap.
+
+**Concurrency, same-read race: `setCurrentIfMatch` is a compare-and-swap, not a
+read-then-write.** Two `restartToday` calls landing at once for the same user both read
+the identical pointer value, both `create()` their own new id, then both attempt to swap
+the pointer to it conditioned on the exact value they read. Postgres serializes the two
+`INSERT ... ON CONFLICT ... setWhere` statements, so only one swap can succeed; the
+winner terminates the old (`recorded`) instance, the loser terminates the instance it
+just created for itself (both terminations are always real — see above).
+`workflows-care-day-instance-manager.test.ts`'s "two concurrent restartToday calls ...
+leave exactly one instance running" forces this exact interleaving with a barrier on the
+pointer read (both calls must observe the *same* pre-write state before either writes)
+rather than relying on `Promise.all` happening to schedule that way; `test/db/
+care-day-instance-pointer.test.ts` separately proves the CAS primitive itself is atomic
+against a real concurrent PGlite Postgres, the same relation `test/db/
+care-occurrence-claim.test.ts` bears to `claimAttempt` below.
+
+**Concurrency, sequential race: the case the round-1 fix got wrong.** The CAS only
+guarantees `newId` was current at the instant `setCurrentIfMatch` committed; under
+create-before-CAS, that instant is also always AFTER `newId` was successfully created.
+A second `restartToday` can start any time after the first call's CAS commits,
+legitimately read the first call's pointer value as `recorded`, `create()` its own id,
+and win its own CAS against `expected: <first call's newId>` — and when it then
+terminates that id, the termination is real, because create-before-CAS guarantees it was
+already created before it could ever become a `recorded` value for anyone to read.
+Exactly one instance survives, and the first call itself has nothing left to do (it
+already returned once its own CAS resolved). `workflows-care-day-instance-manager.
+test.ts` covers this with two tests: "a restart whose own create() is slow loses its CAS
+to a later restart that finished first, and tears its own (unclaimed) instance back down"
+(the direct analogue of the original round-1 regression test, restated for the new
+ordering) and "a later restartToday's terminate() of a just-superseded id is a REAL
+termination (not a no-op), even when it races the superseded call's own cleanup" (forces
+a later call to terminate an id while the call that created it is still paused,
+mid-cleanup, proving the termination lands on a real instance rather than racing an
+unfinished `create()`). A third test, "invariant sweep: any number of concurrent
+restartToday calls ... leave at most one instance running", checks the same property —
+`runningIds().length <= 1` — across several unforced concurrent schedules rather than one
+hand-picked interleaving (mutation-verified: reverting to CAS-before-create, or
+defaulting `wonRace` to `true`, or skipping the loser's self-terminate, each turns at
+least one of these tests red).
+
+- **`claimAttempt` (D6'' below) remains the dispatch-side backstop regardless.** Even
+  though the pointer/CAS above restores "one instance per (user, local day)" as the
+  steady state, `claimAttempt` is not made redundant by it: the accepted residual risk
+  (a) above, a genuinely concurrent restart edge case, or any future change to this path
+  could all still transiently produce more than one live instance for a user/day, and
+  `claimAttempt` is what prevents any of those from ever producing a duplicate send —
+  not "only one instance exists," which this fix narrows the exposure to but does not
+  promise as an absolute guarantee at the Workflows-API level.
 - Failing at `create()` for a genuinely different reason (not the expected
   already-used-id case, which no longer applies here since the id is always fresh) is
   still swallowed and logged — same as before — costing at most today's remaining
@@ -208,12 +344,15 @@ lease has not expired; (c) a second claimant **wins** once the lease has expired
 entire reason the lease exists, not a CAS. Mutation-verified: reverting the lease
 condition to a plain `IS NULL` check turns (c) red.
 
-**This claim is now load-bearing for more than replay safety.** Since `restartToday`
-can leave more than one instance running concurrently for the same (user, local day)
-(see W1 above), `claimAttempt` is the **only** thing standing between that and a
-duplicate push notification — not "one instance per day" anymore. The PGlite tests
-above prove the claim primitive is atomic against a real concurrent Postgres; they do
-not exercise two actual workflow loops racing each other. A dedicated loop-level test
+**This claim remains load-bearing for more than replay safety, as defense in depth.**
+`fix/restart-instance-tracking` (see W1 above) restores "one instance per (user, local
+day)" as the steady state, including across concurrent `restartToday` calls — but its
+own accepted residual risk (a), or any future change to this path, could still
+transiently produce more than one live instance for a user/day, and `claimAttempt` is
+what prevents any of those from ever producing a duplicate push notification — not "one
+instance per day" alone. The PGlite tests above prove the claim primitive is atomic
+against a real concurrent Postgres; they do not exercise two actual workflow loops
+racing each other. A dedicated loop-level test
 does: `test/contexts/notifications/adapters/care-reminder-loop.test.ts`'s "two
 instances racing the same user/day never double-send" runs two `runCareReminderDay`
 executions concurrently over one shared set of in-memory repositories and asserts a
@@ -349,14 +488,50 @@ the instance's own next wake" if it fails.
   fix restored) — see the PR/commit for the exact mutations exercised.
 - `test/contexts/notifications/adapters/workflows-care-day-instance-manager.test.ts`:
   under a strict binding double (`StrictWorkflowBinding`) that rejects `create()` for
-  any id used before (even a terminated one) and `get()` for an unknown id — mirroring
-  the real API limit whose absence let the original terminate-then-create-same-id bug
-  ship undetected. Covers: `restartToday` against an existing deterministic instance
-  terminates it and **successfully** creates a new instance under a different id (the
-  regression test for Bug B — the old code's `create()` failed every time under this
-  double, silently, exactly as it did against the real API); two consecutive restarts
-  produce two distinct ids; `ensureToday`'s existing collision-is-a-no-op semantics is
-  unchanged under the strict double.
+  any id used before (even a terminated one), `get()` for an unknown id, and — since
+  fix/restart-instance-tracking — `terminate()` for an id that isn't currently running,
+  each mirroring a real API limit whose absence let a bug ship undetected (the last one
+  would otherwise hide a mutant that calls `terminate()` twice on the same instance).
+  Covers: `restartToday` against an existing deterministic instance terminates it and
+  **successfully** creates a new instance under a different id (the regression test for
+  Bug B — the old code's `create()` failed every time under this double, silently,
+  exactly as it did against the real API); `ensureToday`'s existing collision-is-a-no-op
+  semantics is unchanged under the strict double; **three consecutive `restartToday`
+  calls each terminate the PREVIOUS restart's instance, leaving `runningIds().length`
+  at exactly 1 after every one** (fix/restart-instance-tracking's own regression test —
+  mutation-verified: dropping the "terminate the recorded id" branch turns it red); a
+  stale (yesterday's) pointer is ignored rather than mistaken for today's; a
+  `pointerStore.getCurrent` failure degrades to "no recorded instance" without throwing,
+  and (2nd round) does not mistakenly terminate the actually-current instance either,
+  since it was never read; **`create()` runs BEFORE the pointer is ever written — a
+  `create()` failure leaves the pointer AND the previously-current instance completely
+  untouched** (2nd-round ordering regression test: seeds a real prior instance via a
+  normal restart, forces the next restart's `create()` to fail, and asserts both the
+  pointer and `runningIds()` are byte-for-byte unchanged — this is the test that would
+  catch a revert to the round-1, CAS-before-create ordering, since that ordering
+  terminates the old instance and moves the pointer BEFORE ever attempting `create()`);
+  a `pointerStore.setCurrentIfMatch` failure still runs `create()` (new ordering) but
+  immediately terminates the instance it just created, treating an unverifiable CAS as a
+  loss (mutation-verified: defaulting the "did the CAS win" flag to `true` instead of
+  `false` on that failure turns it red); **two concurrent `restartToday` calls, forced
+  via a barrier to read the identical pre-write pointer state, leave exactly one
+  instance running** — the same-read concurrency guard, checked as a count rather than
+  pinned to one interleaving (mutation-verified: degrading `setCurrentIfMatch` to an
+  unconditional write turns it red, and independently, dropping the real adapter's SQL
+  `setWhere` clause turns `test/db/care-day-instance-pointer.test.ts`'s matching PGlite
+  case red); for the *sequential* race the round-1 fix got wrong, three further tests —
+  **"a restart whose own create() is slow loses its CAS to a later restart that finished
+  first, and tears its own (unclaimed) instance back down"**, **"a later restartToday's
+  terminate() of a just-superseded id is a REAL termination (not a no-op), even when it
+  races the superseded call's own cleanup"** (this is the regression test for the exact
+  bug a code-review probe found in the round-1, CAS-before-create-then-reconcile design:
+  reverting to that ordering turns it red, since the analogous window there lets a
+  terminate() land on an id that has not been created yet — a silent no-op), and the
+  **"invariant sweep"** test, which runs several rounds of unforced concurrent
+  `restartToday` calls and checks `runningIds().length <= 1` as an invariant rather than
+  against one hand-picked schedule (mutation-verified together: reverting create-before-
+  CAS to CAS-before-create, defaulting `wonRace` to `true`, or dropping the loser's own
+  self-terminate each turn at least one of these three red).
 
 ## Deployment note
 
