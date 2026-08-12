@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { describeErrorChain } from "../../../adapters/http/error-logging";
 import { nextLocalDate } from "../../../shared-kernel/reminder-clock";
 import { type Env, getCached } from "../../../index";
 import {
@@ -8,7 +9,7 @@ import {
   planNextWake,
   type RunCareDayDeps,
 } from "../application/run-care-day";
-import type { CareReminderWorkflowParams } from "./workflows-care-day-instance-manager";
+import { careDayInstanceId, type CareReminderWorkflowParams } from "./workflows-care-day-instance-manager";
 
 /**
  * Driving adapter (Workflows entrypoint): a *thin* orchestrator only — every
@@ -60,11 +61,14 @@ export class CareReminderWorkflow extends WorkflowEntrypoint<Env, CareReminderWo
       const tomorrow = nextLocalDate(localDate);
       try {
         await this.env.CARE_REMINDER_WORKFLOW.create({
-          id: `care-day:${userId}:${tomorrow}`,
+          id: careDayInstanceId(userId, tomorrow),
           params: { userId, localDate: tomorrow, timezone },
         });
-      } catch {
-        // Deterministic id collision (e.g. the daily cron's repair pass already created it) — expected, silent.
+      } catch (err) {
+        // Expected outcome includes a deterministic id collision (e.g. the
+        // daily cron's repair pass already created it), but also any real
+        // Workflows API failure — log rather than risk staying silent.
+        console.error("spawn-tomorrow: workflow.create failed", describeErrorChain(err));
       }
     });
   }
