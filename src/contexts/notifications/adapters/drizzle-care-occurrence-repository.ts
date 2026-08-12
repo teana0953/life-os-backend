@@ -1,7 +1,7 @@
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, isNull, lt, lte, or } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { careLog, careOccurrence } from "../../../shared/db/schema";
-import type { CareOccurrence, CareOccurrenceRepository, CreateCareOccurrenceInput, RecordAttemptInput } from "../domain/care-occurrence";
+import type { ClaimAttemptInput, CareOccurrence, CareOccurrenceRepository, CreateCareOccurrenceInput, RecordAttemptInput } from "../domain/care-occurrence";
 
 type CareOccurrenceRow = typeof careOccurrence.$inferSelect;
 
@@ -63,6 +63,27 @@ export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository
       .where(and(eq(careOccurrence.careScheduleId, careScheduleId), eq(careOccurrence.localDate, localDate), eq(careOccurrence.timeOfDay, timeOfDay)))
       .limit(1);
     return row ? toDomain(row) : null;
+  }
+
+  /**
+   * Leased conditional claim (gate_decision #1 in
+   * replace-cron-with-workflows/design.md): wins iff `last_attempt_at` is
+   * `NULL` or older than `input.at - leaseMinutes`. The `UPDATE ... WHERE
+   * ... RETURNING` pattern used elsewhere in this repository doubles as the
+   * atomic test-and-set here — a concurrent/replayed caller racing this same
+   * row either matches the `WHERE` (and both writes serialize, one losing)
+   * or, once the first winner's write has landed, no longer matches it at
+   * all (the lease is now fresh) until it goes stale again.
+   */
+  async claimAttempt(id: string, input: ClaimAttemptInput): Promise<boolean> {
+    const db = this.getDb();
+    const leaseBoundary = new Date(input.at.getTime() - input.leaseMinutes * 60_000);
+    const updated = await db
+      .update(careOccurrence)
+      .set({ lastAttemptAt: input.at })
+      .where(and(eq(careOccurrence.id, id), or(isNull(careOccurrence.lastAttemptAt), lte(careOccurrence.lastAttemptAt, leaseBoundary))))
+      .returning({ id: careOccurrence.id });
+    return updated.length > 0;
   }
 
   async recordAttempt(id: string, input: RecordAttemptInput): Promise<void> {

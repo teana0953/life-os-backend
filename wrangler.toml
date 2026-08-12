@@ -8,7 +8,18 @@ compatibility_flags = ["nodejs_compat"]
 # and in a local, untracked `.dev.vars` file for `wrangler dev`.
 # See `.dev.vars.example` for the required keys.
 
-# Reminder scheduler tick (add-medication-reminders/design.md): every minute,
-# scans for due reminder occurrences and dispatches them via Web Push.
+# Daily repair net (D7 revised in replace-cron-with-workflows/design.md): the
+# per-minute dispatch tick is gone, replaced by one Cloudflare Workflows
+# instance per (user, local day) that sleeps until each reminder is due. This
+# cron no longer dispatches anything — it just ensures today's instance
+# exists for every user with an enabled schedule, self-healing a broken
+# spawn chain within 24h. "5 16 * * *" is ~00:05 Asia/Taipei.
 [triggers]
-crons = ["* * * * *"]
+crons = ["5 16 * * *"]
+
+# One Workflow instance per (user, local day) drives that user's reminders —
+# see CareReminderWorkflow / replace-cron-with-workflows/design.md (W1).
+[[workflows]]
+name = "care-reminder"
+binding = "CARE_REMINDER_WORKFLOW"
+class_name = "CareReminderWorkflow"

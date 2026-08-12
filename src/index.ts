@@ -18,11 +18,13 @@ import { DrizzleMealRepository } from "./contexts/health/adapters/drizzle-meal-r
 import { DrizzleMenstrualRepository } from "./contexts/health/adapters/drizzle-menstrual-repository";
 import { DrizzleVitalsRepository } from "./contexts/health/adapters/drizzle-vitals-repository";
 import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
-import { runCareTick } from "./contexts/notifications/application/run-care-tick";
+import { ensureCareDayInstances } from "./contexts/notifications/application/ensure-care-day-instances";
 import { DrizzlePushSubscriptionRepository } from "./contexts/notifications/adapters/drizzle-push-subscription-repository";
 import { DrizzleCareItemRepository } from "./contexts/notifications/adapters/drizzle-care-item-repository";
 import { DrizzleCareLogRepository } from "./contexts/notifications/adapters/drizzle-care-log-repository";
 import { DrizzleCareOccurrenceRepository } from "./contexts/notifications/adapters/drizzle-care-occurrence-repository";
+import { CareReminderWorkflow } from "./contexts/notifications/adapters/care-reminder-workflow";
+import { WorkflowsCareDayInstanceManager, type CareReminderWorkflowParams } from "./contexts/notifications/adapters/workflows-care-day-instance-manager";
 import { WebPushSender } from "./contexts/notifications/adapters/web-push-sender";
 import { DrizzleFriendInviteRepository } from "./contexts/social/adapters/drizzle-friend-invite-repository";
 import { DrizzleFriendshipRepository } from "./contexts/social/adapters/drizzle-friendship-repository";
@@ -45,7 +47,13 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  /** One Workflow instance per (user, local day) — see wrangler.toml's `[[workflows]]` and CareReminderWorkflow. */
+  CARE_REMINDER_WORKFLOW: Workflow<CareReminderWorkflowParams>;
 }
+
+// Re-exported so the Workflows binding in wrangler.toml (`class_name =
+// "CareReminderWorkflow"`) resolves against this Worker script's exports.
+export { CareReminderWorkflow };
 
 // Module-scope so the fetched JWKS is cached across requests within a worker instance.
 const jwks = createGoogleSecuretokenJwks();
@@ -89,10 +97,11 @@ function buildDeps(env: Env) {
     subject: env.VAPID_SUBJECT,
   });
   const chaodaysClient = new HttpChaodaysClient();
+  const userRepository = new DrizzleUserRepository(getDb);
 
   return {
     getDb,
-    userRepository: new DrizzleUserRepository(getDb),
+    userRepository,
     foodDictionaryRepository: new DrizzleFoodDictionaryRepository(getDb),
     mealRepository: new DrizzleMealRepository(getDb),
     dailyTargetRepository: new DrizzleDailyTargetRepository(getDb),
@@ -107,6 +116,7 @@ function buildDeps(env: Env) {
     careItemRepository: new DrizzleCareItemRepository(getDb),
     careLogRepository: new DrizzleCareLogRepository(getDb),
     careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
+    careDayInstanceManager: new WorkflowsCareDayInstanceManager(env.CARE_REMINDER_WORKFLOW, userRepository),
     financeCategoryRepository: new DrizzleFinanceCategoryRepository(getDb),
     financeTransactionRepository: new DrizzleFinanceTransactionRepository(getDb),
     financeBudgetRepository: new DrizzleFinanceBudgetRepository(getDb),
@@ -146,7 +156,16 @@ function buildDeps(env: Env) {
  */
 let cached: { env: Env; deps: ReturnType<typeof buildDeps>; app: ReturnType<typeof createApp> } | undefined;
 
-function getCached(env: Env) {
+/**
+ * Exported so `CareReminderWorkflow` (a separate module, to keep the
+ * Workflows entrypoint out of this composition root) can reuse the exact
+ * same cached deps `fetch`/`scheduled` use (R5 in
+ * replace-cron-with-workflows/design.md): the cache key is `env` by object
+ * identity, and a `WorkflowEntrypoint`'s `this.env` is not guaranteed to be
+ * the same object `fetch` sees — if it isn't, this just builds one extra
+ * `deps` (correct, only a missed cache hit), never a stale-secrets bug.
+ */
+export function getCached(env: Env) {
   if (cached && cached.env === env) return cached;
 
   const deps = buildDeps(env);
@@ -170,6 +189,7 @@ function getCached(env: Env) {
     pushSender: deps.pushSender,
     careItemRepository: deps.careItemRepository,
     careLogRepository: deps.careLogRepository,
+    careDayInstanceManager: deps.careDayInstanceManager,
     financeCategoryRepository: deps.financeCategoryRepository,
     financeTransactionRepository: deps.financeTransactionRepository,
     financeBudgetRepository: deps.financeBudgetRepository,
@@ -209,12 +229,9 @@ export default {
   scheduled(_event, env, ctx) {
     const deps = getCached(env).deps;
     ctx.waitUntil(
-      runCareTick(new Date(), {
+      ensureCareDayInstances(new Date(), {
         careItemRepo: deps.careItemRepository,
-        careLogRepo: deps.careLogRepository,
-        careOccurrenceRepo: deps.careOccurrenceRepository,
-        subscriptionRepo: deps.pushSubscriptionRepository,
-        pushSender: deps.pushSender,
+        instanceManager: deps.careDayInstanceManager,
       }),
     );
   },

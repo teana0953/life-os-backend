@@ -1,3 +1,4 @@
+import type { UserRepository } from "../../user/domain/user-repository";
 import type {
   CareCategory,
   CareItemRepository,
@@ -6,6 +7,20 @@ import type {
   CreateCareItemInput,
   UpdateCareItemPatch,
 } from "../domain/care-item";
+import type { CareDayInstanceManager } from "../domain/care-day-instance";
+import { restartCareDayBestEffort } from "./restart-care-day";
+
+/**
+ * Optional immediate-effect hook (key_decisions "即時生效機制" in
+ * replace-cron-with-workflows/design.md): when provided, a successful
+ * create/update/delete best-effort restarts the caller's today instance so
+ * the change is live within seconds. Optional so every existing caller
+ * (including every test in this file) keeps working unchanged.
+ */
+export interface CareItemNotifyDeps {
+  instanceManager: CareDayInstanceManager;
+  userRepository: Pick<UserRepository, "getById">;
+}
 
 /** Raised when a care item's category or a schedule's fields are invalid. */
 export class InvalidCareItemError extends Error {}
@@ -72,12 +87,15 @@ function validateNonNegativeInteger(value: number | null | undefined, field: str
 export async function createCareItem(
   repository: CareItemRepository,
   input: CreateCareItemInput,
+  notify?: CareItemNotifyDeps,
 ): Promise<CareItemWithSchedules> {
   validateCategory(input.category);
   validateNonNegativeInteger(input.stock, "stock");
   validateNonNegativeInteger(input.stockAlert, "stock_alert");
   for (const schedule of input.schedules) validateSchedule(schedule);
-  return repository.create(input);
+  const created = await repository.create(input);
+  if (notify) await restartCareDayBestEffort(input.userId, notify.instanceManager, notify.userRepository);
+  return created;
 }
 
 /** Use case: list the caller's care items, optionally filtered by category. */
@@ -99,6 +117,7 @@ export async function updateCareItem(
   id: string,
   userId: string,
   patch: UpdateCareItemPatch,
+  notify?: CareItemNotifyDeps,
 ): Promise<CareItemWithSchedules | null> {
   const existing = await repository.get(id);
   if (!existing || existing.userId !== userId) return null;
@@ -109,12 +128,21 @@ export async function updateCareItem(
   if (patch.schedules !== undefined) {
     for (const schedule of patch.schedules) validateSchedule(schedule);
   }
-  return repository.update(id, userId, patch);
+  const updated = await repository.update(id, userId, patch);
+  if (updated && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository);
+  return updated;
 }
 
 /** Use case: delete a care item (owner-scoped; returns whether a row was deleted). */
-export async function deleteCareItem(repository: CareItemRepository, id: string, userId: string): Promise<boolean> {
+export async function deleteCareItem(
+  repository: CareItemRepository,
+  id: string,
+  userId: string,
+  notify?: CareItemNotifyDeps,
+): Promise<boolean> {
   const existing = await repository.get(id);
   if (!existing || existing.userId !== userId) return false;
-  return repository.delete(id, userId);
+  const deleted = await repository.delete(id, userId);
+  if (deleted && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository);
+  return deleted;
 }

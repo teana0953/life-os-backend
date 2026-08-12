@@ -133,6 +133,12 @@ const TABLES = [
   "finance_networth_account",
   "expense_group_member",
   "expense_group",
+  // care_occurrence/care_log added for replace-cron-with-workflows's claimAttempt
+  // PGlite test; CASCADE also handles care_schedule -> care_item.
+  "care_occurrence",
+  "care_log",
+  "care_schedule",
+  "care_item",
   "users",
 ];
 

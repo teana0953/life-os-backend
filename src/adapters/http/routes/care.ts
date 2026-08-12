@@ -20,6 +20,7 @@ import type {
   UpdateCareItemPatch,
 } from "../../../contexts/notifications/domain/care-item";
 import type { CareLog, CareLogRepository } from "../../../contexts/notifications/domain/care-log";
+import type { CareDayInstanceManager } from "../../../contexts/notifications/domain/care-day-instance";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
@@ -40,6 +41,13 @@ export interface CareHandlerOptions {
   userRepository: UserRepository;
   careItemRepository: CareItemRepository;
   careLogRepository: CareLogRepository;
+  /** Optional: create/update/delete best-effort restart today's instance so the change is live within seconds (key_decisions "即時生效機制"). */
+  careDayInstanceManager?: CareDayInstanceManager;
+}
+
+/** `undefined` when no `careDayInstanceManager` was injected (e.g. route-focused tests). */
+function notifyDeps(options: CareHandlerOptions) {
+  return options.careDayInstanceManager ? { instanceManager: options.careDayInstanceManager, userRepository: options.userRepository } : undefined;
 }
 
 function parseSchedule(raw: unknown): CareScheduleInput {
@@ -137,7 +145,7 @@ export function createCreateCareItemHandler(options: CareHandlerOptions) {
     };
 
     try {
-      const item = await createCareItem(options.careItemRepository, input);
+      const item = await createCareItem(options.careItemRepository, input, notifyDeps(options));
       return c.json(itemToJson(item));
     } catch (err) {
       if (err instanceof InvalidCareItemError) throw new BadRequestError(err.message);
@@ -173,7 +181,7 @@ export function createUpdateCareItemHandler(options: CareHandlerOptions) {
     if ("schedules" in body) patch.schedules = requireScheduleArray(body.schedules, "schedules");
 
     try {
-      const item = await updateCareItem(options.careItemRepository, c.req.param("id") ?? "", userId, patch);
+      const item = await updateCareItem(options.careItemRepository, c.req.param("id") ?? "", userId, patch, notifyDeps(options));
       if (!item) return c.json({ error: "not_found" }, 404);
       return c.json(itemToJson(item));
     } catch (err) {
@@ -187,7 +195,7 @@ export function createUpdateCareItemHandler(options: CareHandlerOptions) {
 export function createDeleteCareItemHandler(options: CareHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const deleted = await deleteCareItem(options.careItemRepository, c.req.param("id") ?? "", userId);
+    const deleted = await deleteCareItem(options.careItemRepository, c.req.param("id") ?? "", userId, notifyDeps(options));
     return c.json({ deleted });
   };
 }

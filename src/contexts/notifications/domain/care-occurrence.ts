@@ -34,10 +34,42 @@ export interface CreateCareOccurrenceInput {
   timeOfDay: string;
 }
 
+export interface ClaimAttemptInput {
+  /** The instant this claim is for; written to `last_attempt_at` on success. */
+  at: Date;
+  /**
+   * The claim succeeds only when the row's current `last_attempt_at` is
+   * `NULL` or at-or-before `at - leaseMinutes` — a leased claim, not a
+   * compare-and-swap against one exact expected value (gate_decision #1 in
+   * replace-cron-with-workflows/design.md, superseding this repo's earlier
+   * D6' draft). A plain CAS would make a claim that succeeds but never
+   * completes (crash between claim and send) unrecoverable for the rest of
+   * the day whenever `nagIntervalMinutes = 0` — no later round would ever
+   * see the "expected" value again. The lease means an abandoned claim is
+   * retriable once it goes stale.
+   *
+   * Non-strict (`<=`, not `<`): the caller (`run-care-day.ts`) derives
+   * `leaseMinutes` from the exact same interval its own due-check just used,
+   * so a round due at exactly `T` must be claimable at exactly `T` — a
+   * strict `<` would reject that boundary instant even though the due-check
+   * itself (`now >= due`) accepts it.
+   */
+  leaseMinutes: number;
+}
+
 export interface CareOccurrenceRepository {
   /** Insert-if-absent on the slot key `(careScheduleId, localDate, timeOfDay)`, returning the existing row on a conflict (D5 in design.md). */
   upsertBySlot(input: CreateCareOccurrenceInput): Promise<CareOccurrence>;
   getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareOccurrence | null>;
+  /**
+   * Atomically claims this round's dispatch attempt for `id`: conditionally
+   * writes `last_attempt_at = input.at` and returns whether *this* call won
+   * the claim (`true`) or lost it to a concurrent/earlier claimant still
+   * within its lease (`false`) — see `ClaimAttemptInput`. Callers must claim
+   * before sending and only send when the claim is won (gate_decision #1);
+   * a lost claim must not push a notification.
+   */
+  claimAttempt(id: string, input: ClaimAttemptInput): Promise<boolean>;
   /** Records a send attempt's outcome (design D10-D13); updates `lastNotifiedAt` only when `delivered`. */
   recordAttempt(id: string, input: RecordAttemptInput): Promise<void>;
   /**
