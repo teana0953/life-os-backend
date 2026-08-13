@@ -1,5 +1,5 @@
 import { localParts, nextLocalDate, utcInstantFor } from "../../../shared-kernel/reminder-clock";
-import { planNextCareChainDate } from "../application/care-day-chain";
+import { planCareChainDateOnOrAfter } from "../application/care-day-chain";
 import { buildSlotSnapshots, dispatchDueRounds, markMissedForUserDay, planNextWake, type RunCareDayDeps, type SlotSnapshot } from "../application/run-care-day";
 
 /**
@@ -157,29 +157,59 @@ export async function runCareReminderDay(
     prevSignature = signature;
   }
 
-  // Hand off to the next day this user actually has something scheduled —
-  // not unconditionally to tomorrow. A "every Monday" user's Monday instance
-  // spawns next Monday directly instead of six instances that wake only to
-  // find nothing and spawn again. The anchor is this instance's own
-  // `localDate` (the scan starts the day after it), so when tomorrow IS a
-  // care day the behaviour is identical to the old unconditional spawn.
+  // Hand off to the next day this user actually has something scheduled, ON
+  // OR AFTER TODAY — a function of the live local date, not of this
+  // instance's own `localDate`. A "every Monday" user's Monday instance spawns
+  // next Monday directly instead of six instances that wake only to find
+  // nothing and spawn again; and an instance that Workflows only got around to
+  // running days late lands on today in ONE hop instead of walking the
+  // calendar one exited-immediately instance per skipped day.
   //
-  // Step name deliberately differs from the retired `spawn-tomorrow`: an
-  // in-flight instance replaying cached step results across a deploy must not
-  // match an old step's output to this step's new meaning.
+  // Deliberately UNCONDITIONAL — no `today > localDate ? … : localDate`
+  // branch. The only exit from the loop above is `plan === null`, which
+  // happens exactly when the live local date has moved past `localDate`, and
+  // the day-start wait guarantees `today >= localDate` before the loop is
+  // entered; so at this point `today > localDate` is always true and, without
+  // overrun, `today === localDate + 1`. A conditional's two arms would be
+  // provably equal on every reachable state: a guard that cannot fail.
+  // Unconditional buys a stronger invariant than "catch up in one hop" —
+  // EVERY successor this code creates is dated at or after today, so no
+  // successor is ever born already overdue and the cascade is closed off
+  // structurally rather than bounded by a counter.
+  //
+  // `previousLocalDate` (inside `planCareChainDateOnOrAfter`) is load-bearing:
+  // `nextCareChainDate` scans strictly after its anchor, so anchoring on today
+  // itself would answer tomorrow-at-the-earliest and silently skip everything
+  // still due later today.
+  //
+  // Step name deliberately kept as-is, even though this step's anchor changed.
+  // The CACHED VALUE's contract is unchanged ("the successor day this instance
+  // created, or null at the end of the chain"), so there is nothing a new name
+  // would signal. And a rename could not reach an in-flight instance anyway:
+  // an instance is pinned to the Worker version it was created under (visible
+  // in `wrangler workflows instances list`'s Version column), so it keeps
+  // running the old code and never replays against a redeployed step list.
+  // Renaming is therefore pure churn, not a safety measure.
   const nextCareDate = await step.do("spawn-next-care-day", async () => {
-    const target = await planNextCareChainDate(deps.careItemRepo, userId, localDate);
+    const todayLocalDate = localParts(now(), timezone).date;
+    const target = await planCareChainDateOnOrAfter(deps.careItemRepo, userId, todayLocalDate);
     if (target !== null) await spawnNext(target);
     return target;
   });
 
   if (nextCareDate === null) {
-    // Nothing will ever fire again, so no successor exists to mark this day's
-    // unanswered slots missed the way every other day's are. Only reachable
-    // on a terminating chain; `upsertIfAbsent` still never clobbers a real
-    // answer the user recorded.
+    // Nothing will ever fire again, so no successor exists to mark unanswered
+    // slots missed the way every other day's are. Anchored on TODAY, not on
+    // `localDate`: with the hand-off jumping, a terminating overdue instance
+    // is the last code that will ever run for this user, and occurrences a
+    // transitional instance materialized on a jumped-over day would otherwise
+    // be lost forever. Only reachable on a terminating chain, where the
+    // widening is inert without overrun (a null answer from today means no
+    // enabled schedule is active today, and this sweep skips disabled
+    // schedules anyway); `upsertIfAbsent` still never clobbers a real answer.
     await step.do("final-mark-missed", async () => {
-      await markMissedForUserDay(userId, nextLocalDate(localDate), deps);
+      const todayLocalDate = localParts(now(), timezone).date;
+      await markMissedForUserDay(userId, nextLocalDate(todayLocalDate), deps);
     });
   }
 }

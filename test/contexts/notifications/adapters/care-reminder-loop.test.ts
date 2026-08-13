@@ -340,9 +340,23 @@ describe("runCareReminderDay — Bug A (sleepUntil crashing on an already-past w
     };
     const spawned: string[] = [];
 
-    await runCareReminderDay({ userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI }, step, deps, async (tomorrow) => {
-      spawned.push(tomorrow);
-    });
+    // A FIXED injected clock, not the real one: 2026-08-13T00:00 Taipei, the
+    // ordinary just-past-midnight instant at which a null plan legitimately
+    // happens. The successor decision reads this clock, so leaving it on the
+    // wall clock would make the assertion below drift with the real calendar.
+    // This is also the normal (not-overdue) case pinned down: today is exactly
+    // `localDate + 1`, so the successor must still be tomorrow.
+    const at = () => new Date("2026-08-12T16:00:00Z");
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (tomorrow) => {
+        spawned.push(tomorrow);
+      },
+      at,
+    );
 
     // `plan-day-start-wait` runs (and returns 0, so no sleep) even for an
     // instance owning today; no dispatch-due-rounds, and no final-mark-missed
@@ -698,5 +712,106 @@ describe("runCareReminderDay — fix/idle-instance-chain: the chain jumps to the
       ms: new Date("2026-08-14T16:00:00Z").getTime() - start.getTime(), // 2026-08-15T00:00 Taipei.
     });
     expect(spawned).toEqual([]); // nothing was spawned before its own day even began.
+  });
+});
+
+describe("runCareReminderDay — fix/overdue-wake-jump: an overdue instance hands off to a day that is not already in the past", () => {
+  it("an instance that wakes up 8 days late spawns TODAY, in one hop — not the day after its own localDate", async () => {
+    const { careItemRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [] }); // fires daily.
+
+    // The instance owns 2026-08-12 but only gets scheduled 8 days later —
+    // the "Workflows了很久才醒" shape. Walking (anchoring the successor on
+    // `localDate`) would spawn 2026-08-13, which is itself already overdue and
+    // would spawn 2026-08-14, and so on: a hop per skipped day.
+    const start = new Date("2026-08-20T02:00:00Z"); // 10:00 Taipei on 2026-08-20.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step, sleeps } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    // Load-bearing as an EQUALITY on the DATE, not just a hop count: the
+    // successor is today itself (still able to fire today's remaining slots),
+    // never tomorrow — anchoring on `today` instead of `previousLocalDate(today)`
+    // would skip the whole of today and land on 2026-08-21.
+    expect(spawned).toEqual(["2026-08-20"]);
+    // One hop, and the overdue instance itself never slept: its own day is
+    // long past, so it falls straight through to the hand-off.
+    expect(sleeps).toEqual([]);
+  });
+
+  it("the successor of an overdue instance is never itself a past date (a Monday-only user 9 days late gets the NEXT Monday)", async () => {
+    const { careItemRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [1] }); // Mondays only.
+
+    // Owns Monday 2026-08-10; wakes on Wednesday 2026-08-19. The intervening
+    // Monday 2026-08-17 is ALSO in the past — a fix that only jumped "to the
+    // next care day after localDate" would spawn it, and that successor would
+    // immediately exit and spawn again.
+    const start = new Date("2026-08-19T02:00:00Z"); // 10:00 Taipei on Wednesday 2026-08-19.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: "2026-08-10", timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    // The next Monday at or after today — a FUTURE day the successor can
+    // legitimately sleep until. Not 2026-08-17 (last Monday, already past).
+    expect(spawned).toEqual(["2026-08-24"]);
+  });
+
+  it("an overdue instance whose chain has ended still marks the jumped-over days' unanswered slots missed", async () => {
+    const { careItemRepo, careLogRepo, careOccurrenceRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [], endDate: "2026-08-13" });
+    // A slot on 2026-08-13 — AFTER this instance's own `localDate`, inside the
+    // jumped-over window (a transitional instance could have materialized it).
+    // The top-of-run `mark-missed` covers only `< localDate`, so with the chain
+    // ending here this instance's final sweep is the only thing that can ever
+    // reach it.
+    await careOccurrenceRepo.upsertBySlot({
+      userId: USER,
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: "2026-08-13",
+      timeOfDay: "09:00",
+    });
+
+    const start = new Date("2026-08-20T02:00:00Z"); // 10:00 Taipei, a week past the schedule's end.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    expect(spawned).toEqual([]); // nothing scheduled at or after today — the chain really is over.
+    // Anchoring the final sweep on `localDate` instead of today would stop at
+    // 2026-08-13 exclusive and lose this one forever.
+    const log = await careLogRepo.getBySlot("sched-1", "2026-08-13", "09:00");
+    expect(log?.status).toBe("missed");
   });
 });

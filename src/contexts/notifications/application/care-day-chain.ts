@@ -23,11 +23,32 @@ export async function planNextCareChainDate(repo: CareChainItemRepo, userId: str
 }
 
 /**
+ * The next care day **on or after** `localDate` — `null` if there is none.
+ *
+ * The definition of "the next care day counting today itself" shared by the
+ * two application-level callers: the instance chain's hand-off and the
+ * restart gate below. `nextCareChainDate` scans STRICTLY after its argument,
+ * so the shift is what lets `localDate` be selected as its own answer.
+ *
+ * The daily cron does NOT go through here — it only ever holds a flat
+ * schedule array, not a repo, so it repeats the same shift independently at
+ * `ensure-care-day-instances.ts:48` (`nextCareChainDate(schedules,
+ * previousLocalDate(todayLocalDate))`). That is a second place this
+ * off-by-one has to be tested and mutated; a test here kills neither.
+ *
+ * The shift belongs here rather than in the domain function: "strictly after
+ * this anchor" is what makes `nextCareChainDate` composable, and the on-or-
+ * after variant is a use-case-level convenience built on top of it.
+ */
+export async function planCareChainDateOnOrAfter(repo: CareChainItemRepo, userId: string, localDate: string): Promise<string | null> {
+  return planNextCareChainDate(repo, userId, previousLocalDate(localDate));
+}
+
+/**
  * Whether `userId` has any care day left to run, **counting `todayLocalDate`
- * itself** — hence the `previousLocalDate` shift, since `nextCareChainDate`
- * scans strictly after its argument. The gate for the restart path: no
- * upcoming care day means there is nothing for a fresh instance to do.
+ * itself**. The gate for the restart path: no upcoming care day means there is
+ * nothing for a fresh instance to do.
  */
 export async function hasUpcomingCareDate(repo: CareChainItemRepo, userId: string, todayLocalDate: string): Promise<boolean> {
-  return (await planNextCareChainDate(repo, userId, previousLocalDate(todayLocalDate))) !== null;
+  return (await planCareChainDateOnOrAfter(repo, userId, todayLocalDate)) !== null;
 }
