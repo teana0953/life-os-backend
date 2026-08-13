@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type CareChainItemRepo, hasUpcomingCareDate, planNextCareChainDate } from "../../../../src/contexts/notifications/application/care-day-chain";
+import {
+  type CareChainItemRepo,
+  hasUpcomingCareDate,
+  planCareChainDateOnOrAfter,
+  planNextCareChainDate,
+} from "../../../../src/contexts/notifications/application/care-day-chain";
 import type { CareItemWithSchedules, CareSchedule } from "../../../../src/contexts/notifications/domain/care-item";
 
 const USER = "user-1";
@@ -43,6 +48,26 @@ describe("planNextCareChainDate", () => {
 
   it("returns null when the user has no items at all", async () => {
     expect(await planNextCareChainDate(repoOf(), USER, WEDNESDAY)).toBeNull();
+  });
+});
+
+describe("planCareChainDateOnOrAfter", () => {
+  it("returns the anchor day ITSELF when it is a care day (the whole point of the shift)", async () => {
+    const repo = repoOf(item("item-a", [{}])); // daily.
+    // `planNextCareChainDate` scans strictly forward, so the plain version
+    // would answer 2026-08-13 here. An overdue instance handed that value
+    // would skip the rest of today entirely.
+    expect(await planCareChainDateOnOrAfter(repo, USER, WEDNESDAY)).toBe(WEDNESDAY);
+  });
+
+  it("returns the next later care day when the anchor day itself is idle", async () => {
+    const repo = repoOf(item("item-a", [{ repeatDays: [1] }])); // Mondays; WEDNESDAY is idle.
+    expect(await planCareChainDateOnOrAfter(repo, USER, WEDNESDAY)).toBe("2026-08-17");
+  });
+
+  it("returns null once nothing is scheduled on or after the anchor day", async () => {
+    const repo = repoOf(item("item-a", [{ endDate: "2026-08-11" }]));
+    expect(await planCareChainDateOnOrAfter(repo, USER, WEDNESDAY)).toBeNull();
   });
 });
 

@@ -268,35 +268,68 @@ so that the whole rule has exactly one place a mutation test can attack.
   precisely what makes the merge unconditional rather than conditional on a firing day
   existing). The window is bounded by one horizon; `claimAttempt` prevents any duplicate
   send in the meantime.
-- **(g) A badly overdue wake spawns a run of successors back-to-back.** If an instance
-  wakes and the live local date is already *past* its own `localDate` (the platform
-  delivered the wake late, or the instance sat unscheduled across an outage), the loop's
-  exit condition is satisfied immediately, `planNextWake` returns `null` for that day,
-  and it spawns the next care day at once. If that successor's day is also already in
-  the past it does the same, and so on — a fast chain of instance creations that stops
-  only when it catches up to today. Being honest about the four things that matter:
-  **(a) Not introduced by this change.** The old code did exactly the same via
-  `spawnTomorrow(nextLocalDate(localDate))`; the grid-checkpoint fix does not make a
-  single overrun any worse, and the per-hop work is unchanged.
-  **(b) This change does lengthen the exposure window.** Before, an instance's own sleep
-  was at most to tomorrow, so an overrun had to exceed roughly a day to be reachable at
-  all. Now the cron and the chain both create instances that sleep up to
-  `CARE_CHAIN_HORIZON_DAYS` (90) days, so a wake can in principle be delivered against a
-  target that is much further in the past, and the catch-up run is correspondingly
-  longer — bounded by the number of days between the instance's `localDate` and today,
-  which is bounded by nothing in this design. This is theoretical: no such overrun has
-  been observed, and Workflows' documented behaviour is to deliver the wake, not to skip
-  days.
-  **(c) There is no guard today.** Nothing tests it and nothing caps the catch-up; the
-  only backstop is that each hop is a separate instance with its own step budget, so it
-  does not blow one instance's 1,024 steps — it consumes creations and, transiently,
-  concurrent slots.
-  **(d) If it needs fixing**, the direction is to make the overdue case jump rather than
-  walk: when an instance wakes to find `today > params.localDate`, re-derive the next
-  target from *today* (the same scan the cron does) instead of from `localDate + 1`, so
-  the catch-up is one hop regardless of how far behind the wake was. That is a behaviour
-  change in `care-day-chain.ts` with its own mutation-tested guard, and is deliberately
-  out of scope for this change.
+- **(g) A badly overdue wake catches up in one hop — FIXED (`fix/overdue-wake-jump`).**
+  If an instance wakes and the live local date is already *past* its own `localDate` (the
+  platform delivered the wake late, or the instance sat unscheduled across an outage), the
+  loop's exit condition is satisfied immediately and it hands off at once. It used to hand
+  off to `nextCareChainDate(localDate)` — a day that could itself already be in the past,
+  which would exit and hand off again: a fast run of instance creations, one per skipped
+  day, bounded by nothing in this design.
+  **The invariant now:** the hand-off is `planCareChainDateOnOrAfter(today)` — *every
+  successor this loop creates is dated on or after today*, so no successor is ever born
+  already overdue, and catch-up is one hop no matter how far behind the wake was. The
+  cascade is closed off structurally, not bounded by a counter or a hop cap.
+  **Where the rule lives, and why it has no branch.** `planCareChainDateOnOrAfter`
+  (`care-day-chain.ts`, application layer) is the single literal definition of "the next
+  care day counting today itself" for the two application-level callers: the chain
+  hand-off and the restart gate (`hasUpcomingCareDate`). The daily cron is *not* one of
+  them — it only holds a flat schedule array, never a repo, so it repeats the same
+  `previousLocalDate(today)` shift independently in `ensure-care-day-instances.ts`; that
+  is a second site this off-by-one must be tested and mutated at. The domain's
+  `nextCareChainDate` is untouched: "strictly after this anchor" is what makes it
+  composable, and the on-or-after shift is a use-case concern. The hand-off is
+  **unconditional**, deliberately *not* `today > localDate ? … : localDate`: the loop's
+  only exit is `plan === null`, which happens exactly when the live local date has moved
+  past `localDate`, and the day-start wait guarantees `today >= localDate` before the loop
+  is entered — so `today > localDate` is true on every reachable path and a conditional's
+  two arms would be provably equal. That is a guard that cannot fail, the defect class
+  this repo keeps regrowing.
+  **The step name stays `spawn-next-care-day`** even though the anchor changed. The
+  *cached value's* contract is unchanged ("the successor day this instance created, or
+  `null`"), so a new name would signal nothing — and it could not reach an in-flight
+  instance in any case: an instance is pinned to the Worker version it was created under
+  (the Version column of `wrangler workflows instances list`, measured 2026-08-12), so it
+  keeps executing the code it started with and never replays a redeployed step list.
+  Renaming would be churn with no recipient, not a safety measure.
+  **`final-mark-missed` is anchored on today too**, for the terminating-chain case: a
+  terminating overdue instance is the last code that will ever run for that user, so
+  sweeping only up to `localDate + 1` would lose any occurrence a transitional instance
+  materialized on a jumped-over day. Without overrun the widening is inert (a `null`
+  answer from today means no enabled schedule is active today, and the sweep skips
+  disabled schedules anyway).
+  **Guards:** `care-reminder-loop.test.ts`'s `fix/overdue-wake-jump` describe (8 days
+  late → spawns today, in one hop; a Monday-only user 9 days late → the *next* Monday, not
+  the intervening past one; a terminated chain still marks a jumped-over day missed) plus
+  `planCareChainDateOnOrAfter`'s own unit tests. All run under `StrictWorkflowStep`.
+  Mutation-verified in both directions: anchoring back on `localDate` and dropping the
+  `previousLocalDate` shift each fail a distinct, named set of these tests.
+  **New residuals accepted with the fix:**
+  (i) *Midnight-boundary extra hop.* An instance spawned at, say, `23:59:59.9` can read
+  its hand-off anchor on one local date and run its first step on the next, leaving it
+  overdue by exactly one day. It then jumps once more and lands on today. The bound is
+  one extra hop, never a cascade — the invariant above still holds for the successor.
+  (ii) *Pushes for skipped days are unrecoverable, under any design.* This was always
+  true and is now written down: walking never rescued them either. Each hop instance
+  found `today !== localDate` at its first `plan-next-wake`, exited before
+  `dispatch-due-rounds`, and materialized nothing. A reminder hours or days late is
+  worse than none — the same judgement `FIRST_FIRE_GRACE_MINUTES = 10` already encodes.
+  (iii) *Sweep timing on jumped-over days shifts, not disappears.* Occurrences a
+  transitional instance left on a skipped day used to be swept by whichever hop passed
+  over them; they are now swept by the successor's `mark-missed` when its target day
+  begins — and when the successor *is* today, its day-start wait returns 0 and the sweep
+  happens immediately — since `listPastUnlogged` is "every strictly-past unanswered
+  occurrence", not "yesterday's". Later, never dropped — the same kind of delay the top-of-run
+  `mark-missed` note already accepts.
 
 `CareReminderWorkflow.run`
 (now a thin wrapper around `care-reminder-loop.ts`'s `runCareReminderDay`, extracted so
@@ -352,15 +385,22 @@ rejects — see Testing below):
    back to a fixed 5-minute floor. Worst case with the floor engaged: ~288 rounds/day x
    3 steps ≈ 900, comfortably under budget — a 1-minute floor would not be (1,440
    rounds x 3 > 3,000).
-4. `step.do("spawn-next-care-day")` — asks `nextCareChainDate` (W1') for the next day
-   this user actually has something scheduled, anchored on this instance's own
-   `localDate`, and creates that day's instance by its deterministic id; an id collision
-   (the daily cron's repair pass, or another chain, beat it there) is silently ignored.
-   When the answer is `null` nothing is created and the chain ends —
-   followed by `step.do("final-mark-missed")` for this instance's own day, since no
-   successor exists to do it. The step name deliberately differs from the retired
-   `spawn-tomorrow` so an in-flight instance replaying cached step results across a
-   deploy can never match an old step's output to the new step's meaning.
+4. `step.do("spawn-next-care-day")` — asks `planCareChainDateOnOrAfter` (W1') for the
+   next day this user actually has something scheduled **on or after the live local
+   date**, not anchored on this instance's own `localDate`, and creates that day's
+   instance by its deterministic id; an id collision (the daily cron's repair pass, or
+   another chain, beat it there) is silently ignored. Reading the clock here is safe for
+   replay: it happens *inside* the step callback, so the value is captured in the step's
+   cached result and the `null` branch below still depends only on that cached output.
+   When the answer is `null` nothing is created and the chain ends — followed by
+   `step.do("final-mark-missed")`, likewise anchored on the live local date, since no
+   successor exists to do it. The step is named for what it does now rather than
+   for the retired `spawn-tomorrow` it replaced, and it has deliberately *not* been
+   renamed again since, because its cached-value contract did not change when its anchor
+   did. Note what does *not* motivate either decision: an in-flight instance is pinned to
+   the Worker version it was created under (measured 2026-08-12 via the Version column of
+   `wrangler workflows instances list`), so it never replays cached step results against a
+   redeployed step list, and no rename can reach it — see residual risk (g).
 
 A daily Cron (`ensureCareDayInstances`, `wrangler.toml`'s `crons = ["5 16 * * *"]` ≈
 00:05 Asia/Taipei) is the safety net: it groups every enabled schedule by user, asks the
