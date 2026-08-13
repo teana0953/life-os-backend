@@ -1,0 +1,17 @@
+# graphflow cost profiles for this repo. Picked up automatically because it
+# sits at the project root — the plugin's own file is the fallback, and its
+# heavy/standard tiers are Fable, which we do not use here.
+#
+# Opus is the top tier for this repo's runs: review and audit nodes get it,
+# and the fixer gets Sonnet (Haiku wrote a commit message claiming a test it
+# had not written, twice-caught in run pr-review-msn4qmip).
+profiles:
+  max:      { heavy: { model: opus }, standard: { model: opus },                light: { model: sonnet } }
+  balanced: { heavy: { model: opus }, standard: { model: opus },                light: { model: sonnet } }
+  budget:   { heavy: { model: opus }, standard: { model: sonnet },              light: { model: haiku } }
+  # lean: 給機械性的 implement pass 用(補測試、剝格式雜訊、收 nit)。
+  # review/audit 這類要建交錯、逐處突變的節點必須留在 opus,所以它們在 graph 裡
+  # 標成 tier: heavy;standard 降成 sonnet 只影響 implement 那一格。
+  # light 刻意維持 sonnet 不設 haiku:haiku 曾兩次宣稱寫了它其實沒寫的測試
+  # (run pr-review-msn4qmip),fixer 會直接動測試檔,不能用它。
+  lean:     { heavy: { model: opus }, standard: { model: sonnet },              light: { model: sonnet } }

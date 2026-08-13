@@ -2,6 +2,7 @@ import type { UserRepository } from "../../user/domain/user-repository";
 import type { CareDayInstanceManager } from "../domain/care-day-instance";
 import type { CareOccurrenceRepository } from "../domain/care-occurrence";
 import type { PushSubscription, PushSubscriptionRepository } from "../domain/push-subscription";
+import type { CareChainItemRepo } from "./care-day-chain";
 import { restartCareDayBestEffort } from "./restart-care-day";
 
 /**
@@ -18,6 +19,8 @@ import { restartCareDayBestEffort } from "./restart-care-day";
 export interface SubscribeWebPushNotifyDeps {
   instanceManager: CareDayInstanceManager;
   userRepository: Pick<UserRepository, "getById">;
+  /** Reads the caller's schedules so the restart can be skipped when nothing is left to fire (see `restartCareDayBestEffort`). */
+  careItemRepo: CareChainItemRepo;
   careOccurrenceRepo?: Pick<CareOccurrenceRepository, "expediteNoSubscriptionsRetry">;
 }
 
@@ -29,7 +32,13 @@ export async function subscribeWebPush(
 ): Promise<PushSubscription> {
   const result = await repository.upsert(subscription);
   if (notify) {
-    await restartCareDayBestEffort(subscription.userId, notify.instanceManager, notify.userRepository, notify.careOccurrenceRepo);
+    await restartCareDayBestEffort(
+      subscription.userId,
+      notify.instanceManager,
+      notify.userRepository,
+      notify.careItemRepo,
+      notify.careOccurrenceRepo,
+    );
   }
   return result;
 }

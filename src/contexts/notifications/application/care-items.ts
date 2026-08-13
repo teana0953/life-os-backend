@@ -94,7 +94,7 @@ export async function createCareItem(
   validateNonNegativeInteger(input.stockAlert, "stock_alert");
   for (const schedule of input.schedules) validateSchedule(schedule);
   const created = await repository.create(input);
-  if (notify) await restartCareDayBestEffort(input.userId, notify.instanceManager, notify.userRepository);
+  if (notify) await restartCareDayBestEffort(input.userId, notify.instanceManager, notify.userRepository, repository);
   return created;
 }
 
@@ -129,7 +129,7 @@ export async function updateCareItem(
     for (const schedule of patch.schedules) validateSchedule(schedule);
   }
   const updated = await repository.update(id, userId, patch);
-  if (updated && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository);
+  if (updated && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository, repository);
   return updated;
 }
 
@@ -143,6 +143,6 @@ export async function deleteCareItem(
   const existing = await repository.get(id);
   if (!existing || existing.userId !== userId) return false;
   const deleted = await repository.delete(id, userId);
-  if (deleted && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository);
+  if (deleted && notify) await restartCareDayBestEffort(userId, notify.instanceManager, notify.userRepository, repository);
   return deleted;
 }

@@ -361,3 +361,58 @@ describe("deleteCareItem", () => {
     expect(await repo.get(created.id)).not.toBeNull();
   });
 });
+
+describe("the immediate-effect restart hook's gate", () => {
+  function notifyDeps() {
+    const calls: string[] = [];
+    return {
+      calls,
+      notify: {
+        instanceManager: {
+          ensureFor: async () => {},
+          restartToday: async (userId: string) => {
+            calls.push(`restartToday:${userId}`);
+          },
+        },
+        userRepository: { getById: async () => null }, // no user row → falls back to Asia/Taipei.
+      },
+    };
+  }
+
+  it("restarts today's instance after a create whose schedule still has days ahead", async () => {
+    const { calls, notify } = notifyDeps();
+
+    // `startDate` in the past, no `endDate`, every weekday selected — active
+    // today whatever today happens to be when this test runs.
+    await createCareItem(repo, { ...VALID_INPUT, schedules: [{ ...VALID_SCHEDULE, repeatDays: [], startDate: "2020-01-01" }] }, notify);
+
+    expect(calls).toEqual(["restartToday:user-1"]);
+  });
+
+  it("skips the restart after a delete that leaves the user with nothing scheduled at all", async () => {
+    const created = await createCareItem(repo, { ...VALID_INPUT, schedules: [{ ...VALID_SCHEDULE, repeatDays: [], startDate: "2020-01-01" }] });
+    const { calls, notify } = notifyDeps();
+
+    const deleted = await deleteCareItem(repo, created.id, "user-1", notify);
+
+    // The gate reads the repository state AFTER the write — deleting the last
+    // item must not seed an instance for a day with nothing in it.
+    expect(deleted).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("skips the restart after an update that leaves only an already-expired schedule behind", async () => {
+    const created = await createCareItem(repo, { ...VALID_INPUT, schedules: [{ ...VALID_SCHEDULE, repeatDays: [], startDate: "2020-01-01" }] });
+    const { calls, notify } = notifyDeps();
+
+    await updateCareItem(
+      repo,
+      created.id,
+      "user-1",
+      { schedules: [{ ...VALID_SCHEDULE, repeatDays: [], startDate: "2020-01-01", endDate: "2020-06-30" }] },
+      notify,
+    );
+
+    expect(calls).toEqual([]);
+  });
+});

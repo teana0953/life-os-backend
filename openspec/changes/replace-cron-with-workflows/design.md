@@ -6,7 +6,15 @@ Replaces `run-care-tick.ts` (a per-minute `[triggers]` Cron body) with
 `CareReminderWorkflow`: one Cloudflare Workflows instance per (user, local day) that
 sleeps until each of that user's reminders is due, dispatches it, and re-plans its next
 wake — instead of every user on Earth being scanned every minute. The daily Cron
-survives, downgraded from "dispatch everything" to "make sure today's instance exists."
+survives, downgraded from "dispatch everything" to "make sure an instance exists for the
+next day this user actually has something scheduled."
+
+*(fix/idle-instance-chain, later revision: the original chain was "one instance per
+calendar day, forever". That meant a user who takes a pill only on Mondays still had an
+instance created every single day, waking at midnight only to hand off to the next one,
+and a user whose schedules had all expired kept an endless chain of instances with
+nothing to do. The chain now jumps straight to the next day something actually fires,
+and ends when nothing ever will — W1' below.)*
 
 This directly answers two things `add-medication-reminders/design.md` explicitly
 deferred or assumed away:
@@ -41,12 +49,12 @@ wrangler.toml                   # crons downgraded to daily; + [[workflows]] bin
 ```
 
 `domain`/`application` never import `cloudflare:workers` — `care-day-instance.ts`
-defines a plain port (`ensureToday`/`restartToday`); only
+defines a plain port (`ensureFor`/`restartToday`); only
 `workflows-care-day-instance-manager.ts` and `care-reminder-workflow.ts` touch the
 actual Workflows binding/types, keeping the dependency rule intact (CLAUDE.md).
 
-**W1 — one instance per (user, local day).** The **daily** path (the Cron's
-`ensureToday`, and the workflow's own `spawn-tomorrow`) uses the deterministic id
+**W1 — one instance per (user, local day).** The **chained** path (the Cron's
+`ensureFor`, and the workflow's own `spawn-next-care-day`) uses the deterministic id
 `care-day_{userId}_{localDate}` and is found by construction — neither ever touches the
 pointer table below. The **restart** path (`restartToday` — see below) creates under a
 fresh `care-day_{userId}_{localDate}_r{randomUUID}` id instead (Cloudflare rejects
@@ -86,6 +94,104 @@ own reconciliation check ran — still produced two live instances). **This desi
 reorders create-before-CAS**, which removes the class of bug structurally rather than
 adding another check on top of the ordering that produced it.)*
 
+**W1' — the chain lands only on days that actually have something scheduled
+(fix/idle-instance-chain).** One domain function decides which day comes next:
+
+```ts
+// contexts/notifications/domain/care-schedule.ts
+nextCareChainDate(schedules, afterLocalDate): string | null
+```
+
+It scans forward day by day from `afterLocalDate + 1` (never `afterLocalDate` itself),
+returning the first day some **enabled** schedule is `isActiveOn`. All three places that
+ever ask "which day should own an instance" call it — the running instance's own exit,
+the restart gate, and the daily cron — so they cannot disagree. `isActiveOn` is
+untouched; the `enabled` filter lives in this function (not in SQL, not in `isActiveOn`)
+so that the whole rule has exactly one place a mutation test can attack.
+
+- **Scan horizon: `CARE_CHAIN_HORIZON_DAYS = 90`.** Reaching the horizon with no hit is
+  not "give up": if some enabled schedule could still fire beyond it (no end date, or an
+  end date past the horizon), a **checkpoint** day inside the scanned window is returned
+  — an instance sleeps to it, finds nothing, re-scans from there, and either jumps
+  another horizon or terminates. This is what supports an arbitrarily long `weekInterval`
+  without an unbounded scan, and it is why the chain no longer depends on when the cron
+  happens to run. 90 is **deliberately far below** every platform ceiling rather than
+  derived from one: a single `step.sleep` may span up to a year, but this feature has
+  now failed in production three times because the real API refused what the docs and
+  types allowed (an instance id containing `:`, a `sleepUntil` for a past instant,
+  reusing a terminated id), so no correctness argument here is allowed to rest on being
+  inside a limit by a computed margin. The cost of 90 over 365 is ~4 checkpoint wakes a
+  year instead of 1, at 8 steps each (counted, not estimated: mark-missed 1 +
+  plan-day-start-wait 2 + sleep-until-day-start 1 + plan-next-wake 2 +
+  sleep-until-next-due 1 + spawn-next-care-day 1) — ~32 steps a year against the
+  1,024-per-instance ceiling, so the choice of 90 costs nothing that matters.
+- **The checkpoint sits on a fixed calendar grid, NOT at `anchor + horizon`.** It is the
+  first day in the scanned window with `epochDayOf(day) % CARE_CHAIN_HORIZON_DAYS === 0`;
+  since any 90 consecutive days contain exactly one such day, the scan can never fail to
+  find one (which is why the horizon and the grid modulus are the same constant and must
+  stay so). This is load-bearing, not tidiness. The cron re-anchors on a *different day
+  every day* (`previousLocalDate(today)`), so with an anchor-relative checkpoint a
+  dormant user would be handed a different target date on every daily run → a different
+  deterministic instance id → `ensureFor` never collides → one new idle 90-day sleeper
+  accumulating per user per day, ~90 of them in steady state against the free plan's 100
+  concurrent instances, each in turn spawning its own successor. That is the runaway idle
+  chain this change exists to kill, amplified 90x. It is reachable in ordinary use, not
+  in theory: `validateSchedule` caps neither `weekInterval` nor how far ahead `startDate`
+  may sit, so any `weekInterval >= 13`, or a course of treatment starting in four months,
+  lands in the checkpoint branch permanently. On the grid, every anchor inside one grid
+  cell yields the same day, so cron and chain converge on a single id. Guarded by
+  `care-schedule.test.ts`'s and `ensure-care-day-instances.test.ts`'s grid cases
+  (mutation-verified: restoring `anchor + horizon` turns **five** tests red — four of
+  them the `BLOCKER:`-prefixed ones, three in `care-schedule.test.ts` and one in
+  `ensure-care-day-instances.test.ts`, plus the un-prefixed `care-schedule.test.ts` case
+  "beyond the horizon: an open-ended long-interval schedule returns a grid checkpoint
+  inside the scanned window"). The count and the `BLOCKER:` set are not the same set.
+- **`null` means the chain ends.** No enabled schedule can ever fire again → no
+  successor is spawned, and the cron creates nothing for that user either.
+- **A future-dated instance must sleep to its own day first.** Because the chain and the
+  cron now both create instances for days that have not started yet, `runCareReminderDay`
+  begins with a `plan-day-start-wait` step: if the live local date is before the
+  instance's own `localDate`, sleep until that day's 00:00 and re-check. Without it a
+  future-dated instance would immediately see `today !== localDate`, exit, spawn its own
+  successor, and repeat — an unbounded same-instant cascade that burns the step budget.
+  For an instance owning today (every instance that existed before this change) the wait
+  is 0 and no `sleep` is issued at all, which the strict step double's rejection of a
+  non-positive `sleep` is what guards.
+- **`mark-missed` still runs first, before that wait.** A successor is created at the
+  previous care day's local midnight and starts running immediately, so "yesterday's
+  unanswered slots get marked missed at midnight" keeps exactly the timing it had. Only
+  a day an instance actually ran ever materializes occurrences, so the days the chain
+  jumps over normally have nothing to mark. The exception, stated rather than glossed:
+  if the user edits schedules *after* the chain has already jumped past a day and a
+  transitional restart instance then materializes occurrences on it, that day's
+  `mark-missed` window has already gone by. Those slots are not lost — the next
+  instance's `mark-missed`, or `final-mark-missed`, still marks them — they are just
+  late, bounded by one firing interval (worst case one checkpoint horizon).
+- **A terminating chain marks its own last day.** Every other day's unanswered slots are
+  marked by the *next* day's instance; the last one has no next. When the successor is
+  `null`, the instance runs one extra `final-mark-missed` step for its own day
+  (`upsertIfAbsent`, so a real answer is never clobbered).
+- **The successor decision reads the schedule calendar only** — never occurrences or
+  logs. "Today's slots are all answered" and "today has no slots" are deliberately
+  different things: a fully-answered Monday still spawns the next Monday.
+- **New invariant: every future-dated instance is created under the deterministic id.**
+  `restartToday`'s `_r`-suffixed ids only ever name *today*. That is what makes two
+  chains that briefly coexist converge: the successor function is deterministic over the
+  same DB, so any two chains must land on the same next day, collide on that day's
+  deterministic id, and the loser's `create` silently fails — merging into one chain.
+  Same-day duplicate dispatch is separately prevented by `claimAttempt`.
+
+  The convergence argument needs the grid to be *unconditional*, and this is the second
+  reason for it. Where a real firing day exists, two chains anchored on different days
+  converge trivially: the later chain's day sequence is a suffix of the earlier one's, so
+  they meet at the first firing day at or after the later anchor. In the checkpoint
+  branch that reasoning does **not** carry: anchor-relative checkpoints give the two
+  chains the sequences `c1, c1+90, c1+180, …` and `c2, c2+90, …`, which for
+  `c1 ≢ c2 (mod 90)` are **disjoint forever** — a schedule starting in four years would
+  keep both chains alive, unmerged, for four years. On the grid both sequences are the
+  same set of grid days, so they collide on the first grid day after the later anchor —
+  at most one horizon away, with no premise about firing days at all.
+
 **Residual risks (deliberately accepted, not hidden):**
 - **(a) `setCurrentIfMatch` fails, or cannot be verified to have succeeded, after the
   instance was already created.** An unverifiable CAS is always treated as a loss (never
@@ -95,7 +201,7 @@ adding another check on top of the ordering that produced it.)*
   pointer briefly names a now-terminated id: for a short window NO instance is current
   for that user/day. This self-heals at the next `restartToday` (which reads the dead id
   back out, terminates it as a harmless no-op, and creates a fresh one) or within 24h via
-  the daily Cron's `ensureToday` repair pass regardless. A temporary coverage gap is the
+  the daily Cron's `ensureFor` repair pass regardless. A temporary coverage gap is the
   deliberately chosen failure mode over a permanent orphan, which would never self-heal
   (nothing ever again derives an orphaned id to look it up).
 - **(b) Two `restartToday` calls landing within the same instant, at the exact
@@ -124,7 +230,7 @@ adding another check on top of the ordering that produced it.)*
   about the ordering fix makes `recorded`'s cleanup itself atomic with the swap. If the
   request dies in that gap, `recorded` becomes a **permanent orphan**: no pointer value
   will ever name it again, so no future `restartToday` call, and no daily-Cron
-  `ensureToday` repair pass (which only ever looks at the deterministic id and the
+  `ensureFor` repair pass (which only ever looks at the deterministic id and the
   pointer's *current* value), will ever rediscover it to terminate it. This is exactly
   the failure mode (a) above describes as "would never self-heal" and says this design
   avoids — (a) avoids it for the *CAS-unverifiable* case by treating the call as a loser
@@ -139,9 +245,58 @@ adding another check on top of the ordering that produced it.)*
   dispatch) rather than harmful, and is bounded by the instance's own natural lifetime
   (it exits its loop once the local date rolls over, same as any instance). Not yet
   covered by an automated repair pass or an alert; a future change could have
-  `ensureToday`'s daily sweep also `terminate()` any instance whose id is neither the
+  `ensureFor`'s daily sweep also `terminate()` any instance whose id is neither the
   deterministic one nor the current pointer value, closing this window without
   reintroducing the DB-outage problem above.
+- **(e) A dormant sleeper outlives the schedules that justified it (fix/idle-instance-
+  chain).** An instance already sleeping toward a future day D is never terminated or
+  re-targeted when the user edits or deletes schedules — the restart path deliberately
+  keeps touching only *today* (see W1' and the gate below). If the user deletes
+  everything, that sleeper keeps sleeping until D, wakes, finds nothing, scans, gets
+  `null`, and ends. The bound is its own already-scheduled wake day (worst case a
+  checkpoint, so ≤ `CARE_CHAIN_HORIZON_DAYS`); in the meantime it costs one of the free
+  plan's 100 concurrent instances and, on waking, 8 steps (see the step count above). Crucially it **does not
+  self-perpetuate** — the symptom this fix exists to remove. Shrinking this to zero would
+  require the pointer table to track "this user's current chain head" rather than
+  "today's restart instance", putting the spawn and cron paths into the CAS that PR
+  #101 only just got right, and adding a "terminate races a just-spawned head" family of
+  interleavings. Explicitly declined; the user accepted the dormant window instead.
+- **(f) Two chains can coexist briefly.** A transitional instance created by a restart on
+  an idle day runs alongside whatever the cron/chain already created. They converge by
+  construction (W1': deterministic ids for every future day, and a successor function
+  that is a function of the calendar alone — including in the checkpoint branch, which is
+  precisely what makes the merge unconditional rather than conditional on a firing day
+  existing). The window is bounded by one horizon; `claimAttempt` prevents any duplicate
+  send in the meantime.
+- **(g) A badly overdue wake spawns a run of successors back-to-back.** If an instance
+  wakes and the live local date is already *past* its own `localDate` (the platform
+  delivered the wake late, or the instance sat unscheduled across an outage), the loop's
+  exit condition is satisfied immediately, `planNextWake` returns `null` for that day,
+  and it spawns the next care day at once. If that successor's day is also already in
+  the past it does the same, and so on — a fast chain of instance creations that stops
+  only when it catches up to today. Being honest about the four things that matter:
+  **(a) Not introduced by this change.** The old code did exactly the same via
+  `spawnTomorrow(nextLocalDate(localDate))`; the grid-checkpoint fix does not make a
+  single overrun any worse, and the per-hop work is unchanged.
+  **(b) This change does lengthen the exposure window.** Before, an instance's own sleep
+  was at most to tomorrow, so an overrun had to exceed roughly a day to be reachable at
+  all. Now the cron and the chain both create instances that sleep up to
+  `CARE_CHAIN_HORIZON_DAYS` (90) days, so a wake can in principle be delivered against a
+  target that is much further in the past, and the catch-up run is correspondingly
+  longer — bounded by the number of days between the instance's `localDate` and today,
+  which is bounded by nothing in this design. This is theoretical: no such overrun has
+  been observed, and Workflows' documented behaviour is to deliver the wake, not to skip
+  days.
+  **(c) There is no guard today.** Nothing tests it and nothing caps the catch-up; the
+  only backstop is that each hop is a separate instance with its own step budget, so it
+  does not blow one instance's 1,024 steps — it consumes creations and, transiently,
+  concurrent slots.
+  **(d) If it needs fixing**, the direction is to make the overdue case jump rather than
+  walk: when an instance wakes to find `today > params.localDate`, re-derive the next
+  target from *today* (the same scan the cron does) instead of from `localDate + 1`, so
+  the catch-up is one hop regardless of how far behind the wake was. That is a behaviour
+  change in `care-day-chain.ts` with its own mutation-tested guard, and is deliberately
+  out of scope for this change.
 
 `CareReminderWorkflow.run`
 (now a thin wrapper around `care-reminder-loop.ts`'s `runCareReminderDay`, extracted so
@@ -150,8 +305,14 @@ rejects — see Testing below):
 
 1. `step.do("mark-missed")` — `markMissedForUserDay` (moved from every Cron tick to
    once per instance-day; same insert-if-absent semantics, unchanged frequency-per-slot
-   since a slot only ever needs marking once).
-2. Loop: `step.do("plan-next-wake")` (`buildSlotSnapshots` + `planNextWake`, returning
+   since a slot only ever needs marking once). Stays first, ahead of step 2 (W1').
+2. `step.do("plan-day-start-wait")` + `step.sleep("sleep-until-day-start")`, in a loop
+   — 0 and no sleep at all for an instance owning today; otherwise sleep to this
+   instance's own `localDate` 00:00 and re-check (waking early, or into a DST shift,
+   just computes a smaller wait; `utcInstantFor` resolves a gap to the first legal
+   instant after it, so this cannot spin at 0ms). Required by W1' — without it a
+   future-dated instance exits instantly and cascades.
+3. Loop: `step.do("plan-next-wake")` (`buildSlotSnapshots` + `planNextWake`, returning
    both the planned wake instant and the instant it was planned at) → if the wake is
    still in the future, `step.sleep` for that **relative** duration; if it is already
    due (`planNextWake` legitimately returns "now" for a slot inside
@@ -164,7 +325,7 @@ rejects — see Testing below):
    `planNextWake` itself also uses inside the same step** — two computations of the
    same `now`/`timeZone` can never disagree, so a same-step self-comparison is
    structurally unreachable and the loop would never exit (an earlier revision of
-   this change had exactly that bug: `spawn-tomorrow` could never run). Mutation-
+   this change had exactly that bug: the exit step could never run). Mutation-
    verified in both directions in `care-reminder-loop.test.ts`'s "BLOCKER" describe
    block: forcing the exit check to always-false (never exits) hits the free-plan
    step-budget ceiling instead of resolving; forcing it always-true (exits
@@ -191,15 +352,44 @@ rejects — see Testing below):
    back to a fixed 5-minute floor. Worst case with the floor engaged: ~288 rounds/day x
    3 steps ≈ 900, comfortably under budget — a 1-minute floor would not be (1,440
    rounds x 3 > 3,000).
-3. `step.do("spawn-tomorrow")` — creates tomorrow's instance by its deterministic id;
-   an id collision (the daily cron's repair pass beat it there) is silently ignored.
+4. `step.do("spawn-next-care-day")` — asks `nextCareChainDate` (W1') for the next day
+   this user actually has something scheduled, anchored on this instance's own
+   `localDate`, and creates that day's instance by its deterministic id; an id collision
+   (the daily cron's repair pass, or another chain, beat it there) is silently ignored.
+   When the answer is `null` nothing is created and the chain ends —
+   followed by `step.do("final-mark-missed")` for this instance's own day, since no
+   successor exists to do it. The step name deliberately differs from the retired
+   `spawn-tomorrow` so an in-flight instance replaying cached step results across a
+   deploy can never match an old step's output to the new step's meaning.
 
 A daily Cron (`ensureCareDayInstances`, `wrangler.toml`'s `crons = ["5 16 * * *"]` ≈
-00:05 Asia/Taipei) is the safety net: for every distinct (userId, timezone) with an
-enabled schedule, `ensureToday` — a no-op when today's instance already exists. A
-broken chain (an instance crashed without reaching step 3, or was terminated)
-self-heals within 24h. First deploy has no chain yet — the PR/deploy checklist below
-covers bootstrapping it.
+00:05 Asia/Taipei) is the safety net: it groups every enabled schedule by user, asks the
+**same** `nextCareChainDate` the chain itself uses (with today eligible), and calls
+`ensureFor` for that day — a no-op when that instance already exists, and nothing at all
+when the answer is `null`. A broken chain (an instance crashed without reaching its exit
+step, or was terminated) self-heals within 24h. First deploy has no chain yet — the
+PR/deploy checklist below covers bootstrapping it.
+
+The old invariant here was "the cron's net is wider than the loop's" (it created today's
+instance unconditionally). That is retired and replaced by a sharper one: **the successor
+function is a function of the schedule calendar alone, never of the anchor's position,
+so the cron and the chain cannot disagree about which day should own an instance** —
+even though the cron anchors on `previousLocalDate(today)` and the chain anchors on its
+own `localDate`. Spelling out why that holds for both branches, since "they call the same
+function" alone does **not** imply it (a function can still be anchor-sensitive):
+- *Firing-day branch:* for anchors `a1 < a2`, the days scanned from `a2` are a subset of
+  those scanned from `a1`, so the two agree whenever `a2` has not yet passed the answer.
+  On the day the answer arrives, cron's anchor is `answer - 1` and it re-derives the same
+  `answer` — an `ensureFor` that no-ops against the instance already running it.
+- *Checkpoint branch:* the answer is the next day on the global 90-day grid, which every
+  anchor inside the same grid cell maps to identically. On the grid day itself, cron
+  (anchor `c - 1`) re-derives `c` and no-ops; from `c + 1` onward both cron and the
+  instance that ran on `c` name `c + 90`.
+
+The cron still recomputes daily, so any break is repaired within 24h. Repair also got
+*better*: because a repaired instance may be created for a future day and simply waits
+for it (step 2 above), a day is now covered from its own 00:00 rather than from whenever
+the cron happened to fire.
 
 **Immediate-effect restarts create a NEW instance id, not the deterministic one, but
 now find and terminate the PREVIOUS restart's instance too (fix/restart-instance-
@@ -209,7 +399,7 @@ tracking).** `restartToday` (`WorkflowsCareDayInstanceManager`) reads
 the pointer to that id, and only once that swap has won does it best-effort `terminate()`
 whatever the pointer named before (falling back to the deterministic id too, when it
 differs — e.g. on the day's first restart, cleaning up the instance the daily Cron's
-`ensureToday` created). The new id is deliberately **not** the deterministic one: the
+`ensureFor` created). The new id is deliberately **not** the deterministic one: the
 real Workflows API rejects `create()` for any id used before, even one that was just
 `terminate()`d, for as long as it stays within its retention window, so the original
 terminate-then-create-same-id sequence's `create()` call failed on **every single
@@ -454,11 +644,28 @@ the HTTP caller — because the daily repair Cron and the instance's own chained
 are the durable paths; this is a latency improvement only, bounded above by "wait for
 the instance's own next wake" if it fails.
 
+**The restart gate (fix/idle-instance-chain).** `restartCareDayBestEffort` now returns
+early — before `expediteNoSubscriptionsRetry`, before `restartToday` — when the caller
+has **no upcoming care day at all** (`hasUpcomingCareDate`, i.e. `nextCareChainDate`
+with today made eligible via `previousLocalDate`). Without it, deleting the last
+schedule would immediately seed a fresh instance for a day with nothing in it. Three
+properties are deliberate:
+- it is **skip-only**: it can prevent a restart, never redirect one;
+- it asks about *any* future day, **not** "is today active" — a user whose reminders
+  start next week must still get their restart (mutation-verified in both directions);
+- when today happens to be idle but a later day is not, it still restarts **today's**
+  instance. That instance sleeps to midnight and its `spawn-next-care-day` step jumps
+  the chain to the right day, costing one transitional ≤24h instance. Creating the
+  future-dated instance directly instead would require the pointer table to stop meaning
+  "today" — see residual risk (e).
+
 ## Testing
 
 - `test/shared-kernel/reminder-clock.test.ts`: `utcInstantFor` ordinary-day round-trips
   (Asia/Taipei, America/New_York) and both 2026 US DST transitions;
-  `nextLocalMidnightInstant` in a no-DST zone and across a DST-transition day.
+  `nextLocalMidnightInstant` in a no-DST zone and across a DST-transition day;
+  `epochDayOf` at/around the epoch and advancing by exactly 1 per calendar day over a
+  year boundary (the property the checkpoint grid rests on).
 - `test/contexts/notifications/application/run-care-day.test.ts` (replaces
   `run-care-tick.test.ts`, same in-memory-fake style, all prior scenarios migrated):
   `dispatchDueRounds` (materialize/dispatch/nag/retry-floor/grace/claim-loss/isolation/
@@ -469,6 +676,34 @@ the instance's own next wake" if it fails.
   case), `buildSlotSnapshots`.
 - `test/db/care-occurrence-claim.test.ts` (PGlite): the three `claimAttempt` cases
   above.
+- `test/contexts/notifications/domain/care-schedule.test.ts` (fix/idle-instance-chain):
+  `nextCareChainDate` — daily → tomorrow, Mondays-only → the next Monday (not tomorrow),
+  every-2-weeks anchored on `startDate` → the on-week, a future `startDate` → its first
+  active day, an expired schedule → `null`, a disabled schedule → `null` (with the
+  enabled counter-case green), earliest-across-schedules, never returning
+  `afterLocalDate` itself, and both horizon outcomes (open-ended long interval →
+  checkpoint day; same interval with an end date inside the horizon → `null`). Plus three
+  "BLOCKER" cases for the grid property, which no single-anchor assertion can express:
+  90 consecutive anchors yield **at most 2** distinct answers (anchor-relative gives 90);
+  the cron's anchor on the checkpoint day re-derives that same day and then follows the
+  chain's own successor for the next 90 days; and two chains anchored 18 days apart land
+  on the same checkpoint. Mutation-verified: scanning from `afterLocalDate` inclusive,
+  dropping the `enabled` filter, inverting the checkpoint condition, restoring the
+  anchor-relative checkpoint (`? date :` instead of `? checkpoint :`), and decoupling the
+  grid modulus from the horizon each turn the matching cases red.
+- `test/contexts/notifications/application/care-day-chain.test.ts`: the two thin
+  wrappers, including that `hasUpcomingCareDate` counts **today** (dropping the
+  `previousLocalDate` shift turns it red — a user whose last care day is today would
+  otherwise lose it).
+- `test/contexts/notifications/application/ensure-care-day-instances.test.ts`: the cron
+  targets today when today fires, **the next Monday** for a Mondays-only user asked on a
+  Wednesday, nothing at all for an enabled-but-expired user, the earliest day across a
+  user's schedules, each user's own timezone, and one user's failure not stopping the
+  rest — plus a "BLOCKER" case running the cron on 20 consecutive days for a dormant
+  (checkpoint-branch) user and asserting **one** distinct target across all of them, the
+  end-to-end statement of the accumulation failure. Mutation-verified: reverting to
+  "always today", removing the `null` skip, and restoring the anchor-relative checkpoint
+  each turn their case red.
 - Every load-bearing guard (grace-vs-retry separation, claim-result gating, the DST gap
   branch, the leased-claim expiry) is mutation-verified: the fix reverted, the
   corresponding test(s) go red, the fix restored.
@@ -479,13 +714,22 @@ the instance's own next wake" if it fails.
   ceiling mirroring the free plan's 3,000 steps/day. Covers: a grace-window slot
   dispatches without ever attempting an invalid sleep (the direct regression test for
   the `sleepUntil`-on-a-past-instant crash); a not-yet-due slot sleeps a relative,
-  positive duration; a `null` plan result breaks the loop and spawns tomorrow without
-  dispatching; sustained no-progress rounds fall back to the 5-minute busy-loop floor
+  positive duration; a `null` plan result breaks the loop and spawns the next care day
+  without dispatching; sustained no-progress rounds fall back to the 5-minute busy-loop floor
   and stay within budget's shape; two genuinely-progressing immediate wakes in a row
   (two different slots both inside grace) are NOT delayed by that floor; two concurrent
-  loop executions over shared state never double-send a slot (see D6'' above). Every
-  one of these is mutation-verified (the corresponding fix reverted turns its test red,
+  loop executions over shared state never double-send a slot (see D6'' above); and, for
+  fix/idle-instance-chain, a Mondays-only user's midweek instance spawning **exactly**
+  the next Monday rather than tomorrow, a fully-answered day still spawning its
+  successor, a chain whose last schedule ends today spawning nothing **and** marking its
+  own day missed, and a future-dated instance sleeping to its own day's 00:00 instead of
+  exiting and cascading. Every one of these is mutation-verified (the corresponding fix reverted turns its test red,
   fix restored) — see the PR/commit for the exact mutations exercised.
+- `test/contexts/notifications/application/care-items.test.ts` /
+  `subscribe-web-push.test.ts`: the restart gate — no upcoming care day → neither
+  `expediteNoSubscriptionsRetry` nor `restartToday` is called; today idle but a later day
+  scheduled → `restartToday` **is** called (the reverse guard; a gate rewritten as "is
+  today active" turns it red).
 - `test/contexts/notifications/adapters/workflows-care-day-instance-manager.test.ts`:
   under a strict binding double (`StrictWorkflowBinding`) that rejects `create()` for
   any id used before (even a terminated one), `get()` for an unknown id, and — since
@@ -495,7 +739,7 @@ the instance's own next wake" if it fails.
   Covers: `restartToday` against an existing deterministic instance terminates it and
   **successfully** creates a new instance under a different id (the regression test for
   Bug B — the old code's `create()` failed every time under this double, silently,
-  exactly as it did against the real API); `ensureToday`'s existing collision-is-a-no-op
+  exactly as it did against the real API); `ensureFor`'s existing collision-is-a-no-op
   semantics is unchanged under the strict double; **three consecutive `restartToday`
   calls each terminate the PREVIOUS restart's instance, leaving `runningIds().length`
   at exactly 1 after every one** (fix/restart-instance-tracking's own regression test —
@@ -532,6 +776,32 @@ the instance's own next wake" if it fails.
   against one hand-picked schedule (mutation-verified together: reverting create-before-
   CAS to CAS-before-create, defaulting `wonRace` to `true`, or dropping the loser's own
   self-terminate each turn at least one of these three red).
+
+## Platform limits this design relies on
+
+Read from developers.cloudflare.com/workflows/reference/limits (free plan):
+`step.sleep` up to a year per call; 1,024 steps per instance; 100 concurrent instances
+per account; no cap on total instance duration. `CARE_CHAIN_HORIZON_DAYS = 90` keeps
+every sleep an order of magnitude inside the first (deliberately — see W1'); a dormant
+user costs 8 steps per checkpoint (mark-missed 1 + plan-day-start-wait 2 +
+sleep-until-day-start 1 + plan-next-wake 2 + sleep-until-next-due 1 +
+spawn-next-care-day 1 — counted off the run body below, not estimated) and one of the
+100 concurrent slots, so the 1,024-step ceiling is nowhere near binding and the
+concurrent-instance ceiling is the first thing that would bind if this app ever had
+~100 simultaneously-active users. Nothing in this design assumes headroom beyond that.
+
+**An in-flight instance keeps running the Worker version it was created under — this is
+measured, not assumed.** After deploying PR #100 on 2026-08-12, `wrangler workflows
+instances list care-reminder`'s **Version** column still showed the pre-deploy version
+`1478db41-7215-49a4-ba6d-6bfe1f76f3b6` for instances created before the deploy, and
+`1a80733d-482f-4143-a449-3385875832cb` for those created after. That column is the way
+to check this on any future deploy.
+
+The drain story is nevertheless written to hold under either assumption, because "the
+instances we can see" is not the same as "all of them": an old-code instance spawns its
+successor with old code, but that successor is a *new* instance running new code, which
+then applies the new exit rule at its own midnight. Worst case the pre-existing daily
+chain drains within two local midnights, with no manual cleanup.
 
 ## Deployment note
 

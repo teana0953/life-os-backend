@@ -42,7 +42,7 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
     return (await this.userRepository.getById(userId))?.timezone ?? "Asia/Taipei";
   }
 
-  async ensureToday(userId: string, localDate: string): Promise<void> {
+  async ensureFor(userId: string, localDate: string): Promise<void> {
     try {
       const timezone = await this.resolveTimezone(userId);
       await this.workflow.create({
@@ -54,7 +54,7 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
       // already exists for today), but also any real Workflows API failure —
       // there's no documented way to tell them apart from the error shape,
       // so log everything rather than risk staying silent on a real failure.
-      console.error("ensureToday: workflow.create failed", describeErrorChain(err));
+      console.error("ensureFor: workflow.create failed", describeErrorChain(err));
     }
   }
 
@@ -141,7 +141,7 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
    * the very instance the pointer now (unknowably, to us) names, so for a
    * short window NO instance is current for this user/day (residual risk,
    * see design.md) — the next `restartToday` (or the daily Cron's
-   * `ensureToday` repair pass within 24h) reads that dead id back out,
+   * `ensureFor` repair pass within 24h) reads that dead id back out,
    * terminates it (a harmless no-op), and creates a fresh one. The
    * alternative (assume win, skip the self-terminate) risks a permanent
    * orphan instead of a temporary gap — an orphan never self-heals, since
@@ -226,7 +226,7 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
       }
     }
     if (deterministicId !== recorded) {
-      // The daily Cron's `ensureToday` (or the day's very first instance)
+      // The daily Cron's `ensureFor` (or the day's very first instance)
       // uses the deterministic id directly and never touches the pointer —
       // clean it up too, whenever it isn't the id we just terminated above.
       try {

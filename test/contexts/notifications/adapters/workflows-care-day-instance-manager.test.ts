@@ -19,11 +19,11 @@ function fakeUserRepository(): Pick<UserRepository, "getById"> {
 }
 
 describe("WorkflowsCareDayInstanceManager", () => {
-  it("ensureToday: creates with an id matching Cloudflare's allowed format", async () => {
+  it("ensureFor: creates with an id matching Cloudflare's allowed format", async () => {
     const workflow = new StrictWorkflowBinding();
     const manager = new WorkflowsCareDayInstanceManager(workflow as never, fakeUserRepository(), new InMemoryCareDayInstancePointerStore());
 
-    await manager.ensureToday(USER_ID, LOCAL_DATE);
+    await manager.ensureFor(USER_ID, LOCAL_DATE);
 
     expect(workflow.createCalls).toHaveLength(1);
     const id = workflow.createCalls[0];
@@ -31,11 +31,11 @@ describe("WorkflowsCareDayInstanceManager", () => {
     expect(id.length).toBeLessThanOrEqual(100);
   });
 
-  it("ensureToday and restartToday derive the id from userId and localDate (not a constant)", async () => {
+  it("ensureFor and restartToday derive the id from userId and localDate (not a constant)", async () => {
     const workflow = new StrictWorkflowBinding();
     const manager = new WorkflowsCareDayInstanceManager(workflow as never, fakeUserRepository(), new InMemoryCareDayInstancePointerStore());
 
-    await manager.ensureToday(USER_ID, LOCAL_DATE);
+    await manager.ensureFor(USER_ID, LOCAL_DATE);
     await manager.restartToday(USER_ID, LOCAL_DATE);
 
     for (const id of workflow.createCalls) {
@@ -44,15 +44,15 @@ describe("WorkflowsCareDayInstanceManager", () => {
     }
   });
 
-  it("ensureToday: logs (does not throw) when workflow.create fails", async () => {
+  it("ensureFor: logs (does not throw) when workflow.create fails", async () => {
     const workflow = new StrictWorkflowBinding();
     await workflow.create({ id: DETERMINISTIC_ID, params: {} }); // pre-occupy the id.
     const manager = new WorkflowsCareDayInstanceManager(workflow as never, fakeUserRepository(), new InMemoryCareDayInstancePointerStore());
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    // Second ensureToday for the same (user, day): the deterministic id already
+    // Second ensureFor for the same (user, day): the deterministic id already
     // exists — the strict binding's create() must reject the collision.
-    await expect(manager.ensureToday(USER_ID, LOCAL_DATE)).resolves.toBeUndefined();
+    await expect(manager.ensureFor(USER_ID, LOCAL_DATE)).resolves.toBeUndefined();
 
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
@@ -66,7 +66,7 @@ describe("WorkflowsCareDayInstanceManager", () => {
   describe("restartToday", () => {
     it("when today's deterministic instance already exists: terminates it, then SUCCEEDS at creating a fresh instance under a new id", async () => {
       const workflow = new StrictWorkflowBinding();
-      await workflow.create({ id: DETERMINISTIC_ID, params: {} }); // e.g. created earlier by ensureToday/the daily cron.
+      await workflow.create({ id: DETERMINISTIC_ID, params: {} }); // e.g. created earlier by ensureFor/the daily cron.
       const terminateSpy = vi.fn(async () => {});
       workflow.get = async () => ({ terminate: terminateSpy });
       const manager = new WorkflowsCareDayInstanceManager(workflow as never, fakeUserRepository(), new InMemoryCareDayInstancePointerStore());

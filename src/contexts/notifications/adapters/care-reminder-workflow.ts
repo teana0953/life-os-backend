@@ -27,17 +27,17 @@ export class CareReminderWorkflow extends WorkflowEntrypoint<Env, CareReminderWo
       pushSender: deps.pushSender,
     };
 
-    await runCareReminderDay({ userId, localDate, timezone }, step, careDeps, async (tomorrowLocalDate) => {
+    await runCareReminderDay({ userId, localDate, timezone }, step, careDeps, async (nextCareLocalDate) => {
       try {
         await this.env.CARE_REMINDER_WORKFLOW.create({
-          id: careDayInstanceId(userId, tomorrowLocalDate),
-          params: { userId, localDate: tomorrowLocalDate, timezone },
+          id: careDayInstanceId(userId, nextCareLocalDate),
+          params: { userId, localDate: nextCareLocalDate, timezone },
         });
       } catch (err) {
         // Expected outcome includes a deterministic id collision (e.g. the
         // daily cron's repair pass already created it), but also any real
         // Workflows API failure - log rather than risk staying silent.
-        console.error("spawn-tomorrow: workflow.create failed", describeErrorChain(err));
+        console.error("spawn-next-care-day: workflow.create failed", describeErrorChain(err));
       }
     });
   }

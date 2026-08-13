@@ -434,6 +434,7 @@ export function createApp(options: CreateAppOptions) {
     pushSubscriptionRepository: options.pushSubscriptionRepository,
     pushSender: options.pushSender,
     vapidPublicKey: options.vapidPublicKey,
+    careItemRepository: options.careItemRepository,
     careDayInstanceManager: options.careDayInstanceManager,
     careOccurrenceRepository: options.careOccurrenceRepository,
   };
@@ -445,7 +446,11 @@ export function createApp(options: CreateAppOptions) {
   app.put(
     "/api/user/timezone",
     authMiddleware,
-    createSetUserTimezoneHandler({ userRepository: options.userRepository, careDayInstanceManager: options.careDayInstanceManager }),
+    createSetUserTimezoneHandler({
+      userRepository: options.userRepository,
+      careItemRepository: options.careItemRepository,
+      careDayInstanceManager: options.careDayInstanceManager,
+    }),
   );
 
   // The assistant (ai-assistant): reads finance and split records through the

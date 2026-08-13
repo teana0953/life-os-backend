@@ -11,8 +11,13 @@ export interface CareDayInstanceManager {
    * cron's bootstrap/repair path, W1). A no-op when one already exists
    * (deterministic instance id, so `create` colliding with an existing id is
    * the expected, silently-ignored outcome — not an error).
+   *
+   * `localDate` may be today or any future day: the cron now targets the next
+   * day the user actually has something scheduled, and an instance created
+   * ahead of its own day waits for it to start before doing anything. (Named
+   * `ensureToday` until that became untrue.)
    */
-  ensureToday(userId: string, localDate: string): Promise<void>;
+  ensureFor(userId: string, localDate: string): Promise<void>;
 
   /**
    * Best-effort immediate-effect hook: terminates today's instance (if any)
@@ -35,7 +40,7 @@ export interface CareDayInstanceManager {
  * one created — this table is what makes that possible.
  *
  * Only `WorkflowsCareDayInstanceManager.restartToday` reads or writes this —
- * `ensureToday` and the instance's own midnight self-spawn both use the
+ * `ensureFor` and the instance's own chained self-spawn both use the
  * deterministic id and are found by construction, so they never touch this
  * table (no added per-day DB write on those paths).
  */
