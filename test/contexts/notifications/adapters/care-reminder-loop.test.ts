@@ -319,10 +319,14 @@ describe("runCareReminderDay — Bug A (sleepUntil crashing on an already-past w
     await runCareReminderDay({ userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI }, step, deps, async () => {}, () => strict.now());
 
     expect(sleeps[0]).toEqual({ name: "sleep-until-next-due", ms: 60 * 60_000 }); // exactly 1 hour, a relative duration.
+    // An instance owning TODAY must never sleep in the day-start preamble —
+    // the wait is 0 and `StrictWorkflowStep` would reject a 0ms sleep anyway.
+    expect(sleeps.filter((s) => s.name === "sleep-until-day-start")).toEqual([]);
   });
 
-  it("null exit: a null plan result breaks the loop without dispatching, and spawns tomorrow", async () => {
-    const { deps } = buildDeps();
+  it("null exit: a null plan result breaks the loop without dispatching, and spawns the next care day", async () => {
+    const { careItemRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [] }); // fires daily — the next care day is tomorrow.
     const calls: string[] = [];
     const step: CareReminderStep = {
       do: async (name, cb) => {
@@ -340,7 +344,10 @@ describe("runCareReminderDay — Bug A (sleepUntil crashing on an already-past w
       spawned.push(tomorrow);
     });
 
-    expect(calls).toEqual(["mark-missed", "plan-next-wake", "spawn-tomorrow"]); // no dispatch-due-rounds.
+    // `plan-day-start-wait` runs (and returns 0, so no sleep) even for an
+    // instance owning today; no dispatch-due-rounds, and no final-mark-missed
+    // since the chain continues.
+    expect(calls).toEqual(["mark-missed", "plan-day-start-wait", "plan-next-wake", "spawn-next-care-day"]);
     expect(spawned).toEqual(["2026-08-13"]);
   });
 
@@ -441,19 +448,19 @@ describe("runCareReminderDay — BLOCKER: the loop must exit on ITS OWN owned lo
     // instead busy-loop until StrictWorkflowStep's step-budget rejection
     // rejects the whole call, never resolving.
     expect(spawned).toEqual(["2026-08-13"]);
-    expect(calls.filter((c) => c.name === "spawn-tomorrow")).toHaveLength(1);
+    expect(calls.filter((c) => c.name === "spawn-next-care-day")).toHaveLength(1);
 
     // The dispatch that answered the day's slot happened strictly before the
     // exit — ordering evidence against a too-eager exit slipping in front of
     // real same-day work.
     const dispatchIndex = calls.findIndex((c) => c.name === "dispatch-due-rounds");
-    const spawnIndex = calls.findIndex((c) => c.name === "spawn-tomorrow");
+    const spawnIndex = calls.findIndex((c) => c.name === "spawn-next-care-day");
     expect(dispatchIndex).toBeGreaterThan(-1);
     expect(dispatchIndex).toBeLessThan(spawnIndex);
 
     // The wake that finally exited genuinely landed on the next calendar day
     // in Taipei time, not merely some later instant still on LOCAL_DATE.
-    const exitAt = calls[spawnIndex - 1]; // the plan-next-wake call immediately preceding the exit's spawn-tomorrow.
+    const exitAt = calls[spawnIndex - 1]; // the plan-next-wake call immediately preceding the exit's spawn-next-care-day.
     expect(exitAt.name).toBe("plan-next-wake");
     expect(exitAt.atIso >= "2026-08-12T16:00:00.000Z").toBe(true); // >= 2026-08-13T00:00 Taipei.
   });
@@ -560,5 +567,136 @@ describe("runCareReminderDay — gate_decision #1: two instances racing the same
     }
 
     expect(pushSender.sentTo).toEqual(["https://push.example.com/a"]); // exactly once, not twice.
+  });
+});
+
+describe("runCareReminderDay — fix/idle-instance-chain: the chain jumps to the next day that actually has something scheduled", () => {
+  it("a Monday-only user's midweek instance spawns the NEXT MONDAY, not tomorrow", async () => {
+    const { careItemRepo, deps } = buildDeps();
+    // repeatDays [1] = Mondays only. LOCAL_DATE is a Wednesday, so today has
+    // no slot at all and the next firing day is 2026-08-17.
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [1] });
+
+    const start = new Date("2026-08-11T16:00:00Z"); // 2026-08-12T00:00 Taipei.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    // Load-bearing as an EQUALITY, not just "non-empty": the pre-fix
+    // unconditional `nextLocalDate(localDate)` would spawn 2026-08-13 here,
+    // and each of those five idle instances would spawn another.
+    expect(spawned).toEqual(["2026-08-17"]);
+  });
+
+  it("a day with all slots already answered still spawns the next care day (answered-today is not no-slots)", async () => {
+    const { careItemRepo, careLogRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [] });
+    await careLogRepo.upsertIfAbsent({
+      userId: USER,
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: LOCAL_DATE,
+      timeOfDay: "09:00",
+      status: "done",
+      doneTime: null,
+      doseQuantity: 1,
+    });
+
+    const start = new Date("2026-08-11T16:00:00Z"); // 2026-08-12T00:00 Taipei.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    // Confusion guard: the successor decision reads the schedule calendar
+    // only. A version that also asked "does today still have unanswered
+    // slots" would end the chain here and silence tomorrow's reminders.
+    expect(spawned).toEqual(["2026-08-13"]);
+  });
+
+  it("a user whose only schedule ends today spawns nothing AND marks today's unanswered slot missed itself", async () => {
+    const { careItemRepo, careLogRepo, careOccurrenceRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [], endDate: LOCAL_DATE });
+    // Today's slot was materialized but never answered. `mark-missed` at the
+    // top of the run only covers days strictly BEFORE this instance's own —
+    // with the chain ending here, nobody else will ever mark this one.
+    await careOccurrenceRepo.upsertBySlot({
+      userId: USER,
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: LOCAL_DATE,
+      timeOfDay: "09:00",
+    });
+
+    const start = new Date("2026-08-12T15:50:00Z"); // 23:50 Taipei — 10 minutes before this instance's day ends.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step } = recordingStep(strict);
+    const spawned: string[] = [];
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      deps,
+      async (next) => {
+        spawned.push(next);
+      },
+      () => strict.now(),
+    );
+
+    expect(spawned).toEqual([]); // the chain terminates instead of seeding a permanently idle successor.
+    const log = await careLogRepo.getBySlot("sched-1", LOCAL_DATE, "09:00");
+    expect(log?.status).toBe("missed");
+  });
+
+  it("an instance created for a FUTURE care day sleeps until that day starts instead of exiting and spawning at once", async () => {
+    const { careItemRepo, subscriptionRepo, deps } = buildDeps();
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [] });
+    await subscriptionRepo.upsert({ userId: USER, endpoint: "https://push.example.com/a", p256dh: "k", auth: "a" });
+
+    const futureDate = "2026-08-15";
+    const start = new Date("2026-08-12T01:05:00Z"); // 09:05 Taipei, three days early.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const { step, sleeps } = stepStoppingAfterDispatches(strict, 1); // stop at the first dispatch — which must happen ON 2026-08-15.
+    const spawned: string[] = [];
+
+    // Without the day-start wait this resolves instead of rejecting: the very
+    // first plan-next-wake sees today !== 2026-08-15, exits, and spawns a
+    // successor immediately — the unbounded same-instant cascade this guards.
+    await expect(
+      runCareReminderDay(
+        { userId: USER, localDate: futureDate, timezone: TAIPEI },
+        step,
+        deps,
+        async (next) => {
+          spawned.push(next);
+        },
+        () => strict.now(),
+      ),
+    ).rejects.toThrow(TestStop);
+
+    expect(sleeps[0]).toEqual({
+      name: "sleep-until-day-start",
+      ms: new Date("2026-08-14T16:00:00Z").getTime() - start.getTime(), // 2026-08-15T00:00 Taipei.
+    });
+    expect(spawned).toEqual([]); // nothing was spawned before its own day even began.
   });
 });

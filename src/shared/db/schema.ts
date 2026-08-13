@@ -611,7 +611,7 @@ export const careOccurrence = pgTable(
 // `CareReminderWorkflow` instance id `restartToday` most recently created for
 // that user's `local_date` (fix/restart-instance-tracking — restartToday's
 // own bug, not W1's original design). Only the restartToday path ever writes
-// this table; `ensureToday`/spawn-tomorrow use the deterministic id and never
+// this table; `ensureFor`/spawn-next-care-day use the deterministic id and never
 // touch it, so this adds no per-day DB write to the cron/spawn paths. `PRIMARY
 // KEY (user_id)` doubles as the concurrency guard for restartToday's
 // CAS-based `setCurrentIfMatch` (INSERT ... ON CONFLICT (user_id) DO UPDATE

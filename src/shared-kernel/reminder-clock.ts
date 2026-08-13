@@ -77,6 +77,17 @@ export function weeksSince(anchorDate: string, localDate: string): number {
   return Math.floor(daysBetween / 7);
 }
 
+/**
+ * The number of whole days from 1970-01-01 to `date` (negative before it) —
+ * a calendar-absolute integer index for a `YYYY-MM-DD`, independent of any
+ * anchor or timezone. Exists so callers can quantize dates onto a fixed
+ * global grid (`epochDayOf(d) % N === 0`), which `weeksSince` cannot do:
+ * that one is relative to whatever anchor it is handed.
+ */
+export function epochDayOf(date: string): number {
+  return Math.round(parseLocalDateUTC(date) / MS_PER_DAY);
+}
+
 /** The weekday (0=Sun..6=Sat) of an arbitrary `YYYY-MM-DD` (locale/DST independent). */
 export function weekdayOf(date: string): number {
   return new Date(parseLocalDateUTC(date)).getUTCDay();

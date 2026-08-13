@@ -3,6 +3,7 @@ import { sendTestPush } from "../../../contexts/notifications/application/send-t
 import { subscribeWebPush } from "../../../contexts/notifications/application/subscribe-web-push";
 import { unsubscribeWebPush } from "../../../contexts/notifications/application/unsubscribe-web-push";
 import type { CareDayInstanceManager } from "../../../contexts/notifications/domain/care-day-instance";
+import type { CareItemRepository } from "../../../contexts/notifications/domain/care-item";
 import type { CareOccurrenceRepository } from "../../../contexts/notifications/domain/care-occurrence";
 import type { PushSender } from "../../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../../contexts/notifications/domain/push-subscription";
@@ -16,6 +17,8 @@ export interface PushHandlerOptions {
   pushSubscriptionRepository: PushSubscriptionRepository;
   pushSender: PushSender;
   vapidPublicKey: string;
+  /** Read by the restart hook's gate (skip when the subscriber has no upcoming care day). */
+  careItemRepository: CareItemRepository;
   /** Optional: care/timezone/push-subscription changes best-effort restart today's instance (key_decisions "即時生效機制"). */
   careDayInstanceManager?: CareDayInstanceManager;
   /** Optional, paired with `careDayInstanceManager`: does the actual expediting of a `no_subscriptions` slot — see `subscribeWebPush`. */
@@ -31,7 +34,7 @@ export function createGetVapidPublicKeyHandler(options: Pick<PushHandlerOptions,
 
 /** Protected `POST /api/push/subscribe`: register (or, on a repeat `endpoint`, replace) a Web Push subscription. */
 export function createSubscribeWebPushHandler(
-  options: Pick<PushHandlerOptions, "userRepository" | "pushSubscriptionRepository" | "careDayInstanceManager" | "careOccurrenceRepository">,
+  options: Pick<PushHandlerOptions, "userRepository" | "pushSubscriptionRepository" | "careDayInstanceManager" | "careItemRepository" | "careOccurrenceRepository">,
 ) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
@@ -41,6 +44,7 @@ export function createSubscribeWebPushHandler(
       ? {
           instanceManager: options.careDayInstanceManager,
           userRepository: options.userRepository,
+          careItemRepo: options.careItemRepository,
           careOccurrenceRepo: options.careOccurrenceRepository,
         }
       : undefined;

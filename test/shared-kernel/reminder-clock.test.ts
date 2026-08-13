@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  epochDayOf,
   localMinute,
   localParts,
   nextLocalDate,
@@ -54,6 +55,25 @@ describe("weeksSince", () => {
 
   it("is negative when the anchor date is in the future relative to localDate", () => {
     expect(weeksSince("2026-07-10", "2026-07-01")).toBeLessThan(0);
+  });
+});
+
+describe("epochDayOf", () => {
+  it("is 0 at the epoch and counts whole calendar days from it", () => {
+    expect(epochDayOf("1970-01-01")).toBe(0);
+    expect(epochDayOf("1970-01-02")).toBe(1);
+    expect(epochDayOf("1969-12-31")).toBe(-1);
+  });
+
+  it("advances by exactly 1 per calendar day across month and year boundaries", () => {
+    // The property `nextCareChainDate`'s checkpoint grid rests on: any N
+    // consecutive days contain exactly one multiple of N.
+    let date = "2026-12-20";
+    for (let i = 0; i < 30; i++) {
+      const next = nextLocalDate(date);
+      expect(epochDayOf(next) - epochDayOf(date)).toBe(1);
+      date = next;
+    }
   });
 });
 

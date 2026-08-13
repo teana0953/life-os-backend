@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { restartCareDayBestEffort } from "../../../contexts/notifications/application/restart-care-day";
 import type { CareDayInstanceManager } from "../../../contexts/notifications/domain/care-day-instance";
+import type { CareItemRepository } from "../../../contexts/notifications/domain/care-item";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
@@ -8,6 +9,8 @@ import { BadRequestError, requireString } from "../validation";
 
 export interface UserTimezoneHandlerOptions {
   userRepository: UserRepository;
+  /** Read by the restart hook's gate (skip when the caller has no upcoming care day). */
+  careItemRepository: CareItemRepository;
   /** Optional: best-effort restarts today's instance so the new timezone takes effect within seconds (key_decisions "即時生效機制"). */
   careDayInstanceManager?: CareDayInstanceManager;
 }
@@ -36,7 +39,7 @@ export function createSetUserTimezoneHandler(options: UserTimezoneHandlerOptions
     const timezone = requireIanaTimezone(body.timezone, "timezone");
     await options.userRepository.updateTimezone(userId, timezone);
     if (options.careDayInstanceManager) {
-      await restartCareDayBestEffort(userId, options.careDayInstanceManager, options.userRepository);
+      await restartCareDayBestEffort(userId, options.careDayInstanceManager, options.userRepository, options.careItemRepository);
     }
     return c.json({ timezone });
   };

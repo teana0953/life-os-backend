@@ -1,4 +1,5 @@
-import { nextLocalDate } from "../../../shared-kernel/reminder-clock";
+import { localParts, nextLocalDate, utcInstantFor } from "../../../shared-kernel/reminder-clock";
+import { planNextCareChainDate } from "../application/care-day-chain";
 import { buildSlotSnapshots, dispatchDueRounds, markMissedForUserDay, planNextWake, type RunCareDayDeps, type SlotSnapshot } from "../application/run-care-day";
 
 /**
@@ -64,14 +65,48 @@ export async function runCareReminderDay(
   params: CareReminderLoopParams,
   step: CareReminderStep,
   deps: RunCareDayDeps,
-  spawnTomorrow: (tomorrowLocalDate: string) => Promise<void>,
+  spawnNext: (nextCareLocalDate: string) => Promise<void>,
   now: () => Date = () => new Date(),
 ): Promise<void> {
   const { userId, localDate, timezone } = params;
 
+  // Stays FIRST, before the day-start wait below: a successor instance is
+  // created at the previous care day's local midnight and starts running
+  // immediately, so "yesterday's unanswered slots get marked missed at
+  // midnight" keeps exactly the timing it had when every instance owned the
+  // very next calendar day. Passing a `localDate` that is still in the future
+  // only widens the `< localDate` window this marks, and the skipped days in
+  // between normally have no occurrences to mark — only a day an instance
+  // actually ran ever materializes one. Should a transitional restart instance
+  // materialize some on a jumped-over day after this instance already passed
+  // this step, nothing is lost: `listPastUnlogged` is "every strictly-past
+  // unanswered occurrence", not "yesterday's", so the next instance sweeps
+  // them up — late by at most one firing interval, never dropped.
   await step.do("mark-missed", async () => {
     await markMissedForUserDay(userId, localDate, deps);
   });
+
+  // This instance may have been created for a FUTURE care day (the chain now
+  // jumps straight to the next day something actually fires, and so does the
+  // cron). Without this wait it would fall through to `plan-next-wake`, see
+  // `todayLocalDate !== localDate`, exit at once, and spawn its own successor
+  // — an unbounded same-instant cascade that would burn the whole step budget.
+  // For an instance owning today (every instance before this change) the wait
+  // is 0 and no `sleep` is issued at all — which is exactly what the strict
+  // step double's rejection of a non-positive `sleep` guards.
+  for (;;) {
+    const waitMs = await step.do("plan-day-start-wait", async () => {
+      const at = now();
+      if (localParts(at, timezone).date >= localDate) return 0;
+      return utcInstantFor(localDate, "00:00", timezone).getTime() - at.getTime();
+    });
+    if (waitMs <= 0) break;
+    // Re-checked rather than assumed: waking a little early (or into a DST
+    // shift) simply computes a new, smaller wait. `utcInstantFor` resolves a
+    // gap to the first legal instant after it, so "now >= that instant"
+    // always implies the local date has arrived — this cannot spin at 0ms.
+    await step.sleep("sleep-until-day-start", waitMs);
+  }
 
   let prevSignature: string | undefined;
   let noProgressStreak = 0;
@@ -122,7 +157,29 @@ export async function runCareReminderDay(
     prevSignature = signature;
   }
 
-  await step.do("spawn-tomorrow", async () => {
-    await spawnTomorrow(nextLocalDate(localDate));
+  // Hand off to the next day this user actually has something scheduled —
+  // not unconditionally to tomorrow. A "every Monday" user's Monday instance
+  // spawns next Monday directly instead of six instances that wake only to
+  // find nothing and spawn again. The anchor is this instance's own
+  // `localDate` (the scan starts the day after it), so when tomorrow IS a
+  // care day the behaviour is identical to the old unconditional spawn.
+  //
+  // Step name deliberately differs from the retired `spawn-tomorrow`: an
+  // in-flight instance replaying cached step results across a deploy must not
+  // match an old step's output to this step's new meaning.
+  const nextCareDate = await step.do("spawn-next-care-day", async () => {
+    const target = await planNextCareChainDate(deps.careItemRepo, userId, localDate);
+    if (target !== null) await spawnNext(target);
+    return target;
   });
+
+  if (nextCareDate === null) {
+    // Nothing will ever fire again, so no successor exists to mark this day's
+    // unanswered slots missed the way every other day's are. Only reachable
+    // on a terminating chain; `upsertIfAbsent` still never clobbers a real
+    // answer the user recorded.
+    await step.do("final-mark-missed", async () => {
+      await markMissedForUserDay(userId, nextLocalDate(localDate), deps);
+    });
+  }
 }
