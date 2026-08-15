@@ -25,7 +25,6 @@ function toDomain(row: FriendInviteRow): FriendInvite {
   };
 }
 
-/** Driven adapter: implements FriendInviteRepository via Drizzle + Neon. */
 export class DrizzleFriendInviteRepository implements FriendInviteRepository {
   constructor(private readonly getDb: () => Db) {}
 

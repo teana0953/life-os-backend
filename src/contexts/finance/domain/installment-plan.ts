@@ -1,5 +1,5 @@
 /**
- * An instalment plan (openspec/changes/add-installments): a fixed-count,
+ * An instalment plan (openspec/changes/archive/2026-08-07-add-installments): a fixed-count,
  * real-charge schedule — N ordinary transactions, one per month, anchored on
  * the start day. The plan row records HOW the transactions were generated; it
  * is never an accounting invariant. In particular "plan amount = sum of its

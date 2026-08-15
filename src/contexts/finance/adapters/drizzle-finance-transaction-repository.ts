@@ -32,7 +32,6 @@ export function financeTransactionRowToDomain(row: FinanceTransactionRow): Finan
   };
 }
 
-/** Driven adapter: implements FinanceTransactionRepository via Drizzle + Neon. */
 export class DrizzleFinanceTransactionRepository implements FinanceTransactionRepository {
   constructor(private readonly getDb: () => Db) {}
 

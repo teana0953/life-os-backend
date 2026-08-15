@@ -3,7 +3,7 @@ import { planCareChainDateOnOrAfter } from "../application/care-day-chain";
 import { buildSlotSnapshots, dispatchDueRounds, markMissedForUserDay, planNextWake, type RunCareDayDeps, type SlotSnapshot } from "../application/run-care-day";
 
 /**
- * Bug A fix (see goal.md): consecutive immediate (no-sleep) wakes with no
+ * Bug A fix: consecutive immediate (no-sleep) wakes with no
  * observable state change get pushed out to this floor instead of busy-
  * looping. 5, not a smaller value, is chosen for the free-plan step budget:
  * worst case ~288 rounds/day (24h / 5min) x 3 steps/round ≈ 900, comfortably

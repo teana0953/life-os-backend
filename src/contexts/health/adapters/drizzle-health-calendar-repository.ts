@@ -13,7 +13,6 @@ const LOGGED_TABLES: { table: PgTable; userId: PgColumn; day: PgColumn }[] = [
   { table: vitals, userId: vitals.userId, day: vitals.day },
 ];
 
-/** Driven adapter: implements HealthCalendarRepository via Drizzle + Neon. */
 export class DrizzleHealthCalendarRepository implements HealthCalendarRepository {
   constructor(private readonly getDb: () => Db) {}
 

@@ -87,7 +87,6 @@ describe("setBodyProfile", () => {
   it("rejects a non-positive height or target weight", async () => {
     await expect(setBodyProfile(repo, "user-1", { heightCm: 0 })).rejects.toBeInstanceOf(InvalidBodyProfileError);
     await expect(setBodyProfile(repo, "user-1", { targetWeightKg: -1 })).rejects.toBeInstanceOf(InvalidBodyProfileError);
-    // nothing stored
     expect(await repo.get("user-1")).toBeNull();
   });
 });

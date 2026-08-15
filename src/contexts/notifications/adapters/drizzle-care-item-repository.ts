@@ -66,7 +66,6 @@ function scheduleInputToRow(
   };
 }
 
-/** Driven adapter: implements CareItemRepository via Drizzle + Neon. */
 export class DrizzleCareItemRepository implements CareItemRepository {
   constructor(private readonly getDb: () => Db) {}
 

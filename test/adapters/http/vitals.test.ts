@@ -170,7 +170,6 @@ class InMemoryUserRepository implements UserRepository {
 class InMemoryVitalsRepository implements VitalsRepository {
   private byUserDay = new Map<string, VitalsRecord>();
 
-  /** Test helper: seed a whole record for a user/day. */
   seed(record: VitalsRecord) {
     this.byUserDay.set(`${record.userId}:${record.day}`, record);
   }

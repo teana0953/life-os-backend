@@ -32,7 +32,6 @@ function toDomain(row: FoodItemRow): FoodItem {
   };
 }
 
-/** Driven adapter: implements FoodDictionaryRepository via Drizzle + Neon. */
 export class DrizzleFoodDictionaryRepository implements FoodDictionaryRepository {
   constructor(private readonly getDb: () => Db) {}
 

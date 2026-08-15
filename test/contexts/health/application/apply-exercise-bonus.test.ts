@@ -110,7 +110,7 @@ describe("applyExerciseBonus", () => {
   });
 
   it("clears the bonus when the day has no exercise", async () => {
-    const exercise = new FakeExerciseRepository({}); // no entries
+    const exercise = new FakeExerciseRepository({});
     const targets = new FakeDailyTargetRepository();
     targets.seed("2026-07-18", 12);
 

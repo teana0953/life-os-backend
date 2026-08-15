@@ -15,7 +15,6 @@ function toDomain(row: MenstrualPeriodRow): MenstrualPeriod {
   };
 }
 
-/** Driven adapter: implements MenstrualRepository via Drizzle + Neon. */
 export class DrizzleMenstrualRepository implements MenstrualRepository {
   constructor(private readonly getDb: () => Db) {}
 

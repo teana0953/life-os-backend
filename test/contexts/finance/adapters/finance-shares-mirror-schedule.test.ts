@@ -9,7 +9,7 @@ import { FakeBudgetAlertNotifier, InMemoryFinanceBudgetRepository, InMemoryFinan
  * (condition inversion, never addition), and the period dates are anchored on
  * the split's day.
  *
- * RED PHASE (openspec/changes/split-installments): `SplitShareInput` has no
+ * RED PHASE (openspec/changes/archive/2026-08-07-split-installments): `SplitShareInput` has no
  * `schedule` field yet, so the fixtures cast it in — `plan` ignores it today
  * and returns one lump row, which is exactly what these assertions refuse.
  *

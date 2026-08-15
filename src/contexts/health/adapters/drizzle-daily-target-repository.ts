@@ -22,7 +22,6 @@ function toDomain(row: DailyTargetRow): DailyTarget {
   };
 }
 
-/** Driven adapter: implements DailyTargetRepository via Drizzle + Neon. */
 export class DrizzleDailyTargetRepository implements DailyTargetRepository {
   constructor(private readonly getDb: () => Db) {}
 

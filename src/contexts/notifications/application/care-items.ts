@@ -83,7 +83,6 @@ function validateNonNegativeInteger(value: number | null | undefined, field: str
   }
 }
 
-/** Use case: create a care item and its schedules, validating category + each schedule's fields. */
 export async function createCareItem(
   repository: CareItemRepository,
   input: CreateCareItemInput,
@@ -98,7 +97,6 @@ export async function createCareItem(
   return created;
 }
 
-/** Use case: list the caller's care items, optionally filtered by category. */
 export async function listCareItems(
   repository: CareItemRepository,
   userId: string,

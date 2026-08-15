@@ -81,7 +81,6 @@ describe("splitSpendingForUser (real Postgres)", () => {
     expect(await spending(A, "2026-03")).toEqual({ TWD: 250, USD: 50 });
   });
 
-  // 4.3
   it("counts only the requested month and returns nothing for an empty one", async () => {
     expect(await spending(A, "2026-04")).toEqual({ TWD: 999 });
     expect(await repo.splitSpendingForUser(A, "2026-05")).toEqual([]);
@@ -118,7 +117,6 @@ describe("DrizzleExpenseGroupRepository.shareAnyGroup (real Postgres)", () => {
     await insertMember(db, H, D);
   });
 
-  // 4.4
   it("is true for a pair in the same group", async () => {
     expect(await repo.shareAnyGroup(A, B)).toBe(true);
   });

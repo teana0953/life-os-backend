@@ -2,7 +2,7 @@ import type { CareReminderStep } from "../../../../src/contexts/notifications/ad
 
 /**
  * Test doubles that model real Cloudflare Workflows API limits a permissive
- * fake never would — the shared lesson from goal.md's Bug A/B (and #99): a
+ * fake never would — the shared lesson from Bug A/B (and #99): a
  * step/binding fake that never refuses anything can't distinguish "works" from
  * "works only because the fake is lenient". Each modeled limit below is
  * exercised by at least one test in `care-reminder-loop.test.ts` or

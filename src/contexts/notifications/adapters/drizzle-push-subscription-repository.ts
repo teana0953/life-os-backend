@@ -9,7 +9,6 @@ function toDomain(row: PushSubscriptionRow): PushSubscription {
   return { userId: row.userId, endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth };
 }
 
-/** Driven adapter: implements PushSubscriptionRepository via Drizzle + Neon. */
 export class DrizzlePushSubscriptionRepository implements PushSubscriptionRepository {
   constructor(private readonly getDb: () => Db) {}
 

@@ -18,7 +18,6 @@ function toDomain(row: ExerciseLogRow): ExerciseEntry {
   };
 }
 
-/** Driven adapter: implements ExerciseRepository via Drizzle + Neon. */
 export class DrizzleExerciseRepository implements ExerciseRepository {
   constructor(private readonly getDb: () => Db) {}
 

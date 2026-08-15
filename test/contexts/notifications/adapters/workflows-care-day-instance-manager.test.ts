@@ -58,7 +58,7 @@ describe("WorkflowsCareDayInstanceManager", () => {
     errorSpy.mockRestore();
   });
 
-  // Bug B (goal.md): `restartToday` used to terminate-then-create with the
+  // Bug B: `restartToday` used to terminate-then-create with the
   // SAME deterministic id, which the real Workflows API rejects for any id
   // used before, even a just-terminated one, within its retention window —
   // so create() always failed and got silently swallowed. This is

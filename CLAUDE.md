@@ -138,6 +138,62 @@ speculatively (YAGNI).
 5. Wire routes under `src/adapters/http/routes/` and inject the new use cases
    from `src/index.ts`.
 
+## Comments
+
+Default: **don't write a comment.** If the code reads clearly on its own,
+leave it alone — this includes `/** ... */` doc comments: a doc comment that
+only restates the class name and its `implements` clause (e.g. `/** Driven
+adapter: implements SettlementRepository via Drizzle + Neon. */` on
+`class DrizzleSettlementRepository implements SettlementRepository`) is still
+a comment that shouldn't exist.
+
+Write a comment only when it carries something the code can't say by itself:
+
+- **Why, not what** — a design decision or a rejected alternative. E.g.
+  `src/shared/db/read-only-query.ts` explains why the allowlist is
+  deliberately not a SQL tokenizer: a false negative just costs a retry, but
+  a false positive could double a stock decrement or a ledger row.
+- **A bug or incident you already hit** — so the next person doesn't
+  reintroduce it. E.g. `src/shared/db/client.ts` records the actual timestamp
+  and shape of a 520 incident that motivated the current retry behavior.
+- **A platform limitation that shapes the code around it.** E.g.
+  `src/contexts/health/adapters/http-chaodays-client.ts`: a realistic
+  browser `User-Agent` is set so a WAF/bot rule doesn't reject the worker's
+  default UA — an obvious-looking simplification would get the client
+  blocked.
+- **Why not the obvious/simpler approach.** E.g.
+  `src/contexts/notifications/adapters/care-reminder-loop.ts` notes that a
+  Workflows step name is deliberately kept as-is even though its anchor
+  changed, because the step name is a persisted identifier and renaming it
+  would desync in-flight instances.
+- **Units, formats, or timezone/DST handling that a bare type can't express.**
+  E.g. `/** The repayment, in the currency's minor units. */` on a plain
+  `number` field, or the DST gap/fold handling in
+  `src/shared-kernel/reminder-clock.ts`.
+- **Boundary conditions and invariants**, especially ones enforced across
+  files. E.g. `src/contexts/split/domain/balance.ts`: "Positive = they owe
+  the viewer; negative = the viewer owes them. Never zero — zero-net
+  currencies are omitted (design.md)."
+- **Comments with real semantic effect**: `// eslint-disable*`,
+  `// @ts-expect-error` / `@ts-ignore` / `@ts-nocheck`, `// coverage:ignore*`
+  / `// v8 ignore` / `// c8 ignore`, `@internal` / `@deprecated` — deleting
+  these changes what the linter/type-checker/coverage tool does, not just
+  what a reader sees. Keep any `--` reasoning attached to them.
+- **File-header authorship/generator/license banners.**
+- **In tests: what failure mode a test guards against, or why a fixture is
+  shaped the way it is.** A pure `// Arrange` / `// Act` / `// Assert` label
+  or a comment that just translates the next line's assertion into English
+  adds nothing and can go; a comment naming the edge case, the boundary
+  being exercised, or why two tests are a deliberate pair does not. Any
+  comment mentioning mutation testing / a mutation survivor, an issue
+  number, a design.md clause, or a real-device measurement stays.
+- **`TODO` / `FIXME` / `HACK` markers**, and commented-out code — leave both
+  alone; this sweep doesn't touch either.
+
+When unsure whether a comment adds information, leave it — the cost of one
+extra sentence is far lower than the cost of re-discovering a lesson someone
+already paid to learn.
+
 ## Testing strategy
 
 - **domain / application layers**: plain Vitest unit tests. Use cases are

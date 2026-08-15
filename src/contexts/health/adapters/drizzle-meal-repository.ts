@@ -70,7 +70,6 @@ function itemToRow(mealEntryId: string, item: CreateMealItemInput): typeof mealI
   };
 }
 
-/** Driven adapter: implements MealRepository via Drizzle + Neon. */
 export class DrizzleMealRepository implements MealRepository {
   constructor(private readonly getDb: () => Db) {}
 

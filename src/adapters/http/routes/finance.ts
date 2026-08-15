@@ -340,7 +340,7 @@ export function createCreateInstallmentPlanHandler(options: FinanceHandlerOption
   };
 }
 
-/** Protected `GET /api/finance/installment-plans/:id`: the period count, creation mode and start month a client needs (design.md D6d) — never verifies ownership beyond "some row with this id exists"; the finance API otherwise never leaks a wrong-owner 404 vs 403 distinction either. */
+/** Protected `GET /api/finance/installment-plans/:id`: the period count, creation mode and start month a client needs (design.md D6d) — the finance API never leaks a wrong-owner 404 vs 403 distinction. */
 export function createGetInstallmentPlanHandler(options: FinanceHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));

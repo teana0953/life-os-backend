@@ -199,7 +199,6 @@ class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   }
 }
 
-/** Scriptable fake: returns results from `resultByEndpoint`, defaulting to "sent". */
 class ScriptedPushSender implements PushSender {
   resultByEndpoint = new Map<string, PushSendResult>();
 

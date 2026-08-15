@@ -19,7 +19,6 @@ function toDomain(row: CareLogRow): CareLog {
   };
 }
 
-/** Driven adapter: implements CareLogRepository via Drizzle + Neon. */
 export class DrizzleCareLogRepository implements CareLogRepository {
   constructor(private readonly getDb: () => Db) {}
 
