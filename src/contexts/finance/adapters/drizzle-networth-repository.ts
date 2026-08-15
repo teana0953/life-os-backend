@@ -32,7 +32,6 @@ function snapshotToDomain(row: NetWorthSnapshotRow): NetWorthSnapshot {
   return { id: row.id, userId: row.userId, accountId: row.accountId, month: row.month, value: row.value };
 }
 
-/** Driven adapter: implements NetWorthRepository via Drizzle + Neon. */
 export class DrizzleNetWorthRepository implements NetWorthRepository {
   constructor(private readonly getDb: () => Db) {}
 

@@ -41,7 +41,6 @@ function memberOfSettlementGroup(db: Db, userId: string) {
   );
 }
 
-/** Driven adapter: implements SettlementRepository via Drizzle + Neon. */
 export class DrizzleSettlementRepository implements SettlementRepository {
   constructor(private readonly getDb: () => Db) {}
 

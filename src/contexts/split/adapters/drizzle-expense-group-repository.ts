@@ -30,7 +30,6 @@ function toMember(row: GroupMemberRow, user: MemberUserRow): GroupMember {
   };
 }
 
-/** Driven adapter: implements ExpenseGroupRepository via Drizzle + Neon. */
 export class DrizzleExpenseGroupRepository implements ExpenseGroupRepository {
   constructor(private readonly getDb: () => Db) {}
 

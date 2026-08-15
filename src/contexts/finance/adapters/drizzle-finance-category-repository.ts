@@ -18,7 +18,6 @@ function toDomain(row: FinanceCategoryRow): FinanceCategory {
   };
 }
 
-/** Driven adapter: implements FinanceCategoryRepository via Drizzle + Neon. */
 export class DrizzleFinanceCategoryRepository implements FinanceCategoryRepository {
   constructor(private readonly getDb: () => Db) {}
 

@@ -10,7 +10,6 @@ function toDomain(row: BowelLogRow): BowelLog {
   return { userId: row.userId, day: row.day, count: row.count, isNormal: row.isNormal, note: row.note };
 }
 
-/** Driven adapter: implements BowelRepository via Drizzle + Neon. */
 export class DrizzleBowelRepository implements BowelRepository {
   constructor(private readonly getDb: () => Db) {}
 

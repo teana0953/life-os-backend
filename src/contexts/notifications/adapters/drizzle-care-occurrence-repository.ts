@@ -20,7 +20,6 @@ function toDomain(row: CareOccurrenceRow): CareOccurrence {
   };
 }
 
-/** Driven adapter: implements CareOccurrenceRepository via Drizzle + Neon. */
 export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository {
   constructor(private readonly getDb: () => Db) {}
 

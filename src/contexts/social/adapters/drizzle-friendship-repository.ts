@@ -25,7 +25,6 @@ function toFriend(row: FriendUserRow): Friend {
   return { userId: row.userId, displayName: friendDisplayName(row.displayName, row.email) };
 }
 
-/** Driven adapter: implements FriendshipRepository via Drizzle + Neon. */
 export class DrizzleFriendshipRepository implements FriendshipRepository {
   constructor(private readonly getDb: () => Db) {}
 

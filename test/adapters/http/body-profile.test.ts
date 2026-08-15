@@ -204,7 +204,6 @@ class InMemoryVitalsRepository implements VitalsRepository {
     throw new Error("not used in this test");
   }
 
-  /** Test helper: seed a weight for a user on a day. */
   seedWeight(userId: string, day: string, weightKg: number) {
     this.byUserDay.set(`${userId}:${day}`, {
       userId,

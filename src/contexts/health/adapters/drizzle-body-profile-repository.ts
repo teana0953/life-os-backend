@@ -14,7 +14,6 @@ function toDomain(row: BodyProfileRow): BodyProfile {
   };
 }
 
-/** Driven adapter: implements BodyProfileRepository via Drizzle + Neon. */
 export class DrizzleBodyProfileRepository implements BodyProfileRepository {
   constructor(private readonly getDb: () => Db) {}
 

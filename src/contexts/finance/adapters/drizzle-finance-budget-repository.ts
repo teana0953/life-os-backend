@@ -33,7 +33,6 @@ async function spentSum(db: Db, userId: string, categoryId: string | null, month
   return row?.amount ? Number(row.amount) : 0;
 }
 
-/** Driven adapter: implements FinanceBudgetRepository via Drizzle + Neon. */
 export class DrizzleFinanceBudgetRepository implements FinanceBudgetRepository {
   constructor(private readonly getDb: () => Db) {}
 

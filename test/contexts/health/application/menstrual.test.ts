@@ -109,7 +109,6 @@ describe("updatePeriod", () => {
     await expect(updatePeriod(repo, "user-1", created.id, { endDate: "2026-05-01" })).rejects.toBeInstanceOf(
       InvalidPeriodError,
     );
-    // unchanged
     expect(repo.periods[0].endDate).toBeNull();
   });
 

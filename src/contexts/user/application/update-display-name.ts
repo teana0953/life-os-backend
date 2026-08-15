@@ -5,7 +5,6 @@ export const MAX_DISPLAY_NAME_LENGTH = 50;
 
 export class InvalidDisplayNameError extends Error {}
 
-/** Trims and persists the user's chosen name. */
 export async function updateDisplayName(
   repository: UserDisplayNameRepository,
   userId: string,

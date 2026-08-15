@@ -15,7 +15,6 @@ function targetToDomain(row: WaterTargetRow): WaterTarget {
   return { userId: row.userId, day: row.day, targetMl: Number(row.targetMl) };
 }
 
-/** Driven adapter: implements WaterRepository via Drizzle + Neon. */
 export class DrizzleWaterRepository implements WaterRepository {
   constructor(private readonly getDb: () => Db) {}
 

@@ -25,7 +25,6 @@ function toDomain(row: VitalsRow): VitalsRecord {
   };
 }
 
-/** Driven adapter: implements VitalsRepository via Drizzle + Neon. */
 export class DrizzleVitalsRepository implements VitalsRepository {
   constructor(private readonly getDb: () => Db) {}
 

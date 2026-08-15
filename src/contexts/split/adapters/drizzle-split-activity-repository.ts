@@ -61,7 +61,6 @@ export function visibleTo(db: Db, userId: string) {
   )`;
 }
 
-/** Driven adapter: implements SplitActivityRepository via Drizzle + Neon. */
 export class DrizzleSplitActivityRepository implements SplitActivityRepository {
   constructor(private readonly getDb: () => Db) {}
 
