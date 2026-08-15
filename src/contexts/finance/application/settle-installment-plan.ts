@@ -2,6 +2,7 @@ import { type CheckBudgetAlertsDeps, checkBudgetAlerts } from "./check-budget-al
 import type { InstallmentDeps } from "./create-installment-plan";
 import { InstallmentPlanNotFound, InvalidFinanceInputError } from "../domain/errors";
 import { localParts } from "../../../shared-kernel/reminder-clock";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 export interface SettleInstallmentPlanInput {
   userId: string;
@@ -69,7 +70,7 @@ export async function settleInstallmentPlan(
         date: today,
       });
     } catch (err) {
-      console.error("budget alert check failed", err);
+      console.error("budget alert check failed", describeErrorChain(err));
     }
   }
 }

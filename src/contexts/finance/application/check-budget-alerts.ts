@@ -4,6 +4,7 @@ import type { FinanceBudgetRepository } from "../domain/finance-budget-repositor
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { FinanceTransactionType } from "../domain/finance-transaction";
 import { localParts } from "../../../shared-kernel/reminder-clock";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 const THRESHOLDS = [80, 100] as const;
 
@@ -74,7 +75,7 @@ async function checkBudget(deps: CheckBudgetAlertsDeps, userId: string, category
     try {
       await deps.notifier.notify(userId, message);
     } catch (err) {
-      console.error("budget alert push failed", err);
+      console.error("budget alert push failed", describeErrorChain(err));
     }
   }
 }

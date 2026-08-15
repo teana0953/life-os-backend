@@ -4,6 +4,7 @@ import type { FinanceCategoryRepository } from "../domain/finance-category-repos
 import type { CreateFinanceTransactionInput, FinanceTransaction } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import { validateTransactionFields } from "./validate-transaction-fields";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 /**
  * Use case: create a transaction. `category_id` must exist, belong to the
@@ -39,7 +40,7 @@ export async function createTransaction(
         date: transaction.date,
       });
     } catch (err) {
-      console.error("budget alert check failed", err);
+      console.error("budget alert check failed", describeErrorChain(err));
     }
   }
 

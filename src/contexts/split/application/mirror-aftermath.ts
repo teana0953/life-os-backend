@@ -1,4 +1,5 @@
 import type { ShareMirrorRow, SharesMirror } from "../domain/shares-mirror";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 /**
  * Runs the mirror's post-write side effects (the share holders' budget-alert
@@ -13,6 +14,6 @@ export async function writeMirrorAftermath(mirror: SharesMirror, rows: ShareMirr
   try {
     await mirror.afterWrite(rows);
   } catch (err) {
-    console.error("split mirror afterWrite failed", err);
+    console.error("split mirror afterWrite failed", describeErrorChain(err));
   }
 }

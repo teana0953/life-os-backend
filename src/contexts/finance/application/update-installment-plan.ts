@@ -4,6 +4,7 @@ import { InstallmentPlanNotFound, InvalidFinanceInputError } from "../domain/err
 import type { InstallmentRow } from "../domain/installment-plan";
 import { addMonthsAnchored, assertValidPeriods, divideEvenly } from "./installment-support";
 import { localParts } from "../../../shared-kernel/reminder-clock";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 export interface UpdateInstallmentPlanInput {
   userId: string;
@@ -79,7 +80,7 @@ export async function updateInstallmentPlan(
           date: row.day,
         });
       } catch (err) {
-        console.error("budget alert check failed", err);
+        console.error("budget alert check failed", describeErrorChain(err));
       }
     }
   }

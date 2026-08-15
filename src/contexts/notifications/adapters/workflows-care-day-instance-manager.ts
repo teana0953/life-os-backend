@@ -1,4 +1,4 @@
-import { describeErrorChain } from "../../../adapters/http/error-logging";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 import type { UserRepository } from "../../user/domain/user-repository";
 import type { CareDayInstanceManager, CareDayInstancePointerStore } from "../domain/care-day-instance";
 

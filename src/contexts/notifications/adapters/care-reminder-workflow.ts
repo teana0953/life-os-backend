@@ -1,5 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { describeErrorChain } from "../../../adapters/http/error-logging";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 import { type Env, getCached } from "../../../index";
 import type { RunCareDayDeps } from "../application/run-care-day";
 import { runCareReminderDay } from "./care-reminder-loop";

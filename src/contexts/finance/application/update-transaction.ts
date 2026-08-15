@@ -11,6 +11,7 @@ import type { FinanceCategoryRepository } from "../domain/finance-category-repos
 import type { FinanceTransaction, ReplaceFinanceTransactionInput } from "../domain/finance-transaction";
 import type { FinanceTransactionRepository } from "../domain/finance-transaction-repository";
 import { validateTransactionFields } from "./validate-transaction-fields";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 /**
  * Which of a mirror's fields a full-replace update would actually rewrite.
@@ -120,7 +121,7 @@ export async function updateTransaction(
         date: updated.date,
       });
     } catch (err) {
-      console.error("budget alert check failed", err);
+      console.error("budget alert check failed", describeErrorChain(err));
     }
   }
 
