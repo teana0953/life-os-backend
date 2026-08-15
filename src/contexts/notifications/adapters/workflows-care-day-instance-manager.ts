@@ -63,8 +63,8 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
    * suffixed id (`${deterministicId}_r${uuid}`), NOT the deterministic one —
    * Cloudflare rejects `create()` for any id used before, even a
    * just-terminated one, within its retention window, so re-creating with
-   * `deterministicId` would deterministically fail every time (goal.md Bug
-   * B). But that means the id a later `restartToday` needs to terminate is
+   * `deterministicId` would deterministically fail every time. But that
+   * means the id a later `restartToday` needs to terminate is
    * NOT derivable from `(userId, localDate)` alone — it has to be looked up.
    * `pointerStore` is that lookup: the one durable record of which id the
    * previous `restartToday` created, so THIS call can find and terminate it
@@ -126,11 +126,10 @@ export class WorkflowsCareDayInstanceManager implements CareDayInstanceManager {
    * resolved; there is nothing left for A to do). Exactly one instance
    * (`newIdB`) survives. This is the regression test for the exact
    * interleaving the walker's probe constructed:
-   * `workflows-care-day-instance-manager.test.ts`'s "a later restartToday
-   * that starts after this call's CAS has committed, but finishes before
-   * this call's own create() would have, still leaves exactly one instance
-   * running" (mutation-verified: reverting to CAS-before-create turns it
-   * red).
+   * `workflows-care-day-instance-manager.test.ts`'s "a later restartToday's
+   * terminate() of a just-superseded id is a REAL termination (not a
+   * no-op), even when it races the superseded call's own cleanup"
+   * (mutation-verified: reverting to CAS-before-create turns it red).
    *
    * `wonRace` defaults to `false` (treat as "lost"), not `true`: an
    * unverifiable CAS (the store call itself throws) must not be assumed to

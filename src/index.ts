@@ -141,7 +141,7 @@ function buildDeps(env: Env) {
  * `fetch` and `scheduled` both go through `getCached` instead of calling
  * `buildDeps`/`createApp` directly, so a warm isolate reuses one build across
  * requests instead of reconstructing all 28 repositories and re-registering
- * every route each time (see goal.md — CPU-time errors on Workers Free).
+ * every route each time (CPU-time errors on Workers Free).
  *
  * Cache key is `env` by object identity (`===`), not a deep comparison. In
  * this Workers runtime the same isolate is observed to be handed the same

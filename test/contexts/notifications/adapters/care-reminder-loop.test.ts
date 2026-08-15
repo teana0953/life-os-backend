@@ -286,7 +286,7 @@ describe("runCareReminderDay — Bug A (sleepUntil crashing on an already-past w
     await subscriptionRepo.upsert({ userId: USER, endpoint: "https://push.example.com/a", p256dh: "k", auth: "a" });
 
     // 09:05 Taipei = 5 minutes late, within the 10-minute grace: this is
-    // exactly the restartToday shape from goal.md Bug A (a slot just past due
+    // exactly the restartToday shape from Bug A (a slot just past due
     // when a fresh instance's very first plan-next-wake runs).
     const start = new Date("2026-08-12T01:05:00Z");
     const strict = new StrictWorkflowStep(start, 3000);
@@ -487,7 +487,7 @@ describe("runCareReminderDay — gate_decision #2: backoff must not delay a legi
     // the 3rd call to listActiveSchedulesForUserOn (round 1's dispatch has
     // already run by then) — simulating a schedule the user creates via a
     // concurrent HTTP request WHILE this instance is mid-round, landing
-    // between round 1's dispatch and round 2's plan (goal.md's own example:
+    // between round 1's dispatch and round 2's plan (motivating example:
     // "16:02 建了排程、16:05 又建一個 16:00 的").
     // One subscription: push subscriptions are per-USER, not per-schedule, so
     // both schedules' rounds send to this same endpoint — the assertion below

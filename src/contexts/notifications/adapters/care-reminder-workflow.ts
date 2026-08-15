@@ -12,7 +12,7 @@ import { careDayInstanceId, type CareReminderWorkflowParams } from "./workflows-
  * fake repositories with no Workflows runtime involved (see R1 in
  * replace-cron-with-workflows/design.md). The wake/dispatch loop itself lives
  * in `care-reminder-loop.ts`'s `runCareReminderDay`, testable under a strict
- * step double that mimics real Workflows API limits (Bug A in goal.md) - this
+ * step double that mimics real Workflows API limits (Bug A) - this
  * class's only job is wiring `step`/`env` into it.
  */
 export class CareReminderWorkflow extends WorkflowEntrypoint<Env, CareReminderWorkflowParams> {
