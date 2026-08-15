@@ -6,6 +6,7 @@ import { DEFAULT_CATEGORIES, FALLBACK_CATEGORY_NAME } from "../domain/default-ca
 import type { FinanceBudgetRepository } from "../domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../domain/finance-category-repository";
 import type { MirrorPlanInput, ShareMirrorRow, SharesMirror } from "../../split/domain/shares-mirror";
+import { describeErrorChain } from "../../../shared-kernel/error-logging";
 
 export interface FinanceSharesMirrorDeps {
   categories: FinanceCategoryRepository;
@@ -151,7 +152,7 @@ export class FinanceSharesMirror implements SharesMirror {
           { userId: row.userId, type: "expense", currency: row.currency, categoryId: row.categoryId, date: row.day },
         );
       } catch (error) {
-        console.error("budget alert check failed for a split mirror", { userId: row.userId, error });
+        console.error("budget alert check failed for a split mirror", { userId: row.userId, error: describeErrorChain(error) });
       }
     }
   }

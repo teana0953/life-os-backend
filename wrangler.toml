@@ -8,6 +8,37 @@ compatibility_flags = ["nodejs_compat"]
 # and in a local, untracked `.dev.vars` file for `wrangler dev`.
 # See `.dev.vars.example` for the required keys.
 
+# 2026-08-15 08:05-08:15: Neon reads failed for ~10 minutes and killed the
+# reminder chain's workflow instance (care-day_04e566e5..._2026-08-15, Errored
+# at plan-next-wake-4). The three `[db] ...` console.warn lines PR #104 added in
+# src/shared/db/retry-fetch.ts had already been emitted — but with no
+# [observability] block Workers Logs is off, so they only existed for whoever
+# happened to have `wrangler tail` open at that second. Root-causing it
+# afterwards was impossible: retry logging alone buys nothing unless the logs
+# are retained, and this block is the part that was missing.
+#
+# head_sampling_rate is pinned to 1 even though 1 is already the default
+# (developers.cloudflare.com/workers/wrangler/configuration/#observability:
+# "If head_sampling_rate is unspecified, it is configured to a default value of
+# 1 (100%)"). It is written out because sampling is the wrong knob for this
+# Worker: the events worth keeping — retry exhaustion, 5xx chains — are rare and
+# bursty, so any rate below 1 would most likely discard the single incident
+# being investigated. A silent change to Cloudflare's default would thin the
+# logs with nothing in the repo to notice against.
+#
+# Cost is not a constraint here. Free plan allows 200,000 log events/day with
+# 3-day retention (workers/observability/logs/workers-logs/, agreeing with
+# workers/platform/pricing/). Reaching that at ~1 invocation log per invocation
+# needs ~2.3 invocations/second sustained for 24h; this app's sources are one
+# cron/day, one workflow instance per (user, local day), and a single-user PWA
+# — orders of magnitude below, even counting each console line as its own
+# event on top of the invocation log. invocation_logs is left at its default
+# (on) for the same reason: volume is abundant, and "the step ran and failed
+# fast" vs "the step never ran" was exactly the distinction being chased above.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # Daily repair net (D7 revised in replace-cron-with-workflows/design.md): the
 # per-minute dispatch tick is gone, replaced by one Cloudflare Workflows
 # instance per (user, local day) that sleeps until each reminder is due. This
