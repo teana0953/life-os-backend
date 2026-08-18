@@ -17,8 +17,9 @@ import type {
   CreateCareOccurrenceInput,
   RecordAttemptInput,
 } from "../../../../src/contexts/notifications/domain/care-occurrence";
+import type { PushDeliveryRepository } from "../../../../src/contexts/notifications/domain/push-delivery";
 import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
-import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
+import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../../src/contexts/notifications/domain/push-subscription";
 import { StrictWorkflowStep } from "./strict-workflows-fakes";
 
 // --- Minimal in-memory repos (same shapes/semantics as run-care-day.test.ts's,
@@ -199,9 +200,14 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   private byEndpoint = new Map<string, PushSubscription>();
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
-    this.byEndpoint.set(subscription.endpoint, subscription);
-    return subscription;
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
+    // The real repository upserts on `endpoint` and leaves the existing row's
+    // `id` alone, so a re-subscribe from the same device keeps its identity.
+    // Reusing a stored id here reproduces that; minting a fresh one every time
+    // would make `push_delivery` rows look like they came from new devices.
+    const stored = { id: this.byEndpoint.get(subscription.endpoint)?.id ?? `sub-${this.byEndpoint.size + 1}`, ...subscription };
+    this.byEndpoint.set(subscription.endpoint, stored);
+    return stored;
   }
   async listByUser(userId: string): Promise<PushSubscription[]> {
     return [...this.byEndpoint.values()].filter((s) => s.userId === userId);
@@ -214,7 +220,7 @@ class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
 
 class RecordingPushSender implements PushSender {
   sentTo: string[] = [];
-  async send(subscription: PushSubscription, _message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscriptionKeys, _message: PushMessage): Promise<PushSendResult> {
     this.sentTo.push(subscription.endpoint);
     return { outcome: "sent" };
   }
@@ -230,7 +236,8 @@ function buildDeps() {
   const careOccurrenceRepo = new InMemoryCareOccurrenceRepository(careLogRepo);
   const subscriptionRepo = new InMemoryPushSubscriptionRepository();
   const pushSender = new RecordingPushSender();
-  const deps: RunCareDayDeps = { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender };
+  const pushDeliveryRepo: PushDeliveryRepository = { registerSent: async () => {}, markAcked: async () => false };
+  const deps: RunCareDayDeps = { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, pushDeliveryRepo };
   return { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, deps };
 }
 

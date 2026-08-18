@@ -171,6 +171,14 @@ beforeEach(() => {
       fetchMenstruals: notImplemented,
     },
     pushSubscriptionRepository: { upsert: notImplemented, listByUser: notImplemented, deleteByEndpoint: notImplemented },
+    pushDeliveryRepository: {
+      registerSent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      markAcked: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     pushSender: { send: notImplemented },
     vapidPublicKey: "",
     careItemRepository: {

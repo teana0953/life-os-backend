@@ -5,15 +5,20 @@ import type { CareChainItemRepo } from "../../../../src/contexts/notifications/a
 import type { CareItemWithSchedules, CareSchedule } from "../../../../src/contexts/notifications/domain/care-item";
 import type { CareOccurrenceRepository } from "../../../../src/contexts/notifications/domain/care-occurrence";
 import { localParts, nextLocalDate } from "../../../../src/shared-kernel/reminder-clock";
-import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
+import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../../src/contexts/notifications/domain/push-subscription";
 import type { UserRepository } from "../../../../src/contexts/user/domain/user-repository";
 
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   private byEndpoint = new Map<string, PushSubscription>();
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
-    this.byEndpoint.set(subscription.endpoint, subscription);
-    return subscription;
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
+    // The real repository upserts on `endpoint` and leaves the existing row's
+    // `id` alone, so a re-subscribe from the same device keeps its identity.
+    // Reusing a stored id here reproduces that; minting a fresh one every time
+    // would make `push_delivery` rows look like they came from new devices.
+    const stored = { id: this.byEndpoint.get(subscription.endpoint)?.id ?? `sub-${this.byEndpoint.size + 1}`, ...subscription };
+    this.byEndpoint.set(subscription.endpoint, stored);
+    return stored;
   }
 
   async listByUser(userId: string): Promise<PushSubscription[]> {
@@ -83,7 +88,7 @@ describe("subscribeWebPush", () => {
       auth: "auth-key",
     });
 
-    expect(stored).toEqual({
+    expect(stored).toMatchObject({
       userId: "user-1",
       endpoint: "https://push.example.com/abc",
       p256dh: "p256dh-key",
@@ -93,7 +98,7 @@ describe("subscribeWebPush", () => {
   });
 
   it("re-subscribing the same endpoint upserts (no duplicate, keys/userId updated)", async () => {
-    await subscribeWebPush(repo, {
+    const stored = await subscribeWebPush(repo, {
       userId: "user-1",
       endpoint: "https://push.example.com/abc",
       p256dh: "old-key",
@@ -108,9 +113,12 @@ describe("subscribeWebPush", () => {
     });
 
     expect(await repo.listByUser("user-1")).toEqual([]);
-    expect(await repo.listByUser("user-2")).toEqual([
+    expect(await repo.listByUser("user-2")).toMatchObject([
       { userId: "user-2", endpoint: "https://push.example.com/abc", p256dh: "new-key", auth: "new-auth" },
     ]);
+    // The device keeps its identity across a re-subscribe, so delivery rows
+    // written before it are still attributable to the same device.
+    expect((await repo.listByUser("user-2"))[0].id).toBe(stored.id);
     expect(repo.size()).toBe(1);
   });
 

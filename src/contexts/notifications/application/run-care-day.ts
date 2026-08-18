@@ -2,6 +2,8 @@ import { localMinute, localParts, nextLocalMidnightInstant, utcInstantFor } from
 import type { CareItem, CareItemRepository, CareSchedule } from "../domain/care-item";
 import type { CareLogRepository } from "../domain/care-log";
 import type { CareOccurrence, CareOccurrenceRepository, CareSendOutcome } from "../domain/care-occurrence";
+import { hashAckToken, mintAckToken } from "../domain/ack-token";
+import type { PushDeliveryRegistration, PushDeliveryRepository } from "../domain/push-delivery";
 import type { PushSendResult, PushSender } from "../domain/push-sender";
 import type { PushSubscriptionRepository } from "../domain/push-subscription";
 
@@ -37,6 +39,34 @@ export interface RunCareDayDeps {
   careOccurrenceRepo: CareOccurrenceRepository;
   subscriptionRepo: PushSubscriptionRepository;
   pushSender: PushSender;
+  /**
+   * Required, deliberately not optional: an optional one would give this file
+   * a second, silent path where reminders go out and no delivery is ever
+   * recorded — indistinguishable, in the data, from a fleet that never acks.
+   */
+  pushDeliveryRepo: PushDeliveryRepository;
+}
+
+/**
+ * RFC8030 5.2 `TTL` for this slot's push, in seconds.
+ *
+ * With a nag, the next nag is a REPLACEMENT for this message, not an addition
+ * to it, so holding this one past that point can only produce a pile-up on a
+ * phone that comes back online. TTL <= the nag interval buys the invariant
+ * "at most one live copy of a given slot sits in the push service at a time".
+ * (That invariant survives delivery acks only because an ack changes no
+ * dispatch decision at all — see `recordPushAck`; if acking ever gates a nag,
+ * re-derive this.)
+ *
+ * Without a nag the slot fires exactly once, so the ceiling has to come from
+ * how late this repo already says a reminder may usefully arrive: that number
+ * is `FIRST_FIRE_GRACE_MINUTES` (gate_decision #2 — a medication reminder
+ * 25 minutes late can be worse than none). Reusing it keeps ONE definition of
+ * "acceptably late" instead of inventing a second.
+ */
+function pushTtlSecondsFor(schedule: CareSchedule): number {
+  const minutes = schedule.nagIntervalMinutes > 0 ? schedule.nagIntervalMinutes : FIRST_FIRE_GRACE_MINUTES;
+  return minutes * 60;
 }
 
 /** Push body: dose summary for medication (when set), else the free-text note. */
@@ -177,9 +207,53 @@ async function dispatchSlot(
     return;
   }
 
+  // One token per (occurrence x subscription): the payload is encrypted per
+  // subscription, so two devices necessarily receive two different tokens —
+  // that is what makes an ack say WHICH device got it, and what stops one
+  // device's ack from speaking for another's.
+  const ttlSeconds = pushTtlSecondsFor(schedule);
+  const dispatches = subscriptions.map((subscription) => ({ subscription, ackToken: mintAckToken() }));
+  const registrations: PushDeliveryRegistration[] = await Promise.all(
+    dispatches.map(async ({ subscription, ackToken }) => ({
+      careOccurrenceId: occurrence.id,
+      pushSubscriptionId: subscription.id,
+      tokenHash: await hashAckToken(ackToken),
+      sentAt: now,
+      expiresAt: new Date(now.getTime() + ttlSeconds * 1000),
+    })),
+  );
+  // Before the first send, never after: a device can display the notification
+  // and POST its ack while this round is still running, and an ack that finds
+  // no row is silently lost.
+  //
+  // Swallowed, never rethrown: bookkeeping must not be able to block a
+  // medication reminder. The claim above has already been taken, so an
+  // exception escaping here would skip both the sends and recordAttempt,
+  // leaving the occurrence looking like an abandoned claim — the next retry
+  // is a full nag interval (>= 10 minutes) away. Neon has been observed
+  // returning intermittent 520s and losing in-flight fetches to a Workers CPU
+  // limit, so this is a real transient, and losing this round's acks
+  // under-reports delivery exactly the way the rest of the design already
+  // accepts.
+  try {
+    await deps.pushDeliveryRepo.registerSent(registrations);
+  } catch {
+    // intentionally ignored — see above.
+  }
+
   const results: PushSendResult[] = [];
-  for (const subscription of subscriptions) {
-    const result = await deps.pushSender.send(subscription, { title: item.title, body: messageBody(item) });
+  for (const { subscription, ackToken } of dispatches) {
+    const result = await deps.pushSender.send(subscription, {
+      title: item.title,
+      body: messageBody(item),
+      data: { ack: ackToken },
+      ttlSeconds,
+      // RFC8030 5.3 lists "incoming call or alert" against `high`, for a
+      // device in a low-battery state. It says nothing about FCM priority or
+      // Android Doze, and neither does anything else authoritative we found —
+      // do not claim an effect there.
+      urgency: "high",
+    });
     results.push(result);
     if (result.outcome === "expired") {
       await deps.subscriptionRepo.deleteByEndpoint(item.userId, subscription.endpoint);

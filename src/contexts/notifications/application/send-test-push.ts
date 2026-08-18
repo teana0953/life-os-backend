@@ -1,8 +1,21 @@
-import type { PushSender } from "../domain/push-sender";
+import type { PushMessage, PushSender } from "../domain/push-sender";
 import type { PushSubscriptionRepository } from "../domain/push-subscription";
 
-/** A fixed, generic test message — no personal data (per design "Privacy / security"). */
-export const TEST_MESSAGE = { title: "LifeOS 測試通知", body: "這是一則測試推播，確認裝置能正常接收通知。" };
+/**
+ * A fixed, generic test message — no personal data (per design "Privacy / security").
+ *
+ * `ttlSeconds` is 60 because this message means "I pressed the button, does my
+ * phone light up now": a test push that arrives after the user has walked away
+ * from the settings screen answers nothing. It carries no `data.ack` — there is
+ * no occurrence to attribute delivery to, and `POST /api/push/test` already
+ * answers synchronously with the per-subscription result.
+ */
+export const TEST_MESSAGE: PushMessage = {
+  title: "LifeOS 測試通知",
+  body: "這是一則測試推播，確認裝置能正常接收通知。",
+  ttlSeconds: 60,
+  urgency: "high",
+};
 
 export interface SendTestPushResult {
   sent: number;

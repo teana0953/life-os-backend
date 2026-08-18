@@ -1,7 +1,7 @@
 import type { UserRepository } from "../../user/domain/user-repository";
 import type { CareDayInstanceManager } from "../domain/care-day-instance";
 import type { CareOccurrenceRepository } from "../domain/care-occurrence";
-import type { PushSubscription, PushSubscriptionRepository } from "../domain/push-subscription";
+import type { PushSubscription, PushSubscriptionKeys, PushSubscriptionRepository } from "../domain/push-subscription";
 import type { CareChainItemRepo } from "./care-day-chain";
 import { restartCareDayBestEffort } from "./restart-care-day";
 
@@ -27,7 +27,7 @@ export interface SubscribeWebPushNotifyDeps {
 /** Use case: register (or, on a repeat `endpoint`, replace) a Web Push subscription for a user. */
 export async function subscribeWebPush(
   repository: PushSubscriptionRepository,
-  subscription: PushSubscription,
+  subscription: PushSubscriptionKeys,
   notify?: SubscribeWebPushNotifyDeps,
 ): Promise<PushSubscription> {
   const result = await repository.upsert(subscription);

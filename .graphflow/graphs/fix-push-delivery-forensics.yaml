@@ -1,0 +1,56 @@
+version: 1
+name: fix-push-delivery-forensics
+budget: 600k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  plan:
+    kind: task
+    role: planner
+    tier: heavy
+    prompt: "規劃 {{ inputs.goal }}(那是一份 goal 檔的絕對路徑,先讀它)。這是既有未 commit 分支的續作,先用 git status + git diff 看清楚現況再規劃。主體是一個資料保存 vs 資料可用性的取捨:送達紀錄不該被訂閱刪除帶走,但 SET NULL 之後那些列還有沒有診斷價值必須正面回答。計畫要逐項說明選了哪一種、代價是什麼、放棄的方案各自為什麼不行"
+    output_schema: plan
+
+  approve-plan:
+    kind: gate
+    after: [plan]
+    show: "{{ nodes.plan.output }}"
+    flow: full-only
+
+  implement:
+    kind: task
+    role: implementer
+    after: [approve-plan]
+    prompt: "依照這份已核可的實作計畫動手,逐步完成並自我驗證:{{ nodes.plan.output }}。守門要斷言實際送出的 HTTP 請求標頭(注入 fetchImpl),不是斷言常數值;每條守門都要突變確認能被殺死"
+
+  typecheck:
+    kind: script
+    after: [implement]
+    run: "npm run typecheck"
+
+  test:
+    kind: script
+    after: [implement]
+    run: "npx vitest run --no-file-parallelism"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [implement]
+
+  fix:
+    kind: task
+    role: fixer
+    after: [typecheck, test, code-review]
+    when: any-fail
+    goto: [typecheck, test, code-review]
+    max_iterations: 3
+
+  ship:
+    kind: gate
+    after: [typecheck, test, code-review]
+    when: all-pass
+    show: "{{ nodes.code-review.output }}"

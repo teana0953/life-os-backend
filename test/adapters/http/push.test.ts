@@ -2,6 +2,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import type { CryptoKey, JSONWebKeySet, JWTVerifyGetKey } from "jose";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/adapters/http/app";
+import { hashAckToken } from "../../../src/contexts/notifications/domain/ack-token";
 import type { BodyProfileRepository } from "../../../src/contexts/health/domain/body-profile-repository";
 import type { BowelRepository } from "../../../src/contexts/health/domain/bowel-repository";
 import type { ChaodaysClient } from "../../../src/contexts/health/domain/chaodays-client";
@@ -12,8 +13,9 @@ import type { MealRepository } from "../../../src/contexts/health/domain/meal-re
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
+import type { PushDeliveryRepository } from "../../../src/contexts/notifications/domain/push-delivery";
 import type { PushMessage, PushSendResult, PushSender } from "../../../src/contexts/notifications/domain/push-sender";
-import type { PushSubscription, PushSubscriptionRepository } from "../../../src/contexts/notifications/domain/push-subscription";
+import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../src/contexts/notifications/domain/push-subscription";
 import type { User } from "../../../src/contexts/user/domain/user";
 import type { GetOrCreateUserInput, UserRepository } from "../../../src/contexts/user/domain/user-repository";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
@@ -180,9 +182,14 @@ class InMemoryUserRepository implements UserRepository {
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   private byEndpoint = new Map<string, PushSubscription>();
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
-    this.byEndpoint.set(subscription.endpoint, subscription);
-    return subscription;
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
+    // The real repository upserts on `endpoint` and leaves the existing row's
+    // `id` alone, so a re-subscribe from the same device keeps its identity.
+    // Reusing a stored id here reproduces that; minting a fresh one every time
+    // would make `push_delivery` rows look like they came from new devices.
+    const stored = { id: this.byEndpoint.get(subscription.endpoint)?.id ?? `sub-${this.byEndpoint.size + 1}`, ...subscription };
+    this.byEndpoint.set(subscription.endpoint, stored);
+    return stored;
   }
 
   async listByUser(userId: string): Promise<PushSubscription[]> {
@@ -202,14 +209,29 @@ class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
 class ScriptedPushSender implements PushSender {
   resultByEndpoint = new Map<string, PushSendResult>();
 
-  async send(subscription: PushSubscription, _message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscriptionKeys, _message: PushMessage): Promise<PushSendResult> {
     return this.resultByEndpoint.get(subscription.endpoint) ?? { outcome: "sent" };
+  }
+}
+
+class RecordingPushDeliveryRepository implements PushDeliveryRepository {
+  ackedHashes: string[] = [];
+  /** What `markAcked` reports back — the route must treat both alike. */
+  result = true;
+
+  async registerSent(): Promise<void> {
+    throw new Error("not implemented in this test's fakes");
+  }
+  async markAcked(tokenHash: string): Promise<boolean> {
+    this.ackedHashes.push(tokenHash);
+    return this.result;
   }
 }
 
 function buildApp(vapidPublicKey = "test-vapid-public-key") {
   const pushSubscriptionRepository = new InMemoryPushSubscriptionRepository();
   const pushSender = new ScriptedPushSender();
+  const pushDeliveryRepository = new RecordingPushDeliveryRepository();
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
@@ -227,6 +249,7 @@ function buildApp(vapidPublicKey = "test-vapid-public-key") {
     chaodaysClient: stubChaodaysClient,
     pushSubscriptionRepository,
     pushSender,
+    pushDeliveryRepository,
     careItemRepository: {
       create: notImplemented,
       listByUser: notImplemented,
@@ -307,7 +330,7 @@ function buildApp(vapidPublicKey = "test-vapid-public-key") {
     modelClient: stubModelClient,
     ping: async () => {},
   });
-  return { app, pushSubscriptionRepository, pushSender };
+  return { app, pushSubscriptionRepository, pushSender, pushDeliveryRepository };
 }
 
 const VALID_BODY = {
@@ -462,5 +485,108 @@ describe("push HTTP routes", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ sent: 1, failed: 1, errors: ["status_410"] });
     expect(pushSubscriptionRepository.size()).toBe(1);
+  });
+});
+
+/**
+ * `POST /api/push/ack` is the only route under `/api/` with no
+ * `authMiddleware`, so these cases carry more weight than usual: they are the
+ * whole of what stands between the internet and this table.
+ *
+ * What they CANNOT show, because everything here is in-process: that a real
+ * service worker can issue this request at all while the app is closed, or
+ * that a phone with the screen off still runs it. Until life-os's
+ * `web/push_sw.js` ships and a real device is observed, no `acked_at` will
+ * ever be written in production.
+ */
+describe("POST /api/push/ack", () => {
+  const ACK_TOKEN = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE"; // 43 base64url chars.
+
+  async function postAck(app: ReturnType<typeof buildApp>["app"], body: string, headers: Record<string, string> = {}) {
+    return app.request("/api/push/ack", { method: "POST", body, headers });
+  }
+
+  it("accepts an ack with no Authorization header at all", async () => {
+    // The entire point: a service worker in a `push` event has no Firebase ID
+    // token to send. Putting `authMiddleware` on this route would make every
+    // ack a 401 — and delivery data would silently stay empty forever.
+    const { app, pushDeliveryRepository } = buildApp();
+
+    const res = await postAck(app, JSON.stringify({ ack: ACK_TOKEN }));
+
+    expect(res.status).toBe(204);
+    expect(pushDeliveryRepository.ackedHashes).toHaveLength(1);
+  });
+
+  it("hands the repository the token's hash, never the token", async () => {
+    const { app, pushDeliveryRepository } = buildApp();
+
+    await postAck(app, JSON.stringify({ ack: ACK_TOKEN }));
+
+    expect(pushDeliveryRepository.ackedHashes[0]).toBe(await hashAckToken(ACK_TOKEN));
+  });
+
+  it.each([
+    ["a token that matched a row", true],
+    ["a token that matched nothing", false],
+  ])("answers 204 for %s", async (_label, result) => {
+    // Identical answers are the guard: a status that varied with the
+    // repository's verdict would turn this endpoint into a token oracle.
+    const { app, pushDeliveryRepository } = buildApp();
+    pushDeliveryRepository.result = result;
+
+    const res = await postAck(app, JSON.stringify({ ack: ACK_TOKEN }));
+
+    expect(res.status).toBe(204);
+  });
+
+  it.each([
+    ["a malformed body", "not json at all"],
+    ["a body with no ack field", JSON.stringify({ hello: "world" })],
+    ["a wrong-shaped token", JSON.stringify({ ack: "too-short" })],
+    ["an oversized body", JSON.stringify({ ack: ACK_TOKEN, padding: "x".repeat(2000) })],
+  ])("answers 204 and touches no row for %s", async (_label, body) => {
+    const { app, pushDeliveryRepository } = buildApp();
+
+    const res = await postAck(app, body);
+
+    expect(res.status).toBe(204);
+    expect(pushDeliveryRepository.ackedHashes).toEqual([]);
+  });
+
+  it("discards a body whose declared Content-Length exceeds the cap, without parsing it", async () => {
+    // The cap's whole purpose is that an unauthenticated caller cannot make
+    // this route do work proportional to what it sends. Measuring only the
+    // already-buffered string means the body has been read and UTF-16-decoded
+    // before the cap is consulted. The body here is a perfectly valid ack, so
+    // the only thing that can produce 0 recorded acks is the Content-Length
+    // check running first.
+    const { app, pushDeliveryRepository } = buildApp();
+
+    const res = await postAck(app, JSON.stringify({ ack: ACK_TOKEN }), { "content-length": "2000" });
+
+    expect(res.status).toBe(204);
+    expect(pushDeliveryRepository.ackedHashes).toEqual([]);
+  });
+
+  it("still accepts an ack whose declared Content-Length is within the cap", async () => {
+    // Pairs with the test above: a cap that rejected everything with a
+    // Content-Length header would also pass it.
+    const { app, pushDeliveryRepository } = buildApp();
+    const body = JSON.stringify({ ack: ACK_TOKEN });
+
+    const res = await postAck(app, body, { "content-length": String(body.length) });
+
+    expect(res.status).toBe(204);
+    expect(pushDeliveryRepository.ackedHashes).toHaveLength(1);
+  });
+
+  it("still refuses the other push routes without a token", async () => {
+    // Regression fence around the exemption above: adding one unauthenticated
+    // route must not have loosened its neighbours.
+    const { app } = buildApp();
+
+    expect((await app.request("/api/push/test", { method: "POST" })).status).toBe(401);
+    expect((await app.request("/api/push/vapid-public-key")).status).toBe(401);
   });
 });

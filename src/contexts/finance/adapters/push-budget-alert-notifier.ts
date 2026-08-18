@@ -2,6 +2,8 @@ import type { PushSender } from "../../notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../notifications/domain/push-subscription";
 import type { BudgetAlertMessage, BudgetAlertNotifier } from "../domain/budget-alert-notifier";
 
+const BUDGET_ALERT_TTL_SECONDS = 24 * 60 * 60;
+
 /**
  * Driven adapter: implements finance's `BudgetAlertNotifier` port by wrapping
  * the notifications context's `PushSender`/`PushSubscriptionRepository`
@@ -21,7 +23,15 @@ export class PushBudgetAlertNotifier implements BudgetAlertNotifier {
   async notify(userId: string, message: BudgetAlertMessage): Promise<void> {
     const subscriptions = await this.subscriptionRepository.listByUser(userId);
     for (const subscription of subscriptions) {
-      const { outcome } = await this.pushSender.send(subscription, message);
+      const { outcome } = await this.pushSender.send(subscription, {
+        ...message,
+        // A budget is a month-shaped thing: an alert that reaches the phone
+        // later the same day is still actionable, and outliving the period it
+        // describes would not be. No `Urgency` — RFC8030 5.3's `high` is about
+        // a device deciding what to spend its last battery on, which a
+        // spending alert has no claim to.
+        ttlSeconds: BUDGET_ALERT_TTL_SECONDS,
+      });
       if (outcome === "expired") {
         await this.subscriptionRepository.deleteByEndpoint(userId, subscription.endpoint);
       }

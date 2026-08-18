@@ -19,6 +19,7 @@ import { DrizzleMenstrualRepository } from "./contexts/health/adapters/drizzle-m
 import { DrizzleVitalsRepository } from "./contexts/health/adapters/drizzle-vitals-repository";
 import { DrizzleWaterRepository } from "./contexts/health/adapters/drizzle-water-repository";
 import { ensureCareDayInstances } from "./contexts/notifications/application/ensure-care-day-instances";
+import { DrizzlePushDeliveryRepository } from "./contexts/notifications/adapters/drizzle-push-delivery-repository";
 import { DrizzlePushSubscriptionRepository } from "./contexts/notifications/adapters/drizzle-push-subscription-repository";
 import { DrizzleCareItemRepository } from "./contexts/notifications/adapters/drizzle-care-item-repository";
 import { DrizzleCareLogRepository } from "./contexts/notifications/adapters/drizzle-care-log-repository";
@@ -114,6 +115,7 @@ function buildDeps(env: Env) {
     bodyProfileRepository: new DrizzleBodyProfileRepository(getDb),
     healthCalendarRepository: new DrizzleHealthCalendarRepository(getDb),
     pushSubscriptionRepository: new DrizzlePushSubscriptionRepository(getDb),
+    pushDeliveryRepository: new DrizzlePushDeliveryRepository(getDb),
     careItemRepository: new DrizzleCareItemRepository(getDb),
     careLogRepository: new DrizzleCareLogRepository(getDb),
     careOccurrenceRepository: new DrizzleCareOccurrenceRepository(getDb),
@@ -187,6 +189,7 @@ export function getCached(env: Env) {
     healthCalendarRepository: deps.healthCalendarRepository,
     chaodaysClient: deps.chaodaysClient,
     pushSubscriptionRepository: deps.pushSubscriptionRepository,
+    pushDeliveryRepository: deps.pushDeliveryRepository,
     pushSender: deps.pushSender,
     careItemRepository: deps.careItemRepository,
     careLogRepository: deps.careLogRepository,

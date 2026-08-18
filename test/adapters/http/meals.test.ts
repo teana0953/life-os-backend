@@ -470,6 +470,14 @@ function buildApp() {
         throw new Error("not implemented in this test's fakes");
       },
     },
+    pushDeliveryRepository: {
+      registerSent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      markAcked: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     pushSender: {
       send: async () => {
         throw new Error("not implemented in this test's fakes");

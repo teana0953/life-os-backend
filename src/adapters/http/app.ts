@@ -31,6 +31,7 @@ import type { SettlementRepository } from "../../contexts/split/domain/settlemen
 import type { SplitActivityRepository } from "../../contexts/split/domain/split-activity-repository";
 import type { SplitExpenseRepository } from "../../contexts/split/domain/split-expense-repository";
 import type { SplitSpendingRepository } from "../../contexts/split/domain/split-spending-repository";
+import type { PushDeliveryRepository } from "../../contexts/notifications/domain/push-delivery";
 import type { PushSender } from "../../contexts/notifications/domain/push-sender";
 import type { PushSubscriptionRepository } from "../../contexts/notifications/domain/push-subscription";
 import type { CareItemRepository } from "../../contexts/notifications/domain/care-item";
@@ -101,6 +102,7 @@ import {
   createTestPushHandler,
   createUnsubscribeWebPushHandler,
 } from "./routes/push";
+import { createPushAckHandler } from "./routes/push-ack";
 import {
   createAnswerCareSlotHandler,
   createCreateCareItemHandler,
@@ -201,6 +203,8 @@ export interface CreateAppOptions {
   chaodaysClient: ChaodaysClient;
   pushSubscriptionRepository: PushSubscriptionRepository;
   pushSender: PushSender;
+  /** Backs `POST /api/push/ack`. Required, not optional: without it the route would silently not exist and every delivery would look unacked. */
+  pushDeliveryRepository: PushDeliveryRepository;
   /** Configured VAPID public key, or "" when unset (D6 in design.md). */
   vapidPublicKey: string;
   careItemRepository: CareItemRepository;
@@ -442,6 +446,12 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/push/subscribe", authMiddleware, createSubscribeWebPushHandler(pushOptions));
   app.delete("/api/push/subscribe", authMiddleware, createUnsubscribeWebPushHandler(pushOptions));
   app.post("/api/push/test", authMiddleware, createTestPushHandler(pushOptions));
+  // Deliberately WITHOUT `authMiddleware` — the only such route under `/api/`.
+  // A service worker acking a push has no Firebase ID token while the app is
+  // closed, which is exactly the case delivery data has to cover; see
+  // `createPushAckHandler` for the credential it uses instead and for what
+  // someone hammering this endpoint can and cannot achieve.
+  app.post("/api/push/ack", createPushAckHandler({ pushDeliveryRepository: options.pushDeliveryRepository }));
 
   app.put(
     "/api/user/timezone",
