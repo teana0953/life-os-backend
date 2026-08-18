@@ -248,6 +248,11 @@ export function createApp(options: CreateAppOptions) {
       // GEMINI_KEY_HEADER must be allowed here or the browser's preflight
       // rejects every assistant request before it leaves the client.
       allowHeaders: ["Authorization", "Content-Type", GEMINI_KEY_HEADER],
+      // Chrome caps preflight caching at 7200s and silently truncates anything
+      // larger, so a bigger number buys nothing on our main client — it only
+      // delays when an `origin`/`allowHeaders` change takes effect in tabs the
+      // user already has open.
+      maxAge: 7200,
     }),
   );
 
