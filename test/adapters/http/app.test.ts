@@ -386,6 +386,24 @@ describe("CORS", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("http://localhost:5000");
     expect((res.headers.get("access-control-allow-headers") ?? "").toLowerCase()).toContain("authorization");
   });
+
+  it("lets the browser cache the preflight for 7200 seconds", async () => {
+    const app = buildApp();
+
+    const res = await app.request("/api/me", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:5000",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+      },
+    });
+
+    expect(res.status).toBeLessThan(300);
+    // Exact value, not just presence: shrinking the cache window is the
+    // regression this guards against, and it would pass any truthiness check.
+    expect(res.headers.get("access-control-max-age")).toBe("7200");
+  });
 });
 
 describe("GET /health", () => {
