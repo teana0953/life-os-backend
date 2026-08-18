@@ -1,0 +1,42 @@
+version: 1
+name: docs-push-ack-contract-corrections
+budget: 300k
+defaults:
+  tier: standard
+
+inputs: [goal]
+
+nodes:
+  implement:
+    kind: task
+    role: implementer
+    prompt: "依照這份目標動手:{{ inputs.goal }}(絕對路徑,先讀它)。這是純文件修正,一行程式碼都不要改。每一句寫下的敘述都要先去讀原始碼確認,不可以用另一個沒查證的說法取代錯的那個"
+
+  typecheck:
+    kind: script
+    after: [implement]
+    run: "npm run typecheck"
+
+  test:
+    kind: script
+    after: [implement]
+    run: "npx vitest run --no-file-parallelism"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [implement]
+
+  fix:
+    kind: task
+    role: fixer
+    after: [typecheck, test, code-review]
+    when: any-fail
+    goto: [typecheck, test, code-review]
+    max_iterations: 2
+
+  ship:
+    kind: gate
+    after: [typecheck, test, code-review]
+    when: all-pass
+    show: "{{ nodes.code-review.output }}"

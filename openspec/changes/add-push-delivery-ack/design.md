@@ -181,19 +181,46 @@ that do not need it. The test push already answers synchronously with per-
 subscription results, and the user is standing in front of the device.
 
 **Consequence for the frontend, and the seam most likely to be missed:** the
-service worker MUST tolerate a payload with no `data.ack` and simply not post
-one. Otherwise the test push breaks inside the service worker.
+service worker MUST tolerate a payload whose `data` carries no `ack` and simply
+not post one. Otherwise the test push breaks inside the service worker.
 
 ## Frontend hand-off contract (`life-os`, `web/push_sw.js` — not in this change)
 
-1. **Endpoint**: `POST https://<api>/api/push/ack`, `Content-Type:
-   application/json`, body `{"ack": "<43-char base64url>"}`. Send **no**
-   `Authorization` header. The response is always `204` with an empty body;
-   there is nothing to branch on.
-2. **In the `push` handler**: parse the payload; `if (data?.ack)` then post the
-   ack. Wrap the `fetch` in `event.waitUntil(...)` or the worker may be killed
-   before the request leaves. **Show the notification first, ack second** — a
-   failed ack must never cost the user the notification.
+1. **Endpoint**: `POST https://<api>/api/push/ack`, body `{"ack": "<43-char
+   base64url>"}`, sent with **`Content-Type: text/plain`** — not
+   `application/json`, and not by accident. `text/plain` is a CORS-safelisted
+   value (Fetch Standard §2.2.2), so the POST stays a *simple* request and no
+   preflight is sent. By those rules plus the allowlist this API actually
+   configures — `isAllowedOrigin` in `src/adapters/http/app.ts` admits only
+   localhost/127.0.0.1 plus the single configured `ALLOWED_WEB_ORIGIN`, and
+   hono's `cors` emits `Access-Control-Allow-Origin` only for an admitted
+   origin, so every Cloudflare Pages **preview** deployment is a disallowed
+   origin — an `application/json` POST from such an origin is preflighted, the
+   preflight comes back `204` with no `Access-Control-Allow-Origin`, and **the
+   POST never leaves the browser**; the safelisted one still reaches the handler and
+   only its response is withheld from the page, which costs nothing because
+   that response is always an empty `204`. The bytes on the wire are unchanged:
+   the body is still JSON, and `src/adapters/http/routes/push-ack.ts` reads
+   `c.req.text()` and `JSON.parse`s it **without ever consulting
+   `Content-Type`**. So do **not** "correct" this back to `application/json`
+   for consistency with the body — it type-checks, it tests green, and it
+   silently kills the ack on every preview origin. Send **no** `Authorization`
+   header (D1); it is not safelisted either, so adding one brings the preflight
+   back. The response is always `204` with an empty body; there is nothing to
+   branch on.
+2. **In the `push` handler**: the token sits **one level in**. The wire payload
+   is `{title, body, data: {ack}}` (D2) and `event.data.json()` returns that
+   *whole* object, so with `var payload = event.data.json()` the token is
+   **`payload.data.ack`**, never `payload.ack`. (Backend evidence:
+   `web-push-sender.ts` serializes
+   `{title: message.title, body: message.body, data: message.data}`, and
+   `run-care-day.ts` passes `data: { ack: ackToken }`.) Read one level too
+   high it is `undefined` for every push, so the ack silently never fires —
+   and a test whose fixture is built to the same wrong shape stays green, so
+   only a run against a real payload catches it. Post the ack with the `fetch`
+   wrapped in `event.waitUntil(...)`, or the worker may be killed before the
+   request leaves. **Show the notification first, ack second** — a failed ack
+   must never cost the user the notification.
 3. **State while only the backend has shipped**: every `push_delivery` row has
    `acked_at = NULL`. In that window **"not acked" means "nobody reported",
    not "not delivered"** — this sentence belongs in any query, dashboard, or
