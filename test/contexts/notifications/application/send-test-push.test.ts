@@ -1,19 +1,25 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sendTestPush, TEST_MESSAGE } from "../../../../src/contexts/notifications/application/send-test-push";
+import { createWebPushProbe } from "../../../helpers/web-push-probe";
 import { subscribeWebPush } from "../../../../src/contexts/notifications/application/subscribe-web-push";
 import type {
   PushMessage,
   PushSendResult,
   PushSender,
 } from "../../../../src/contexts/notifications/domain/push-sender";
-import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
+import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../../src/contexts/notifications/domain/push-subscription";
 
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   private byEndpoint = new Map<string, PushSubscription>();
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
-    this.byEndpoint.set(subscription.endpoint, subscription);
-    return subscription;
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
+    // The real repository upserts on `endpoint` and leaves the existing row's
+    // `id` alone, so a re-subscribe from the same device keeps its identity.
+    // Reusing a stored id here reproduces that; minting a fresh one every time
+    // would make `push_delivery` rows look like they came from new devices.
+    const stored = { id: this.byEndpoint.get(subscription.endpoint)?.id ?? `sub-${this.byEndpoint.size + 1}`, ...subscription };
+    this.byEndpoint.set(subscription.endpoint, stored);
+    return stored;
   }
 
   async listByUser(userId: string): Promise<PushSubscription[]> {
@@ -32,7 +38,7 @@ class ScriptedPushSender implements PushSender {
   sentTo: string[] = [];
   messages: PushMessage[] = [];
 
-  async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscriptionKeys, message: PushMessage): Promise<PushSendResult> {
     this.sentTo.push(subscription.endpoint);
     this.messages.push(message);
     return this.resultByEndpoint.get(subscription.endpoint) ?? { outcome: "sent" };
@@ -93,5 +99,26 @@ describe("sendTestPush", () => {
     const result = await sendTestPush(repo, sender, "user-1");
 
     expect(result).toEqual({ sent: 0, failed: 0, errors: [] });
+  });
+});
+
+describe("sendTestPush: what reaches the push service", () => {
+  it("puts the test push on the wire with TTL 60 and Urgency high, and no ack token", async () => {
+    // "I pressed the button, does my phone light up now": a test push that
+    // survives longer than the user stays on the settings screen answers
+    // nothing. And there is no occurrence to attribute it to, so it must carry
+    // no `data.ack` — the service worker contract is "ack only when the payload
+    // has one".
+    const probe = await createWebPushProbe();
+    const repository = new InMemoryPushSubscriptionRepository();
+    await repository.upsert(probe.subscription);
+
+    const result = await sendTestPush(repository, probe.sender, "user-1");
+
+    expect(result.sent).toBe(1);
+    const headers = new Headers(probe.requests[0].headers);
+    expect(headers.get("TTL")).toBe("60");
+    expect(headers.get("Urgency")).toBe("high");
+    expect(TEST_MESSAGE.data).toBeUndefined();
   });
 });

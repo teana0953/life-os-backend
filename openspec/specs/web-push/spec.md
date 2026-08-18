@@ -57,6 +57,62 @@ how many were sent and how many failed.
 - **WHEN** the push service reports a subscription as gone (HTTP 404 or 410) while sending a test push
 - **THEN** that subscription is deleted, while subscriptions that merely failed transiently are kept
 
+### Requirement: Every push states its own hold time, and reminders state their urgency
+
+Each push message SHALL carry its own RFC 8030 `TTL`, chosen by the caller, and
+SHALL send an `Urgency` header only when the caller chose one.
+
+#### Scenario: A nagging reminder is held only until its next nag
+- **WHEN** a care slot with a nag interval of 5 minutes is dispatched
+- **THEN** the request to the push service carries `TTL: 300`, so at most one copy of that slot is ever live
+
+#### Scenario: A fire-once reminder is held for the first-fire grace window
+- **WHEN** a care slot with no nag interval is dispatched
+- **THEN** the request carries `TTL: 600`
+
+#### Scenario: A care reminder is marked urgent
+- **WHEN** a care reminder is dispatched
+- **THEN** the request carries `Urgency: high`
+
+#### Scenario: A budget alert carries no urgency and outlives the day
+- **WHEN** a budget alert is pushed
+- **THEN** the request carries `TTL: 86400` and no `Urgency` header at all
+
+### Requirement: Record whether a device actually received a reminder
+
+The push service's acceptance SHALL NOT be treated as delivery. For each care
+reminder sent to each device, the system SHALL record a delivery row carrying a
+one-time acknowledgement token's hash, and SHALL mark it acknowledged when the
+device reports back.
+
+#### Scenario: A delivery row exists before the push is sent
+- **WHEN** a care round dispatches to a user's subscriptions
+- **THEN** one delivery row per subscription is written before the first push goes out, so an ack that arrives immediately has somewhere to land
+
+#### Scenario: Each device gets its own token
+- **WHEN** a user has two subscriptions
+- **THEN** each receives a different acknowledgement token, and only the tokens' hashes are stored
+
+#### Scenario: A device acknowledges without any lifeos token
+- **WHEN** a service worker POSTs `/api/push/ack` with `{"ack": "<token>"}` and no `Authorization` header
+- **THEN** the API returns 204 and the matching delivery row is marked acknowledged
+
+#### Scenario: An acknowledgement changes no reminder behaviour
+- **WHEN** a delivery is acknowledged
+- **THEN** nagging, retry timing, and the occurrence's own send outcome are unchanged — only `care_log` ends a nag
+
+#### Scenario: An unknown, expired, or replayed acknowledgement changes nothing
+- **WHEN** the token is not one that was issued, or its TTL has elapsed, or it was already acknowledged
+- **THEN** no row is written, and the API still returns 204 so the endpoint reveals nothing about which tokens exist
+
+#### Scenario: Malformed acknowledgements cost no database work
+- **WHEN** the body is not JSON, has no `ack` field, carries a wrong-shaped token, or exceeds 1 KB
+- **THEN** the API returns 204 without querying the database
+
+#### Scenario: Only the acknowledgement route is unauthenticated
+- **WHEN** any other `/api/push/*` request arrives without a valid lifeos token
+- **THEN** the API returns 401
+
 ### Requirement: Subscription secrets and test content are privacy-preserving
 
 Subscription secrets SHALL never be logged, and the test push SHALL carry no
@@ -69,4 +125,8 @@ personal data.
 #### Scenario: Test push content is generic
 - **WHEN** a test push is sent
 - **THEN** its content is a fixed generic string containing no personal data
+
+#### Scenario: Acknowledgement tokens are never logged or stored in the clear
+- **WHEN** an acknowledgement is handled, successfully or not
+- **THEN** the token is not written to logs, and the stored delivery row holds only its hash
 

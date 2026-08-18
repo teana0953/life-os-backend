@@ -133,6 +133,10 @@ const TABLES = [
   "finance_networth_account",
   "expense_group_member",
   "expense_group",
+  // push_delivery added for the delivery-ack test; it FKs both care_occurrence
+  // and push_subscription, so both must be truncated with it.
+  "push_delivery",
+  "push_subscription",
   // care_occurrence/care_log added for replace-cron-with-workflows's claimAttempt
   // PGlite test; CASCADE also handles care_schedule -> care_item.
   "care_occurrence",

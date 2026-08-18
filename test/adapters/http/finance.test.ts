@@ -249,6 +249,14 @@ function buildApp(overrides: { financeTransactionRepository?: InMemoryFinanceTra
       listByUser: notImplemented,
       deleteByEndpoint: notImplemented,
     },
+    pushDeliveryRepository: {
+      registerSent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      markAcked: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     pushSender: {
       send: notImplemented,
     },

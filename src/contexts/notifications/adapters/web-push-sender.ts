@@ -1,5 +1,5 @@
 import type { PushMessage, PushSendResult, PushSender } from "../domain/push-sender";
-import type { PushSubscription } from "../domain/push-subscription";
+import type { PushSubscriptionKeys } from "../domain/push-subscription";
 
 export interface WebPushSenderOptions {
   /** VAPID application-server public key: base64url, uncompressed P-256 point (65 bytes). */
@@ -11,8 +11,6 @@ export interface WebPushSenderOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** How long the push service should hold the message if the device is offline. */
-const TTL_SECONDS = 60;
 /** VAPID JWT lifetime, well under the RFC8292-recommended 24h ceiling. */
 const VAPID_JWT_LIFETIME_SECONDS = 12 * 60 * 60;
 /** RFC8188 `rs` (record size): must exceed this record's ciphertext length; our payloads are small. */
@@ -93,7 +91,7 @@ export class WebPushSender implements PushSender {
     this.fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   }
 
-  async send(subscription: PushSubscription, message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscriptionKeys, message: PushMessage): Promise<PushSendResult> {
     // A missing `subject` is treated like missing keys: without it the VAPID JWT
     // would carry an empty `sub`, which push services (FCM/Apple) reject — better a
     // visible `failed` than a push silently dropped on-device.
@@ -110,7 +108,11 @@ export class WebPushSender implements PushSender {
     try {
       [authorization, body] = await Promise.all([
         this.buildVapidAuthorization(subscription.endpoint, this.publicKey, this.privateKey, this.subject),
-        this.encryptPayload(subscription, JSON.stringify(message)),
+        // Only the parts the service worker reads. `ttlSeconds`/`urgency` are
+        // transport instructions to the push service (headers below); putting
+        // them in the encrypted body would grow every payload and hand the
+        // device fields nobody consumes.
+        this.encryptPayload(subscription, JSON.stringify({ title: message.title, body: message.body, data: message.data })),
       ]);
     } catch (e) {
       return { outcome: "failed", detail: `crypto:${clean(e)}` };
@@ -118,16 +120,18 @@ export class WebPushSender implements PushSender {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(subscription.endpoint, {
-        method: "POST",
-        headers: {
-          TTL: String(TTL_SECONDS),
-          "Content-Type": "application/octet-stream",
-          "Content-Encoding": "aes128gcm",
-          Authorization: authorization,
-        },
-        body,
-      });
+      // `Urgency` is omitted rather than defaulted: RFC8030 5.3 defines an
+      // absent header as `normal`, so sending it unconditionally would put a
+      // value on the wire for callers that never chose one.
+      const headers: Record<string, string> = {
+        TTL: String(message.ttlSeconds),
+        "Content-Type": "application/octet-stream",
+        "Content-Encoding": "aes128gcm",
+        Authorization: authorization,
+      };
+      if (message.urgency) headers.Urgency = message.urgency;
+
+      response = await this.fetchImpl(subscription.endpoint, { method: "POST", headers, body });
     } catch (e) {
       return { outcome: "failed", detail: `network:${clean(e)}` };
     }
@@ -175,7 +179,7 @@ export class WebPushSender implements PushSender {
   }
 
   /** RFC8291: ECDH (our ephemeral key x subscriber's `p256dh`) -> HKDF-SHA256 -> AES-128-GCM, framed per RFC8188. */
-  private async encryptPayload(subscription: PushSubscription, plaintext: string): Promise<Uint8Array> {
+  private async encryptPayload(subscription: PushSubscriptionKeys, plaintext: string): Promise<Uint8Array> {
     const subscriberPublicBytes = base64UrlDecode(subscription.p256dh);
     const authSecret = base64UrlDecode(subscription.auth);
 

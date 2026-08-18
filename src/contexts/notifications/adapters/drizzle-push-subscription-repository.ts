@@ -1,18 +1,18 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { pushSubscription } from "../../../shared/db/schema";
-import type { PushSubscription, PushSubscriptionRepository } from "../domain/push-subscription";
+import type { PushSubscription, PushSubscriptionKeys, PushSubscriptionRepository } from "../domain/push-subscription";
 
 type PushSubscriptionRow = typeof pushSubscription.$inferSelect;
 
 function toDomain(row: PushSubscriptionRow): PushSubscription {
-  return { userId: row.userId, endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth };
+  return { id: row.id, userId: row.userId, endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth };
 }
 
 export class DrizzlePushSubscriptionRepository implements PushSubscriptionRepository {
   constructor(private readonly getDb: () => Db) {}
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
     const db = this.getDb();
     const values = {
       userId: subscription.userId,

@@ -7,6 +7,9 @@ import {
   type RunCareDayDeps,
   type SlotSnapshot,
 } from "../../../../src/contexts/notifications/application/run-care-day";
+import { createWebPushProbe } from "../../../helpers/web-push-probe";
+import { hashAckToken } from "../../../../src/contexts/notifications/domain/ack-token";
+import type { PushDeliveryRegistration, PushDeliveryRepository } from "../../../../src/contexts/notifications/domain/push-delivery";
 import { isActiveOn } from "../../../../src/contexts/notifications/domain/care-schedule";
 import type {
   ActiveCareSchedule,
@@ -26,7 +29,7 @@ import type {
   RecordAttemptInput,
 } from "../../../../src/contexts/notifications/domain/care-occurrence";
 import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
-import type { PushSubscription, PushSubscriptionRepository } from "../../../../src/contexts/notifications/domain/push-subscription";
+import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../../src/contexts/notifications/domain/push-subscription";
 
 class InMemoryCareItemRepository implements CareItemRepository {
   private items = new Map<string, CareItemWithSchedules>();
@@ -238,9 +241,14 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
 class InMemoryPushSubscriptionRepository implements PushSubscriptionRepository {
   private byEndpoint = new Map<string, PushSubscription>();
 
-  async upsert(subscription: PushSubscription): Promise<PushSubscription> {
-    this.byEndpoint.set(subscription.endpoint, subscription);
-    return subscription;
+  async upsert(subscription: PushSubscriptionKeys): Promise<PushSubscription> {
+    // The real repository upserts on `endpoint` and leaves the existing row's
+    // `id` alone, so a re-subscribe from the same device keeps its identity.
+    // Reusing a stored id here reproduces that; minting a fresh one every time
+    // would make `push_delivery` rows look like they came from new devices.
+    const stored = { id: this.byEndpoint.get(subscription.endpoint)?.id ?? `sub-${this.byEndpoint.size + 1}`, ...subscription };
+    this.byEndpoint.set(subscription.endpoint, stored);
+    return stored;
   }
   async listByUser(userId: string): Promise<PushSubscription[]> {
     return [...this.byEndpoint.values()].filter((s) => s.userId === userId);
@@ -255,9 +263,20 @@ class ScriptedPushSender implements PushSender {
   resultByEndpoint = new Map<string, PushSendResult>();
   sentTo: string[] = [];
 
-  async send(subscription: PushSubscription, _message: PushMessage): Promise<PushSendResult> {
+  async send(subscription: PushSubscriptionKeys, _message: PushMessage): Promise<PushSendResult> {
     this.sentTo.push(subscription.endpoint);
     return this.resultByEndpoint.get(subscription.endpoint) ?? { outcome: "sent" };
+  }
+}
+
+class InMemoryPushDeliveryRepository implements PushDeliveryRepository {
+  rows: PushDeliveryRegistration[] = [];
+
+  async registerSent(rows: PushDeliveryRegistration[]): Promise<void> {
+    this.rows.push(...rows);
+  }
+  async markAcked(): Promise<boolean> {
+    throw new Error("not used by these tests");
   }
 }
 
@@ -266,9 +285,10 @@ let careLogRepo: InMemoryCareLogRepository;
 let careOccurrenceRepo: InMemoryCareOccurrenceRepository;
 let subscriptionRepo: InMemoryPushSubscriptionRepository;
 let pushSender: ScriptedPushSender;
+let pushDeliveryRepo: InMemoryPushDeliveryRepository;
 
 function deps(): RunCareDayDeps {
-  return { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender };
+  return { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, pushDeliveryRepo };
 }
 
 beforeEach(() => {
@@ -277,6 +297,7 @@ beforeEach(() => {
   careOccurrenceRepo = new InMemoryCareOccurrenceRepository(careLogRepo);
   subscriptionRepo = new InMemoryPushSubscriptionRepository();
   pushSender = new ScriptedPushSender();
+  pushDeliveryRepo = new InMemoryPushDeliveryRepository();
 });
 
 const TAIPEI = "Asia/Taipei";
@@ -611,6 +632,102 @@ describe("dispatchDueRounds", () => {
     expect(bodies.sort()).toEqual(["5mg", "伸展 15 分鐘"]);
   });
 
+  it("registers every delivery row BEFORE the first push goes out", async () => {
+    // A device can display the notification and POST its ack while this round
+    // is still running. An ack that arrives before its row exists finds nothing
+    // to update and is lost forever, so the ordering is the guard, not the
+    // eventual presence of the rows.
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+    await addSubscription("user-1", "https://push.example.com/a");
+    await addSubscription("user-1", "https://push.example.com/b");
+
+    const rowsSeenAtFirstSend: number[] = [];
+    const observingSender: PushSender = {
+      send: async () => {
+        rowsSeenAtFirstSend.push(pushDeliveryRepo.rows.length);
+        return { outcome: "sent" };
+      },
+    };
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, { ...deps(), pushSender: observingSender });
+
+    expect(rowsSeenAtFirstSend).toEqual([2, 2]);
+  });
+
+  it("gives each subscription its own ack token, and stores only the hashes", async () => {
+    // Two devices, two payloads, two tokens: one device's ack must never be
+    // able to speak for another's. Minting once outside the loop would still
+    // deliver, still record two rows, and still pass every older test here.
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+    await addSubscription("user-1", "https://push.example.com/a");
+    await addSubscription("user-1", "https://push.example.com/b");
+
+    const tokens: string[] = [];
+    const recordingSender: PushSender = {
+      send: async (_sub, message) => {
+        tokens.push((message.data as { ack: string }).ack);
+        return { outcome: "sent" };
+      },
+    };
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, { ...deps(), pushSender: recordingSender });
+
+    expect(new Set(tokens).size).toBe(2);
+    const storedHashes = pushDeliveryRepo.rows.map((r) => r.tokenHash).sort();
+    expect(storedHashes).toEqual((await Promise.all(tokens.map(hashAckToken))).sort());
+    // The plaintext token must not be recoverable from the row.
+    for (const token of tokens) expect(JSON.stringify(pushDeliveryRepo.rows)).not.toContain(token);
+  });
+
+  it("attributes each delivery row to the occurrence and the subscription it was sent to, and expires it at sent_at + the TTL used", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes: 5 });
+    await addSubscription("user-1", "https://push.example.com/a");
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, deps());
+
+    const [occurrence] = careOccurrenceRepo.all();
+    const [subscription] = await subscriptionRepo.listByUser("user-1");
+    expect(pushDeliveryRepo.rows).toHaveLength(1);
+    expect(pushDeliveryRepo.rows[0]).toMatchObject({
+      careOccurrenceId: occurrence.id,
+      pushSubscriptionId: subscription.id,
+      sentAt: FRIDAY_0900_TAIPEI,
+      expiresAt: new Date(FRIDAY_0900_TAIPEI.getTime() + 5 * 60 * 1000),
+    });
+  });
+
+  it("still sends, and still records the attempt, when registering the delivery rows fails", async () => {
+    // Bookkeeping must never be able to swallow a medication reminder. The
+    // claim is already taken by the time registerSent runs, so an exception
+    // escaping it would skip every send AND recordAttempt, leaving the
+    // occurrence looking like an abandoned claim — no push at all, and the
+    // next retry a full nag/retry interval away. Neon 520s and Workers
+    // CPU-limit kills make that a real transient, not a hypothetical.
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+    const endpoint = await addSubscription("user-1");
+    const failingDeliveryRepo: PushDeliveryRepository = {
+      registerSent: async () => {
+        throw new Error("neon 520");
+      },
+      markAcked: async () => false,
+    };
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, { ...deps(), pushDeliveryRepo: failingDeliveryRepo });
+
+    expect(pushSender.sentTo).toEqual([endpoint]);
+    const [occurrence] = careOccurrenceRepo.all();
+    expect(occurrence.lastSendOutcome).toBe("sent");
+    expect(occurrence.lastNotifiedAt).toEqual(FRIDAY_0900_TAIPEI);
+  });
+
+  it("a round with no subscriptions registers no delivery rows", async () => {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, deps());
+
+    expect(pushDeliveryRepo.rows).toEqual([]);
+  });
+
   it("a round where every push fails is not counted as delivered, but the attempt is recorded", async () => {
     careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
     const endpoint = await addSubscription("user-1");
@@ -931,5 +1048,39 @@ describe("buildSlotSnapshots", () => {
     expect(slots).toHaveLength(1);
     expect(slots[0].occurrence?.lastSendOutcome).toBe("sent");
     expect(slots[0].answered).toBe(false);
+  });
+});
+
+/**
+ * These assert the headers an injected `fetchImpl` actually receives, with the
+ * real `WebPushSender` in the chain — not the constants the caller passes. The
+ * pre-change hardcoded `TTL: 60` was invisible to every test in this repo
+ * because the only TTL assertion anywhere was `toBeTruthy()`.
+ */
+describe("dispatchDueRounds: what reaches the push service", () => {
+  async function dispatchThroughRealSender(nagIntervalMinutes: number): Promise<Headers> {
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], nagIntervalMinutes });
+    const probe = await createWebPushProbe();
+    await subscriptionRepo.upsert(probe.subscription);
+
+    await dispatchDueRounds(FRIDAY_0900_TAIPEI, "user-1", TAIPEI, { ...deps(), pushSender: probe.sender });
+
+    expect(probe.requests).toHaveLength(1);
+    return new Headers(probe.requests[0].headers);
+  }
+
+  it("a nagging slot's TTL is its own nag interval, so at most one copy of a slot is ever live", async () => {
+    expect((await dispatchThroughRealSender(5)).get("TTL")).toBe("300");
+  });
+
+  it("a fire-once slot's TTL is the first-fire grace window instead", async () => {
+    // Deliberately paired with the case above, on opposite sides of the
+    // `nagIntervalMinutes > 0` branch: collapsing the two arms to one value
+    // fails exactly one of them.
+    expect((await dispatchThroughRealSender(0)).get("TTL")).toBe("600");
+  });
+
+  it("care reminders go out with Urgency: high", async () => {
+    expect((await dispatchThroughRealSender(5)).get("Urgency")).toBe("high");
   });
 });

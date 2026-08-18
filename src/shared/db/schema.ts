@@ -607,6 +607,62 @@ export const careOccurrence = pgTable(
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
 );
 
+// push_delivery: one row per (occurrence x subscription) ATTEMPT, written
+// BEFORE the send (an ack can arrive mid-round, so the row has to exist
+// first). A `failed` send therefore leaves a row too — including the two
+// early returns in web-push-sender.ts (`no_vapid_config`, `crypto:*`) where
+// no HTTP request is ever made. A delivery rate computed as
+// acked/count(*) UNDER-reports: the denominator is attempts, not sends.
+//
+// It exists because a push service's 201 says only
+// "accepted", never "delivered" — measured 2026-08-18 against a real FCM
+// endpoint, which answered 201 with no receipt Link even when asked for one
+// via RFC8030 5.1 `Prefer: respond-async`. `acked_at` is therefore the ONLY
+// evidence in this database that a device ever received a reminder.
+//
+// `acked_at IS NULL` does NOT mean "not delivered" until the service worker
+// half ships (life-os `web/push_sw.js`): before that, no device reports
+// anything and every row stays null.
+//
+// `token_hash` is sha256 of a one-time token that exists in plaintext only
+// inside the encrypted push payload — the row must not yield a usable
+// capability if it is ever read out or backed up.
+// Diagnostic query: care_occurrence delivered =
+//   EXISTS (SELECT 1 FROM push_delivery WHERE care_occurrence_id = ? AND acked_at IS NOT NULL)
+export const pushDelivery = pgTable(
+  "push_delivery",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    careOccurrenceId: uuid("care_occurrence_id")
+      .notNull()
+      .references(() => careOccurrence.id, { onDelete: "cascade" }),
+    // SET NULL, not cascade: a 404/410 prune (`dispatchSlot`,
+    // `deleteByEndpoint`) happens at exactly the moment PR #107's incident
+    // produced — a reinstalled PWA going dark — and a cascade would delete
+    // the never-acked rows that are the evidence of it. NULL here means "the
+    // subscription was deleted afterwards"; the row is still a real send, and
+    // `care_occurrence_id` / `sent_at` / `acked_at` all stay truthful. Only
+    // per-dead-device attribution is lost. NOT NULL without a delete rule was
+    // rejected: the FK violation escapes `dispatchSlot` before
+    // `recordAttempt`, and 500s the user-facing unsubscribe route.
+    pushSubscriptionId: uuid("push_subscription_id").references(() => pushSubscription.id, { onDelete: "set null" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+    // sent_at + the TTL this particular message was sent with: past it the push
+    // service must no longer deliver (RFC8030 5.2), so an ack for it is not
+    // believable. No grace period — this deliberately under-reports delivery
+    // rather than ever claiming one that cannot have happened.
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ackedAt: timestamp("acked_at", { withTimezone: true }),
+  },
+  // The diagnostic query above and the runbook's per-device query both filter
+  // on care_occurrence_id, and this table has no retention job (design.md D4):
+  // it grows by one row per device per nag round forever, so leaving that
+  // lookup as a sequential scan bills metered Neon compute that grows with the
+  // table. token_hash's UNIQUE already covers the ack UPDATE's predicate.
+  (t) => [index("push_delivery_care_occurrence_idx").on(t.careOccurrenceId)],
+);
+
 // care_day_instance_pointer: one row per user, recording which
 // `CareReminderWorkflow` instance id `restartToday` most recently created for
 // that user's `local_date` (fix/restart-instance-tracking — restartToday's

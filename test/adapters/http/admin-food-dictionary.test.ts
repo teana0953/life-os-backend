@@ -258,6 +258,14 @@ function buildApp(options: { userRepository: UserRepository; foodDictionaryRepos
       listByUser: notImplemented,
       deleteByEndpoint: notImplemented,
     },
+    pushDeliveryRepository: {
+      registerSent: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+      markAcked: async () => {
+        throw new Error("not implemented in this test's fakes");
+      },
+    },
     pushSender: { send: notImplemented },
     careItemRepository: {
       create: notImplemented,

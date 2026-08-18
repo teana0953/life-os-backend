@@ -25,6 +25,7 @@ export class CareReminderWorkflow extends WorkflowEntrypoint<Env, CareReminderWo
       careOccurrenceRepo: deps.careOccurrenceRepository,
       subscriptionRepo: deps.pushSubscriptionRepository,
       pushSender: deps.pushSender,
+      pushDeliveryRepo: deps.pushDeliveryRepository,
     };
 
     await runCareReminderDay({ userId, localDate, timezone }, step, careDeps, async (nextCareLocalDate) => {
