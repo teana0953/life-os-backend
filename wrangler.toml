@@ -8,6 +8,45 @@ compatibility_flags = ["nodejs_compat"]
 # and in a local, untracked `.dev.vars` file for `wrangler dev`.
 # See `.dev.vars.example` for the required keys.
 
+# 2026-08-18: the PWA showed "無法載入" for hours. `wrangler tail` caught 80
+# events (79 fetches plus one CareReminderWorkflow RPC): 74 ok / 6 canceled,
+# zero exceptions, zero 5xx, and not one of the `[db] ...` console.warn lines
+# from src/shared/db/retry-fetch.ts. cpuTime was ≤23ms on every event while
+# wallTime peaked at 44903ms — the gap itself is the finding: the time goes to
+# waiting on the network, not to compute. All 79 fetches ran in colo SJC (San
+# Jose) while the user is in Taiwan (cf-ipcountry=TW, AS3462, clientTcpRtt
+# 128-130ms) and Neon sits in aws-ap-southeast-1 (Singapore), so every query
+# made two Pacific round trips: TW -> SJC -> SIN and back. /health
+# (src/index.ts:220, body is `select 1`) measured 0.21s-11.5s over its 13 hits
+# in that tail, while /api/push/vapid-public-key came back in 1-2ms on two
+# authenticated GETs — status 200 with an Authorization header, so
+# authMiddleware did verify the token (jose against an already-cached JWKS; a
+# cold isolate fetching the JWKS for the first time would not be 1-2ms) and
+# neither it nor the handler touches the DB. That pair is what pins the latency
+# on the DB round trip rather than on the Worker. neon-http issues one HTTP
+# request per query with no pooling, so a handler's query count multiplies the
+# round trips.
+#
+# Already ruled out as the cause of THIS hang: Neon quota (free plan, 78.2
+# CU-hr of compute used that month — Neon API cpu_used_sec/3600, measured
+# 2026-08-18; the API does not expose the plan ceiling, so no denominator is
+# claimed here — compute active, no quota errors), cold starts
+# (start_compute 300-560ms throughout), the Neon 520s from PR #104, the Workers
+# CPU-limit incident of 2026-08-12, slow queries (37MB DB, largest table
+# 304kB), concurrency burning CU (8 concurrent /health, worst 6s), and a
+# runaway DB caller (seq scan counters flat over five minutes).
+#
+# Known boundaries of this knob. It is a heuristic: Cloudflare observes traffic
+# and picks the location itself — the region cannot be named and relocation is
+# not guaranteed. It also needs time and request volume to converge, so
+# measuring right after a deploy and seeing no change proves nothing. And it
+# only pays off when one request makes several trips to the backend, since it
+# trades user->Worker distance for Worker->origin distance; a single-round-trip
+# request can come out flat or slightly worse. This Worker qualifies precisely
+# because neon-http has no pool and one handler runs several queries.
+[placement]
+mode = "smart"
+
 # 2026-08-15 08:05-08:15: Neon reads failed for ~10 minutes and killed the
 # reminder chain's workflow instance (care-day_04e566e5..._2026-08-15, Errored
 # at plan-next-wake-4). The three `[db] ...` console.warn lines PR #104 added in
