@@ -47,15 +47,28 @@ nodes:
     after: [approve-spec]
     foreach: "{{ nodes.spec.output.files }}"
     isolation: worktree
+    prompt: |
+      依照這份已經人工核可、且已寫進 openspec change `{{ inputs.change }}` 的規格實作
+      (規格已定案,照做,不要重新設計):
+      {{ nodes.spec.output }}
+
+      規則:
+      - 只改分派給你的那個檔案(見結尾的 Item)與它必要的測試,不要 commit。
+      - 測試先寫再實作(TDD),規格中標為 LINCHPIN 的測試必須存在且能真的失敗。
+      - 完成後自己跑 `npm run typecheck` 與 `npm test`,回報實際輸出結尾,
+        不要宣稱沒跑過的結果。
 
   test:
     kind: script
     after: [implement]
-    run: "npm test"
+    run: "npm run typecheck && npm test"
 
+  # review 節點吃的不是「找程式碼」而是建交錯 + 逐處突變 + 跑測試,
+  # 明確標 heavy 讓它跟 implement 脫鉤:--profile lean 降 standard 時不會連 review 一起降。
   code-review:
     kind: check
     role: code-reviewer
+    tier: heavy
     after: [implement]
 
   fix:
