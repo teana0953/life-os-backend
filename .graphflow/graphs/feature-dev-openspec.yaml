@@ -1,0 +1,88 @@
+version: 1
+name: feature-dev-openspec
+budget: 400k
+defaults:
+  tier: standard
+
+# run: /graphflow:graphflow run feature-dev-openspec --flow full \
+#        --input goal="..." --input change=<kebab-change-id>
+inputs: [goal, change]
+
+nodes:
+  spec:
+    kind: task
+    role: planner
+    tier: heavy
+    prompt: |
+      openspec change `{{ inputs.change }}`,目標:{{ inputs.goal }}
+
+      一律用 openspec CLI(repo 內的 `openspec-propose` skill 就是這串 CLI 的包裝,
+      可直接用),不要手寫 openspec/ 底下的目錄結構、不要自己猜檔名:
+      1. `openspec new change {{ inputs.change }}`(已存在就跳過)
+      2. 四個 artifact 依序做,每個都先讀指示再寫:
+         `openspec instructions proposal --change {{ inputs.change }}`
+         `openspec instructions specs --change {{ inputs.change }}`
+         `openspec instructions design --change {{ inputs.change }}`
+         `openspec instructions tasks --change {{ inputs.change }}`
+      3. `openspec status --change {{ inputs.change }}` 四個 artifact 都要完成
+      4. `openspec validate {{ inputs.change }} --strict` 要過
+
+      這一節點只產規格,不改產品程式碼。
+      輸出 files = 依 tasks.md 會動到的檔案清單,tasks = 對應的工作項。
+    output_schema: plan
+
+  spec-validate:
+    kind: script
+    after: [spec]
+    run: "openspec validate --changes --strict"
+
+  approve-spec:
+    kind: gate
+    after: [spec-validate]
+    show: "{{ nodes.spec.output }}"
+
+  implement:
+    kind: task
+    role: implementer
+    after: [approve-spec]
+    foreach: "{{ nodes.spec.output.files }}"
+    isolation: worktree
+
+  test:
+    kind: script
+    after: [implement]
+    run: "npm test"
+
+  code-review:
+    kind: check
+    role: code-reviewer
+    after: [implement]
+
+  fix:
+    kind: task
+    role: fixer
+    tier: light
+    after: [test, code-review]
+    when: any-fail
+    goto: [test, code-review]
+    max_iterations: 3
+
+  ship:
+    kind: gate
+    after: [test, code-review]
+    when: all-pass
+
+  archive:
+    kind: task
+    role: implementer
+    tier: light
+    after: [ship]
+    prompt: |
+      收尾 openspec change `{{ inputs.change }}`,一律用 CLI
+      (或 repo 內的 `openspec-apply-change` / `openspec-archive-change` skill):
+      1. `openspec instructions apply --change {{ inputs.change }}`,照它把 tasks.md
+         已完成的項目打勾
+      2. `openspec validate {{ inputs.change }} --strict`
+      3. `openspec archive {{ inputs.change }} --yes`
+         (純工具/設定/文件改動、沒有 spec delta 才加 --skip-specs)
+      規格內容:{{ nodes.spec.output }}
