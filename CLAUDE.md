@@ -3,10 +3,12 @@
 Architecture conventions for this repo. Read before adding or modifying any
 backend code (human or AI agent).
 
-## AI development: graphflow is mandatory (flow choice is the per-request judgment)
+## AI development: graphflow + openspec are mandatory (flow choice is the per-request judgment)
 
 **Every AI-assisted development task in this repo runs through the graphflow
-workflow engine — `/graphflow:graphflow`, plugin version v0.2.1 or later.**
+workflow engine — `/graphflow:graphflow`, plugin version v0.2.1 or later — and
+every `--flow full` task carries an openspec change, created and closed with
+the `openspec` CLI.**
 Running the work by hand instead of through graphflow is not an option. The
 only per-request judgment left is **which flow**: `light` or `full`.
 
@@ -50,6 +52,40 @@ Never reason like this:
 
 User silence is not permission to skip. Making the call and stating it is
 yours to do, once per request.
+
+### Specs: openspec, driven through its CLI
+
+Every `--flow full` task is spec-driven with openspec. The graph that wires the
+two together is checked in at `.graphflow/graphs/feature-dev-openspec.yaml`:
+
+```
+/graphflow:graphflow run feature-dev-openspec --flow full \
+  --input goal="..." --input change=<kebab-change-id>
+```
+
+It runs spec → `openspec validate` → approval gate → implement (foreach file,
+worktree-isolated) → test/review/fix loop → ship gate → archive.
+
+**Always drive openspec through its CLI (`openspec ...`). Never hand-write,
+move, or guess paths under `openspec/`** — the CLI owns the directory layout,
+the artifact templates, and the archive/spec-merge step.
+
+| Step | Command |
+| ---- | ------- |
+| create the change | `openspec new change <id>` |
+| per-artifact instructions (proposal → specs → design → tasks) | `openspec instructions <artifact> --change <id>` |
+| check artifact completion | `openspec status --change <id>` |
+| validate before the approval gate | `openspec validate <id> --strict` |
+| tick off tasks after implementing | `openspec instructions apply --change <id>` |
+| close the change after ship | `openspec archive <id> --yes` (`--skip-specs` only for tooling/doc-only changes with no spec delta) |
+
+The repo ships openspec skills (`openspec-propose`, `openspec-apply-change`,
+`openspec-sync-specs`, `openspec-archive-change`, `openspec-explore`) — they are
+thin wrappers over the same CLI, so using them counts as using the CLI.
+
+**`--flow light` skips openspec.** Single-file, low-risk work runs a built-in
+template (`feature-dev`/`bugfix`) with `--flow light` and creates no change
+proposal. Anything that earns `--flow full` earns a change proposal.
 
 Reference: <https://github.com/teana0953/graphflow>. If the installed plugin
 is older than v0.2.1, `--flow` is unavailable — update it (`/plugin update

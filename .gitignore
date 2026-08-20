@@ -4,4 +4,3 @@ node_modules/
 .actionlint/
 
 .graphflow/runs/
-.graphflow/graphs/
