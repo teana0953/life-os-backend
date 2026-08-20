@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { addWater } from "../../../contexts/health/application/add-water";
-import { getWaterDay } from "../../../contexts/health/application/get-water-day";
+import { getWaterDay, type WaterDay } from "../../../contexts/health/application/get-water-day";
 import { setWaterTarget } from "../../../contexts/health/application/set-water-target";
 import type { WaterRepository } from "../../../contexts/health/domain/water-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -13,17 +13,22 @@ export interface WaterHandlerOptions {
   waterRepository: WaterRepository;
 }
 
+/** The day's water figures as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function waterDayToJson(result: WaterDay) {
+  return {
+    day: result.day,
+    total_ml: result.totalMl,
+    target_ml: result.targetMl,
+    remaining_ml: result.remainingMl,
+  };
+}
+
 /** Protected `GET /api/water?day=`: the day's total, resolved target, and remaining (may be negative). */
 export function createGetWaterHandler(options: WaterHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getWaterDay(options.waterRepository, userId, requireDay(c.req.query("day")));
-    return c.json({
-      day: result.day,
-      total_ml: result.totalMl,
-      target_ml: result.targetMl,
-      remaining_ml: result.remainingMl,
-    });
+    return c.json(waterDayToJson(result));
   };
 }
 

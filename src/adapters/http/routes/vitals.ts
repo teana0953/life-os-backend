@@ -15,8 +15,8 @@ export interface VitalsHandlerOptions {
   vitalsRepository: VitalsRepository;
 }
 
-/** Serializes a vitals record to the snake_case JSON shape returned by both endpoints. */
-function toJson(record: { day: string; weightKg: number | null; bodyFatPct: number | null; waistCm: number | null; bpReadings: BpReading[]; glucoseReadings: GlucoseReading[]; spo2Readings: Spo2Reading[] }) {
+/** Serializes a vitals record to the snake_case JSON shape returned by both endpoints and the health-overview batch section. */
+export function vitalsDayToJson(record: { day: string; weightKg: number | null; bodyFatPct: number | null; waistCm: number | null; bpReadings: BpReading[]; glucoseReadings: GlucoseReading[]; spo2Readings: Spo2Reading[] }) {
   return {
     day: record.day,
     weight_kg: record.weightKg,
@@ -66,7 +66,7 @@ export function createGetVitalsHandler(options: VitalsHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getVitalsDay(options.vitalsRepository, userId, requireDay(c.req.query("day")));
-    return c.json(toJson(result));
+    return c.json(vitalsDayToJson(result));
   };
 }
 
@@ -87,6 +87,11 @@ function seriesToJson(series: VitalsSeries) {
     })),
     spo2: series.spo2,
   };
+}
+
+/** The range response body; shared with the health-overview batch section so the two cannot drift. */
+export function vitalsRangeToJson(from: string, to: string, series: VitalsSeries) {
+  return { from, to, series: seriesToJson(series) };
 }
 
 /** Protected `GET /api/vitals/range?from=&to=`: per-metric per-reading series over `[from, to]`. */
@@ -112,7 +117,7 @@ export function createGetVitalsRangeHandler(options: VitalsHandlerOptions) {
       throw new BadRequestError(`range must not exceed ${MAX_RANGE_DAYS} days`);
     }
     const { series } = await getVitalsRange(options.vitalsRepository, userId, from, to);
-    return c.json({ from, to, series: seriesToJson(series) });
+    return c.json(vitalsRangeToJson(from, to, series));
   };
 }
 
@@ -148,6 +153,6 @@ export function createSetVitalsHandler(options: VitalsHandlerOptions) {
         time: requireString(item.time, `spo2_readings[${i}].time`),
       })),
     });
-    return c.json(toJson(record));
+    return c.json(vitalsDayToJson(record));
   };
 }

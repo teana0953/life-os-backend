@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { getBodyProfile } from "../../../contexts/health/application/get-body-profile";
-import { getWeightGoal } from "../../../contexts/health/application/get-weight-goal";
+import { getWeightGoal, type WeightGoalOverview } from "../../../contexts/health/application/get-weight-goal";
 import { InvalidBodyProfileError, setBodyProfile } from "../../../contexts/health/application/set-body-profile";
 import type { BodyProfile } from "../../../contexts/health/domain/body-profile";
 import type { BodyProfileRepository, UpdateBodyProfilePatch } from "../../../contexts/health/domain/body-profile-repository";
@@ -62,18 +62,23 @@ export function createSetBodyProfileHandler(options: BodyProfileHandlerOptions) 
   };
 }
 
+/** The weight-goal overview as JSON; shared with the batch sections so the two cannot drift. */
+export function weightGoalToJson(overview: WeightGoalOverview) {
+  return {
+    height_cm: overview.heightCm,
+    target_weight_kg: overview.targetWeightKg,
+    current_weight_kg: overview.currentWeightKg,
+    remaining_kg: overview.remainingKg,
+    achievement_rate: overview.achievementRate,
+    bmi: overview.bmi,
+  };
+}
+
 /** Protected `GET /api/weight-goal`: the derived weight-goal overview. */
 export function createGetWeightGoalHandler(options: BodyProfileHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const overview = await getWeightGoal(options.bodyProfileRepository, options.vitalsRepository, userId);
-    return c.json({
-      height_cm: overview.heightCm,
-      target_weight_kg: overview.targetWeightKg,
-      current_weight_kg: overview.currentWeightKg,
-      remaining_kg: overview.remainingKg,
-      achievement_rate: overview.achievementRate,
-      bmi: overview.bmi,
-    });
+    return c.json(weightGoalToJson(overview));
   };
 }

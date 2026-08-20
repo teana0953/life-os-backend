@@ -620,3 +620,41 @@ describe("PATCH /api/me", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// batch-screen-reads: the two batch routes sit behind the same auth middleware,
+// and adding them left every granular read still addressable — an unregistered
+// path answers 404, so a 401 here is proof the route is registered.
+describe("batch read routes", () => {
+  it.each(["/api/health-overview?day=2026-08-20", "/api/home-summary?day=2026-08-20"])(
+    "registers %s behind auth",
+    async (path) => {
+      const res = await buildApp().request(path);
+
+      expect(res.status).toBe(401);
+    },
+  );
+
+  it.each([
+    "/api/water?day=2026-08-20",
+    "/api/bowel?day=2026-08-20",
+    "/api/vitals?day=2026-08-20",
+    "/api/vitals/range?from=2026-07-22&to=2026-08-20",
+    "/api/meals?day=2026-08-20",
+    "/api/daily-target?day=2026-08-20",
+    "/api/exercise?day=2026-08-20",
+    "/api/exercise/activities",
+    "/api/menstrual",
+    "/api/weight-goal",
+    "/api/health-calendar?month=2026-08",
+    "/api/food-items/favorites",
+    "/api/care/today",
+    "/api/care/range?from=2026-07-22&to=2026-08-20",
+    "/api/finance/budgets?month=2026-08",
+    "/api/finance/networth?month=2026-08",
+    "/api/split/balances",
+  ])("keeps %s individually addressable", async (path) => {
+    const res = await buildApp().request(path);
+
+    expect(res.status).toBe(401);
+  });
+});

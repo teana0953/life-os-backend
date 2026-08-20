@@ -553,8 +553,13 @@ export function createGetBalancesHandler(options: SplitHandlerOptions) {
     // own date-sensitive gates.
     const timezone = (await options.userRepository.getById(userId))?.timezone ?? "Asia/Taipei";
     const balances = await getBalances(options.balanceRepository, userId, localParts(new Date(), timezone).date);
-    return c.json({ balances: balances.map(balanceToJson) });
+    return c.json(balancesToJson(balances));
   };
+}
+
+/** The balances response body; shared with the home-summary batch section so the two cannot drift. */
+export function balancesToJson(balances: Balance[]) {
+  return { balances: balances.map(balanceToJson) };
 }
 
 /** Protected `GET /api/split/groups/:id/balances`: every member's net against the whole group; non-members get 404. */

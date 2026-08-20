@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRetryingFetch } from "../../../src/shared/db/retry-fetch";
+import { withSubrequestBudget } from "../../../src/shared/db/subrequest-budget";
 
 const READ_BODY = JSON.stringify({ query: 'select "updated_at" from "body_profile"', params: [] });
 const WRITE_BODY = JSON.stringify({ query: 'update "users" set "email" = $1', params: ["a@b.c"] });
@@ -234,5 +235,36 @@ describe("createRetryingFetch — logging", () => {
     const line = warn.mock.calls.map((c) => c.join(" ")).join("\n");
     expect(line).toContain("TypeError");
     expect(line).toContain("Network connection lost");
+  });
+});
+
+describe("createRetryingFetch — shared subrequest budget (batch-screen-reads design.md D6)", () => {
+  it("stops retrying once the request's shared budget is exhausted, even mid-MAX_ATTEMPTS", async () => {
+    // Two "sections" retrying concurrently, sharing a budget of 2: each makes
+    // its one mandatory first attempt (consuming the whole budget between
+    // them) and neither gets to retry. Only 2 outcomes are configured, so a
+    // 3rd fetch call (an unwanted retry slipping through) would throw instead
+    // of silently succeeding.
+    const { retrying, calls } = harness([transient(), transient()]);
+    const [r1, r2] = await withSubrequestBudget(2, () => Promise.all([send(retrying, READ_BODY), send(retrying, READ_BODY)]));
+    expect(r1.status).toBe(520);
+    expect(r2.status).toBe(520);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("retries normally while the scoped budget still has headroom", async () => {
+    const { retrying, calls } = harness([transient(), ok()]);
+    const res = await withSubrequestBudget(50, () => send(retrying, READ_BODY));
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("warns distinctly when a retry is skipped for the budget, not for MAX_ATTEMPTS", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { retrying } = harness([transient()]);
+    await withSubrequestBudget(1, () => send(retrying, READ_BODY));
+    const lines = warn.mock.calls.map((c) => c.join(" "));
+    expect(lines.some((l) => l.includes("budget exhausted"))).toBe(true);
+    expect(lines.some((l) => l.includes("exhausted after"))).toBe(false);
   });
 });

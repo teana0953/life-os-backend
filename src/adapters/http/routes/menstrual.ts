@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { addPeriod, InvalidPeriodError } from "../../../contexts/health/application/add-period";
 import { deletePeriod } from "../../../contexts/health/application/delete-period";
-import { getMenstrualOverview } from "../../../contexts/health/application/get-menstrual-overview";
+import { getMenstrualOverview, type MenstrualOverview } from "../../../contexts/health/application/get-menstrual-overview";
 import { updatePeriod } from "../../../contexts/health/application/update-period";
 import type { MenstrualPeriod } from "../../../contexts/health/domain/menstrual-period";
 import type { MenstrualRepository, UpdatePeriodPatch } from "../../../contexts/health/domain/menstrual-repository";
@@ -28,16 +28,21 @@ function statsToJson(stats: MenstrualStats) {
   };
 }
 
+/** The menstrual overview as JSON; shared with the batch sections so the two cannot drift. */
+export function menstrualOverviewToJson(overview: MenstrualOverview) {
+  return {
+    periods: overview.periods.map(periodToJson),
+    stats: statsToJson(overview.stats),
+    last_period: overview.lastPeriod ? periodToJson(overview.lastPeriod) : null,
+  };
+}
+
 /** Protected `GET /api/menstrual`: the user's periods, derived stats, and last period. */
 export function createGetMenstrualHandler(options: MenstrualHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const overview = await getMenstrualOverview(options.menstrualRepository, userId);
-    return c.json({
-      periods: overview.periods.map(periodToJson),
-      stats: statsToJson(overview.stats),
-      last_period: overview.lastPeriod ? periodToJson(overview.lastPeriod) : null,
-    });
+    return c.json(menstrualOverviewToJson(overview));
   };
 }
 

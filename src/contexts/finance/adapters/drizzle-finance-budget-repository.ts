@@ -86,16 +86,38 @@ export class DrizzleFinanceBudgetRepository implements FinanceBudgetRepository {
     return deleted.length > 0;
   }
 
+  /**
+   * One query for every budget's spent total, not one query per budget: the
+   * overall budget (`category_id is null`) joins every matching transaction
+   * regardless of category, a category budget joins only its own category —
+   * `left join ... on (fb.category_id is null or ft.category_id = fb.category_id)`
+   * captures both without a per-row branch. Query count must not grow with
+   * budget count: the health/home batch endpoints share one Workers
+   * subrequest budget across every section (batch-screen-reads design.md D6),
+   * so an N+1 here is invisible in a test that stubs a single budget but
+   * unbounded — and could itself blow the cap — in production.
+   */
   async listWithSpent(userId: string, month: string): Promise<BudgetWithSpent[]> {
     const db = this.getDb();
-    const rows = await db.select().from(financeBudget).where(eq(financeBudget.userId, userId));
-    const result: BudgetWithSpent[] = [];
-    for (const row of rows) {
-      const budget = toDomain(row);
-      const spent = await spentSum(db, userId, budget.categoryId, month);
-      result.push({ budget, spent });
-    }
-    return result;
+    const rows = await db
+      .select({
+        budget: financeBudget,
+        spent: sql<string | null>`sum(case when ${financeTransaction.id} is not null then ${financeTransaction.amount} else 0 end)`,
+      })
+      .from(financeBudget)
+      .leftJoin(
+        financeTransaction,
+        and(
+          eq(financeTransaction.userId, financeBudget.userId),
+          eq(financeTransaction.type, "expense"),
+          eq(financeTransaction.currency, "TWD"),
+          sql`to_char(${financeTransaction.day}, 'YYYY-MM') = ${month}`,
+          sql`(${financeBudget.categoryId} is null or ${financeTransaction.categoryId} = ${financeBudget.categoryId})`,
+        ),
+      )
+      .where(eq(financeBudget.userId, userId))
+      .groupBy(financeBudget.id);
+    return rows.map((row) => ({ budget: toDomain(row.budget), spent: row.spent ? Number(row.spent) : 0 }));
   }
 
   async getSpent(userId: string, categoryId: string | null, month: string): Promise<number> {

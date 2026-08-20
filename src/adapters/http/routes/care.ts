@@ -8,8 +8,8 @@ import {
   updateCareItem,
 } from "../../../contexts/notifications/application/care-items";
 import { editCareSlot, type EditCareSlotInput } from "../../../contexts/notifications/application/edit-care-slot";
-import { getCareRange } from "../../../contexts/notifications/application/get-care-range";
-import { getCareToday, type CareTodaySlot } from "../../../contexts/notifications/application/get-care-today";
+import { getCareRange, type CareRangeResult } from "../../../contexts/notifications/application/get-care-range";
+import { getCareToday, type CareTodayResult, type CareTodaySlot } from "../../../contexts/notifications/application/get-care-today";
 import type {
   CareCategory,
   CareItemRepository,
@@ -216,8 +216,13 @@ export function createGetCareTodayHandler(options: CareHandlerOptions) {
       userId,
       new Date(),
     );
-    return c.json({ date: result.date, items: result.items.map(careTodaySlotToJson) });
+    return c.json(careTodayToJson(result));
   };
+}
+
+/** Today's care slots as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function careTodayToJson(result: CareTodayResult) {
+  return { date: result.date, items: result.items.map(careTodaySlotToJson) };
 }
 
 /** Protected `POST /api/care/log`: record a slot as done/skipped; 404 when the schedule isn't owned by the caller. */
@@ -295,10 +300,15 @@ export function createGetCareRangeHandler(options: CareHandlerOptions) {
       to,
       new Date(),
     );
-    return c.json({
-      from: result.from,
-      to: result.to,
-      days: result.days.map((day) => ({ date: day.date, items: day.items.map(careTodaySlotToJson) })),
-    });
+    return c.json(careRangeToJson(result));
+  };
+}
+
+/** The care range as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function careRangeToJson(result: CareRangeResult) {
+  return {
+    from: result.from,
+    to: result.to,
+    days: result.days.map((day) => ({ date: day.date, items: day.items.map(careTodaySlotToJson) })),
   };
 }
