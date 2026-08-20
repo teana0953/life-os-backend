@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { applyExerciseBonus } from "../../../contexts/health/application/apply-exercise-bonus";
 import { deleteExerciseEntry } from "../../../contexts/health/application/delete-exercise-entry";
-import { getExerciseDay, type ExerciseDayEntry } from "../../../contexts/health/application/get-exercise-day";
+import { getExerciseDay, type ExerciseDay, type ExerciseDayEntry } from "../../../contexts/health/application/get-exercise-day";
 import { listExerciseActivities } from "../../../contexts/health/application/list-exercise-activities";
 import { logExercise } from "../../../contexts/health/application/log-exercise";
 import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
@@ -37,16 +37,21 @@ export function createListExerciseActivitiesHandler(_options: ExerciseHandlerOpt
   };
 }
 
+/** The day's exercise entries and total as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function exerciseDayToJson(day: ExerciseDay) {
+  return {
+    day: day.day,
+    entries: day.entries.map(entryToJson),
+    total_minutes: day.totalMinutes,
+  };
+}
+
 /** Protected `GET /api/exercise?day=`: the day's entries (enriched) and total duration. */
 export function createGetExerciseHandler(options: ExerciseHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const day = await getExerciseDay(options.exerciseRepository, userId, requireDay(c.req.query("day")));
-    return c.json({
-      day: day.day,
-      entries: day.entries.map(entryToJson),
-      total_minutes: day.totalMinutes,
-    });
+    return c.json(exerciseDayToJson(day));
   };
 }
 

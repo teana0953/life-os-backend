@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getHealthCalendar } from "../../../contexts/health/application/get-health-calendar";
+import { getHealthCalendar, type HealthCalendarSummary } from "../../../contexts/health/application/get-health-calendar";
 import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
 import type { HealthCalendarRepository } from "../../../contexts/health/domain/health-calendar-repository";
 import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
@@ -39,13 +39,18 @@ export function createGetHealthCalendarHandler(options: HealthCalendarHandlerOpt
       month,
       today,
     );
-    return c.json({
-      year: summary.year,
-      month: summary.month,
-      logged_days: summary.loggedDays,
-      days_elapsed: summary.daysElapsed,
-      logging_rate: summary.loggingRate,
-      diet_adherence_rate: summary.dietAdherenceRate,
-    });
+    return c.json(healthCalendarToJson(summary));
+  };
+}
+
+/** The month's calendar summary as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function healthCalendarToJson(summary: HealthCalendarSummary) {
+  return {
+    year: summary.year,
+    month: summary.month,
+    logged_days: summary.loggedDays,
+    days_elapsed: summary.daysElapsed,
+    logging_rate: summary.loggingRate,
+    diet_adherence_rate: summary.dietAdherenceRate,
   };
 }

@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { getBowelDay } from "../../../contexts/health/application/get-bowel-day";
+import { getBowelDay, type BowelDay } from "../../../contexts/health/application/get-bowel-day";
 import { setBowelDay } from "../../../contexts/health/application/set-bowel-day";
 import type { BowelRepository } from "../../../contexts/health/domain/bowel-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
@@ -12,12 +12,17 @@ export interface BowelHandlerOptions {
   bowelRepository: BowelRepository;
 }
 
+/** The day's bowel record as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function bowelDayToJson(result: BowelDay) {
+  return { day: result.day, count: result.count, is_normal: result.isNormal, note: result.note };
+}
+
 /** Protected `GET /api/bowel?day=`: the day's count, flag, and note (defaults for an unrecorded day). */
 export function createGetBowelHandler(options: BowelHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const result = await getBowelDay(options.bowelRepository, userId, requireDay(c.req.query("day")));
-    return c.json({ day: result.day, count: result.count, is_normal: result.isNormal, note: result.note });
+    return c.json(bowelDayToJson(result));
   };
 }
 

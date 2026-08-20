@@ -40,6 +40,16 @@ export function optionalFiniteNumber(value: unknown, field: string, fallback: nu
   return requireFiniteNumber(value, field);
 }
 
+/**
+ * Optional window width in days: absent → `fallback`, else `1..366`. The upper
+ * bound is `MAX_RANGE_DAYS`, the same span `/api/vitals/range` and
+ * `/api/care/range` already refuse to exceed.
+ */
+export function optionalDayCount(value: unknown, field: string, fallback: number): number {
+  if (value === undefined || value === null) return fallback;
+  return requireNumberInRange(value, field, 1, 366);
+}
+
 /** Optional finite number that stays `undefined` when absent (for optional overrides). */
 export function optionalFiniteNumberOrUndefined(value: unknown, field: string): number | undefined {
   if (value === undefined || value === null) return undefined;

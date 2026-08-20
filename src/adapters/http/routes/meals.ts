@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { createMeal, type CreateMealItem } from "../../../contexts/health/application/create-meal";
 import { deleteMeal } from "../../../contexts/health/application/delete-meal";
 import { deleteMealItem } from "../../../contexts/health/application/delete-meal-item";
-import { getDayMeals, type MealItemView } from "../../../contexts/health/application/get-day-meals";
+import { getDayMeals, type DayMealsLog, type MealItemView } from "../../../contexts/health/application/get-day-meals";
 import { getLoggedDays } from "../../../contexts/health/application/get-logged-days";
 import { EmptyUpdateError, updateMealItem } from "../../../contexts/health/application/update-meal-item";
 import { updateMealTime } from "../../../contexts/health/application/update-meal-time";
@@ -166,23 +166,28 @@ export function createCreateMealHandler(options: MealHandlerOptions) {
   };
 }
 
+/** A day's meals and totals as JSON; shared with the health-overview batch section so the two cannot drift. */
+export function dayMealsToJson(dayLog: DayMealsLog) {
+  return {
+    day: dayLog.day,
+    meals: dayLog.meals.map((meal) => ({
+      id: meal.id,
+      meal: meal.meal,
+      time: meal.time.toISOString(),
+      items: meal.items.map(mealItemViewToJson),
+    })),
+    totals: {
+      ...scalableToJson({ ...dayLog.totals.nutrients, ...dayLog.totals.portions }),
+    },
+  };
+}
+
 /** Protected `GET /api/meals?day=`: a day's meals (with items, ordered by time) and nutrient/portion totals. */
 export function createGetDayMealsHandler(options: MealHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
     const dayLog = await getDayMeals(options.mealRepository, userId, requireDay(c.req.query("day")));
-    return c.json({
-      day: dayLog.day,
-      meals: dayLog.meals.map((meal) => ({
-        id: meal.id,
-        meal: meal.meal,
-        time: meal.time.toISOString(),
-        items: meal.items.map(mealItemViewToJson),
-      })),
-      totals: {
-        ...scalableToJson({ ...dayLog.totals.nutrients, ...dayLog.totals.portions }),
-      },
-    });
+    return c.json(dayMealsToJson(dayLog));
   };
 }
 

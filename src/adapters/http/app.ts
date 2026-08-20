@@ -77,6 +77,8 @@ import {
   createUpdateMenstrualHandler,
 } from "./routes/menstrual";
 import { createGetHealthCalendarHandler } from "./routes/health-calendar";
+import { createGetHealthOverviewHandler } from "./routes/health-overview";
+import { createGetHomeSummaryHandler } from "./routes/home-summary";
 import { createHealthHandler } from "./routes/health";
 import {
   createImportChaodaysBowelHandler,
@@ -390,6 +392,46 @@ export function createApp(options: CreateAppOptions) {
     mealRepository: options.mealRepository,
   };
   app.get("/api/health-calendar", authMiddleware, createGetHealthCalendarHandler(healthCalendarOptions));
+
+  // Per-screen batch reads (batch-screen-reads): one Worker invocation instead
+  // of fifteen (health) and seven (home) requests, each of which otherwise pays
+  // ~478ms of network and its own draw from the latency tail (#114). The
+  // granular endpoints above stay registered — writes and single-card retries
+  // keep using them.
+  app.get(
+    "/api/health-overview",
+    authMiddleware,
+    createGetHealthOverviewHandler({
+      userRepository: options.userRepository,
+      bodyProfileRepository: options.bodyProfileRepository,
+      vitalsRepository: options.vitalsRepository,
+      healthCalendarRepository: options.healthCalendarRepository,
+      dailyTargetRepository: options.dailyTargetRepository,
+      mealRepository: options.mealRepository,
+      foodDictionaryRepository: options.foodDictionaryRepository,
+      waterRepository: options.waterRepository,
+      bowelRepository: options.bowelRepository,
+      exerciseRepository: options.exerciseRepository,
+      menstrualRepository: options.menstrualRepository,
+      careItemRepository: options.careItemRepository,
+      careLogRepository: options.careLogRepository,
+    }),
+  );
+  app.get(
+    "/api/home-summary",
+    authMiddleware,
+    createGetHomeSummaryHandler({
+      userRepository: options.userRepository,
+      bodyProfileRepository: options.bodyProfileRepository,
+      vitalsRepository: options.vitalsRepository,
+      menstrualRepository: options.menstrualRepository,
+      dailyTargetRepository: options.dailyTargetRepository,
+      mealRepository: options.mealRepository,
+      financeBudgetRepository: options.financeBudgetRepository,
+      financeNetWorthRepository: options.financeNetWorthRepository,
+      splitBalanceRepository: options.splitBalanceRepository,
+    }),
+  );
 
   const importChaodaysOptions = {
     userRepository: options.userRepository,

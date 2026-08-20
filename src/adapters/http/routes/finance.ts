@@ -166,6 +166,11 @@ function budgetProgressToJson(progress: BudgetProgress) {
   return { id: progress.id, category_id: progress.categoryId, amount: progress.amount, spent: progress.spent, remaining: progress.remaining, percent: progress.percent };
 }
 
+/** The budgets response body; shared with the home-summary batch section so the two cannot drift. */
+export function budgetsToJson(month: string, budgets: BudgetProgress[]) {
+  return { month, budgets: budgets.map(budgetProgressToJson) };
+}
+
 /** `category_id` on a budget PUT: absent/`null` -> the overall budget, a string -> that category; anything else -> 400. */
 function budgetCategoryId(body: Record<string, unknown>): string | null {
   const value = body.category_id;
@@ -499,7 +504,7 @@ export function createGetBudgetsHandler(options: FinanceHandlerOptions) {
     const month = requireMonth(c.req.query("month"));
     try {
       const budgets = await listBudgetsWithProgress(options.financeBudgetRepository, userId, month);
-      return c.json({ month, budgets: budgets.map(budgetProgressToJson) });
+      return c.json(budgetsToJson(month, budgets));
     } catch (err) {
       return mapFinanceError(err, c);
     }
@@ -550,7 +555,8 @@ function networthTrendPointToJson(point: NetWorthTrendPoint) {
   return { month: point.month, net_worth: point.netWorth };
 }
 
-function monthlyNetWorthToJson(result: MonthlyNetWorth) {
+/** The monthly net-worth body; shared with the home-summary batch section so the two cannot drift. */
+export function monthlyNetWorthToJson(result: MonthlyNetWorth) {
   return {
     month: result.month,
     accounts: result.accounts.map(networthAccountValueToJson),

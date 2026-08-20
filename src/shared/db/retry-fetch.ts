@@ -1,4 +1,5 @@
 import { describeQueryShape, isRetryableReadOnlyBody } from "./read-only-query";
+import { hasSubrequestBudgetForRetry, recordSubrequest } from "./subrequest-budget";
 
 /**
  * A retrying wrapper for the fetch call the neon HTTP driver makes.
@@ -72,6 +73,7 @@ export function createRetryingFetch({ fetchImpl, sleep, random }: RetryingFetchD
     const body = init.body;
 
     for (let attempt = 1; ; attempt++) {
+      recordSubrequest();
       let response: Response | undefined;
       let error: unknown;
       try {
@@ -96,6 +98,17 @@ export function createRetryingFetch({ fetchImpl, sleep, random }: RetryingFetchD
 
       if (attempt >= MAX_ATTEMPTS) {
         console.warn(`[db] retries exhausted after ${MAX_ATTEMPTS} attempts: ${failure} shape=${shape}`);
+        if (response) return response;
+        throw error;
+      }
+
+      if (!hasSubrequestBudgetForRetry()) {
+        // A batch endpoint's fan-out shares one subrequest budget across every
+        // section (subrequest-budget.ts) — retrying here could push the whole
+        // request over the Workers cap for the sake of one section, taking
+        // down sections that would otherwise have succeeded on their first
+        // attempt. Give up on this one instead (batch-screen-reads design.md D6).
+        console.warn(`[db] retry skipped, request subrequest budget exhausted: ${failure} shape=${shape}`);
         if (response) return response;
         throw error;
       }
