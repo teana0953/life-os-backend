@@ -44,6 +44,14 @@ function systemPrompt(context: ToolContext): string {
       : "Anything that is not about the caller's own finance and split records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
     "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
     "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
+    // Health-on only: with health off the model has none of these tools, and
+    // an instruction to call them ends as an unknown-tool error reported to
+    // the caller as a product failure.
+    ...(context.health
+      ? [
+          "When the caller asks what they can still eat, call get_diet_targets first for what remains, draw candidates from list_favorite_foods and list_recent_foods, reach for search_foods only when those do not cover the gap, and present the suggestion as each food group's summed portions set against what remains.",
+        ]
+      : []),
   ].join(" ");
 }
 

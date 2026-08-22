@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { assistantTools, runTool, type HealthPorts, type ToolContext } from "../../../src/contexts/assistant/application/tools";
 import { getMenstrualOverview } from "../../../src/contexts/health/application/get-menstrual-overview";
+import type { FoodItem } from "../../../src/contexts/health/domain/food-item";
+import type { MealEntry, MealItem } from "../../../src/contexts/health/domain/meal-entry";
 import type { MenstrualPeriod } from "../../../src/contexts/health/domain/menstrual-period";
 
 const unusable = new Proxy({}, { get: () => () => { throw new Error("this repository must not be reached"); } });
@@ -15,6 +17,7 @@ function healthPorts(overrides: Partial<HealthPorts> = {}): HealthPorts {
     exercise: unusable as never,
     menstrual: unusable as never,
     bodyProfile: unusable as never,
+    foodDictionary: unusable as never,
     ...overrides,
   };
 }
@@ -43,7 +46,7 @@ describe("the assistant's tool list", () => {
     ]);
   });
 
-  it("is exactly these fifteen with the health opt-in, and still no care or reminder tool", () => {
+  it("is exactly these eighteen with the health opt-in, and still no care or reminder tool", () => {
     expect(assistantTools(contextWith({ health: healthPorts() })).map((tool) => tool.name)).toEqual([
       "get_monthly_summary",
       "list_transactions",
@@ -60,6 +63,9 @@ describe("the assistant's tool list", () => {
       "get_vitals_range",
       "get_weight_goal",
       "get_menstrual_overview",
+      "list_favorite_foods",
+      "list_recent_foods",
+      "search_foods",
     ]);
   });
 
@@ -72,12 +78,18 @@ describe("the assistant's tool list", () => {
     expect(writesSplit).toEqual([]);
   });
 
-  it("tells the model about the two server bounds, so a clamped answer is not presented as complete", () => {
+  it("tells the model about every server bound, so a clamped answer is not presented as complete", () => {
     const tools = assistantTools(contextWith({ health: healthPorts() }));
     const describedBy = (name: string) => tools.find((tool) => tool.name === name)?.description ?? "";
 
     expect(describedBy("get_vitals_range")).toContain("at most 31 days");
     expect(describedBy("get_menstrual_overview")).toContain("12 most recent cycles");
+    expect(describedBy("list_recent_foods")).toContain("at most 30 days");
+    expect(describedBy("list_recent_foods")).toContain("at most 30 foods");
+    expect(describedBy("search_foods")).toContain("at most 20 rows");
+    // Not a bound, but the reason the model should reach here first: the list
+    // is the caller's own, so it needs no clamp and no search.
+    expect(describedBy("list_favorite_foods")).toContain("favourite");
   });
 });
 
@@ -289,10 +301,13 @@ const HEALTH_TOOL_NAMES = [
   "get_vitals_range",
   "get_weight_goal",
   "get_menstrual_overview",
+  "list_favorite_foods",
+  "list_recent_foods",
+  "search_foods",
 ];
 
 describe("running a health tool without the opt-in", () => {
-  it("answers every one of the nine exactly as an unknown name, reaching no repository", async () => {
+  it("answers every one of the twelve exactly as an unknown name, reaching no repository", async () => {
     // The advertised list and what the server will execute are two surfaces.
     // A model naming a health tool from an earlier turn — or from text
     // somebody else wrote — must be refused by the code that runs tools, not
@@ -535,5 +550,395 @@ describe("running a health tool with the opt-in", () => {
     expect(result.stats).toEqual(wholeHistory.stats);
     expect(wholeHistory.stats.averagePeriodDays).toBe(5);
     expect(result.lastPeriod).toEqual(periods[periods.length - 1]);
+  });
+});
+
+
+/**
+ * The fields a food candidate carries, and the fields it does not.
+ *
+ * Every field kept here is a field sent to a provider that may train on what
+ * it receives, so the keys are asserted **whole** rather than by
+ * `not.toHaveProperty`: a field added to the projection later cannot slip
+ * through green.
+ */
+const CANDIDATE_KEYS = ["name", "staple", "meat", "fruit", "veg", "kcal", "base_amount", "measure_unit"];
+
+function foodItem(overrides: Partial<FoodItem> = {}): FoodItem {
+  return {
+    id: "food-1",
+    ownerUserId: "user-1",
+    name: "糙米飯",
+    carbG: 40,
+    proteinG: 4,
+    fatG: 1,
+    sugarG: 0.5,
+    fiberG: 2,
+    kcal: 190,
+    staple: 1,
+    meat: 0,
+    fruit: 0,
+    veg: 0,
+    baseAmount: 100,
+    measureUnit: "g",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+function mealItem(overrides: Partial<MealItem> = {}): MealItem {
+  return {
+    id: "item-1",
+    mealEntryId: "meal-1",
+    foodItemId: "food-1",
+    name: "糙米飯",
+    photoRef: null,
+    source: "dict",
+    unclassified: false,
+    carbG: 40,
+    proteinG: 4,
+    fatG: 1,
+    sugarG: 0.5,
+    fiberG: 2,
+    kcal: 190,
+    staple: 1,
+    meat: 0,
+    fruit: 0,
+    veg: 0,
+    quantity: 2,
+    baseAmount: 100,
+    measureUnit: "g",
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    ...overrides,
+  };
+}
+
+function mealEntry(day: string, items: MealItem[]): MealEntry {
+  return { id: `meal-${day}-${items[0]?.name ?? ""}`, userId: "user-1", day, meal: "lunch", time: new Date(`${day}T12:00:00Z`), createdAt: new Date(`${day}T12:00:00Z`), items };
+}
+
+/** A context whose three food sources answer with `items`/`meals` and record nothing else. */
+function foodContext(overrides: { favorites?: FoodItem[]; search?: FoodItem[]; meals?: MealEntry[] }): ToolContext {
+  return contextWith({
+    health: healthPorts({
+      foodDictionary: {
+        listFavorites: async () => overrides.favorites ?? [],
+        search: async () => overrides.search ?? [],
+      } as never,
+      meals: { listMealsInRange: async () => overrides.meals ?? [] } as never,
+    }),
+  });
+}
+
+describe("the food candidate projection", () => {
+  it("carries the name, the per-unit portions, the calories and the measure basis — and nothing else — from all three sources", async () => {
+    const item = foodItem({ name: "地瓜", staple: 1.5, meat: 0.25, fruit: 0.5, veg: 0.75, kcal: 123, baseAmount: 60, measureUnit: "顆" });
+    const context = foodContext({
+      favorites: [item],
+      search: [item],
+      meals: [mealEntry("2026-08-08", [mealItem({ name: "地瓜", staple: 1.5, meat: 0.25, fruit: 0.5, veg: 0.75, kcal: 123, baseAmount: 60, measureUnit: "顆" })])],
+    });
+
+    const favorites = (await runTool(context, "list_favorite_foods", {})).result as Record<string, unknown>[];
+    const search = (await runTool(context, "search_foods", { query: "地" })).result as Record<string, unknown>[];
+    const recent = (await runTool(context, "list_recent_foods", {})).result as Record<string, unknown>[];
+
+    const projected = { name: "地瓜", staple: 1.5, meat: 0.25, fruit: 0.5, veg: 0.75, kcal: 123, base_amount: 60, measure_unit: "顆" };
+    expect(favorites).toEqual([projected]);
+    expect(search).toEqual([projected]);
+    // Recent foods carry the two extra fields that make one candidate a
+    // different suggestion from another, and nothing beyond them.
+    expect(recent).toEqual([{ ...projected, times_eaten: 1, last_eaten_day: "2026-08-08" }]);
+
+    expect(Object.keys(favorites[0])).toEqual(CANDIDATE_KEYS);
+    expect(Object.keys(search[0])).toEqual(CANDIDATE_KEYS);
+    expect(Object.keys(recent[0])).toEqual([...CANDIDATE_KEYS, "times_eaten", "last_eaten_day"]);
+  });
+
+  it("withholds the identifier, the owner, the macronutrients and the timestamps from all three sources", async () => {
+    // The fixture carries every withheld field with a value the assertion can
+    // name, so adding any one of them back into any of the three projections
+    // reddens this.
+    const context = foodContext({
+      favorites: [foodItem()],
+      search: [foodItem()],
+      meals: [mealEntry("2026-08-08", [mealItem()])],
+    });
+
+    const rows = [
+      ...((await runTool(context, "list_favorite_foods", {})).result as Record<string, unknown>[]),
+      ...((await runTool(context, "search_foods", { query: "糙" })).result as Record<string, unknown>[]),
+      ...((await runTool(context, "list_recent_foods", {})).result as Record<string, unknown>[]),
+    ];
+
+    expect(rows.length).toBe(3);
+    for (const row of rows) {
+      for (const withheld of ["id", "ownerUserId", "owner_user_id", "carbG", "proteinG", "fatG", "sugarG", "fiberG", "createdAt", "foodItemId", "quantity"]) {
+        expect(Object.keys(row)).not.toContain(withheld);
+      }
+    }
+  });
+});
+
+describe("list_favorite_foods", () => {
+  it("asks for the caller's own favourites, never an id from the arguments", async () => {
+    const seen: string[] = [];
+    const context = contextWith({
+      health: healthPorts({ foodDictionary: { listFavorites: async (u: string) => { seen.push(u); return []; } } as never }),
+    });
+
+    await runTool(context, "list_favorite_foods", { userId: "somebody-else", user_id: "somebody-else" });
+
+    expect(seen).toEqual(["user-1"]);
+  });
+
+  it("returns every favourite, unclamped — the list's size is the caller's own choice, not the model's", async () => {
+    // 31 favourites: one more than the recent-foods cap, so a clamp copied
+    // over from there reddens here. Dropping a favourite would make the
+    // assistant's answer wrong in a way neither the caller nor the model can
+    // see.
+    const favorites = Array.from({ length: 31 }, (_, i) => foodItem({ id: `food-${i}`, name: `fav-${i}` }));
+    const context = foodContext({ favorites });
+
+    const outcome = await runTool(context, "list_favorite_foods", {});
+
+    expect((outcome.result as unknown[]).length).toBe(31);
+  });
+});
+
+describe("list_recent_foods", () => {
+  /** Records the range the port was asked for; the answer is empty. */
+  function rangeContext(seen: Array<[string, string, string]>): ToolContext {
+    return contextWith({
+      health: healthPorts({
+        meals: { listMealsInRange: async (u: string, from: string, to: string) => { seen.push([u, from, to]); return []; } } as never,
+      }),
+    });
+  }
+
+  it("looks back the server's default window, ending on the caller's today, under the caller's own id", async () => {
+    // The window is inclusive, so 30 days back from 2026-08-08 starts on
+    // 2026-07-10 — an off-by-one shows up here rather than as a silently
+    // wider read.
+    const seen: Array<[string, string, string]> = [];
+
+    await runTool(rangeContext(seen), "list_recent_foods", { userId: "somebody-else" });
+
+    expect(seen).toEqual([["user-1", "2026-07-10", "2026-08-08"]]);
+  });
+
+  it("honours a window narrower than the server's maximum", async () => {
+    const seen: Array<[string, string, string]> = [];
+
+    await runTool(rangeContext(seen), "list_recent_foods", { days: 7 });
+
+    expect(seen).toEqual([["user-1", "2026-08-02", "2026-08-08"]]);
+  });
+
+  it("clamps a window wider than the server allows instead of refusing it", async () => {
+    // The pair straddles the boundary: 30 must pass through untouched and 31
+    // must come back as 30, so an off-by-one in either direction reddens one
+    // of the two.
+    const seen: Array<[string, string, string]> = [];
+    const context = rangeContext(seen);
+
+    await runTool(context, "list_recent_foods", { days: 30 });
+    await runTool(context, "list_recent_foods", { days: 31 });
+    await runTool(context, "list_recent_foods", { days: 365 });
+
+    expect(seen).toEqual([
+      ["user-1", "2026-07-10", "2026-08-08"],
+      ["user-1", "2026-07-10", "2026-08-08"],
+      ["user-1", "2026-07-10", "2026-08-08"],
+    ]);
+  });
+
+  it("floors a zero, negative or nonsense window at a single day", async () => {
+    const seen: Array<[string, string, string]> = [];
+    const context = rangeContext(seen);
+
+    await runTool(context, "list_recent_foods", { days: 1 });
+    await runTool(context, "list_recent_foods", { days: 0 });
+    await runTool(context, "list_recent_foods", { days: -5 });
+
+    expect(seen).toEqual([
+      ["user-1", "2026-08-08", "2026-08-08"],
+      ["user-1", "2026-08-08", "2026-08-08"],
+      ["user-1", "2026-08-08", "2026-08-08"],
+    ]);
+  });
+
+  it("falls back to the default window when `days` is not a finite number", async () => {
+    const seen: Array<[string, string, string]> = [];
+    const context = rangeContext(seen);
+
+    await runTool(context, "list_recent_foods", { days: "a month" });
+    await runTool(context, "list_recent_foods", { days: Number.NaN });
+
+    expect(seen).toEqual([
+      ["user-1", "2026-07-10", "2026-08-08"],
+      ["user-1", "2026-07-10", "2026-08-08"],
+    ]);
+  });
+
+  it("drops a nameless item and an unclassified item, keeping the one that is a usable candidate", async () => {
+    // The three items sit on the two different sides of each distinction: a
+    // candidate the model cannot name is not a candidate, and an unclassified
+    // item carries zero portions by design, so offering it is offering a food
+    // that fills nothing. Removing either filter reddens this.
+    const context = foodContext({
+      meals: [
+        mealEntry("2026-08-08", [
+          mealItem({ id: "a", name: null, source: "ai_photo" }),
+          mealItem({ id: "b", name: "   " }),
+          mealItem({ id: "c", name: "布丁", unclassified: true, staple: 0, meat: 0, fruit: 0, veg: 0 }),
+          mealItem({ id: "d", name: "雞胸肉", staple: 0, meat: 2, kcal: 165 }),
+        ]),
+      ],
+    });
+
+    const outcome = await runTool(context, "list_recent_foods", {});
+
+    expect((outcome.result as Array<{ name: string }>).map((f) => f.name)).toEqual(["雞胸肉"]);
+  });
+
+  it("returns one row per distinct name, with how many times it was eaten and the latest of those days", async () => {
+    const context = foodContext({
+      meals: [
+        mealEntry("2026-07-15", [mealItem({ id: "1", name: "白飯" })]),
+        mealEntry("2026-08-01", [mealItem({ id: "2", name: " 白飯 " })]),
+        mealEntry("2026-07-20", [mealItem({ id: "3", name: "白飯" })]),
+      ],
+    });
+
+    const outcome = await runTool(context, "list_recent_foods", {});
+
+    // The days are deliberately out of order in the fixture and unevenly
+    // spaced: the latest is neither the first nor the last row the port
+    // returned, so "the earliest" and "whatever came back last" both redden.
+    expect(outcome.result).toEqual([
+      { name: "白飯", staple: 1, meat: 0, fruit: 0, veg: 0, kcal: 190, base_amount: 100, measure_unit: "g", times_eaten: 3, last_eaten_day: "2026-08-01" },
+    ]);
+  });
+
+  it("groups two spellings that differ only in case as one food", async () => {
+    // The dedup key is the trimmed *lowercased* name (design.md decision 3).
+    // Every other fixture here is Chinese, which has no case at all, so
+    // without this pair a key that dropped `toLowerCase()` would ship green.
+    const context = foodContext({
+      meals: [
+        mealEntry("2026-07-15", [mealItem({ id: "1", name: "Latte" })]),
+        mealEntry("2026-08-01", [mealItem({ id: "2", name: "latte" })]),
+      ],
+    });
+
+    const outcome = await runTool(context, "list_recent_foods", {});
+
+    expect(outcome.result).toEqual([
+      { name: "latte", staple: 1, meat: 0, fruit: 0, veg: 0, kcal: 190, base_amount: 100, measure_unit: "g", times_eaten: 2, last_eaten_day: "2026-08-01" },
+    ]);
+  });
+
+  it("takes the per-unit values from the most recent occurrence, never an average of the two", async () => {
+    // Per-unit values are a snapshot taken at log time and may differ between
+    // two days; an average would produce a food whose values never existed.
+    const context = foodContext({
+      meals: [
+        mealEntry("2026-08-05", [mealItem({ id: "new", name: "地瓜", staple: 3, kcal: 300, baseAmount: 200, measureUnit: "顆" })]),
+        mealEntry("2026-07-20", [mealItem({ id: "old", name: "地瓜", staple: 1, kcal: 100, baseAmount: 60, measureUnit: "g" })]),
+      ],
+    });
+
+    const outcome = await runTool(context, "list_recent_foods", {});
+
+    expect(outcome.result).toEqual([
+      { name: "地瓜", staple: 3, meat: 0, fruit: 0, veg: 0, kcal: 300, base_amount: 200, measure_unit: "顆", times_eaten: 2, last_eaten_day: "2026-08-05" },
+    ]);
+  });
+
+  it("returns at most the server's maximum distinct foods, keeping the most relevant candidates and cutting deterministically", async () => {
+    // 31 distinct foods: one more than the cap. "常吃" was eaten three times
+    // on the *oldest* day, so a sort that ignores the count drops it; the two
+    // foods tying on both count and day sit at the cut, with the alphabetically
+    // later one listed first in the fixture, so a missing name tie-break keeps
+    // the wrong one of the pair.
+    const singles = Array.from({ length: 28 }, (_, i) => {
+      const day = `2026-08-${String(i + 1).padStart(2, "0")}`;
+      return mealEntry(day, [mealItem({ id: `s-${i}`, name: `single-${day}` })]);
+    });
+    const context = foodContext({
+      meals: [
+        mealEntry("2026-07-10", [
+          mealItem({ id: "z", name: "zzz-oldest" }),
+          mealItem({ id: "a", name: "aaa-oldest" }),
+          mealItem({ id: "o1", name: "常吃" }),
+          mealItem({ id: "o2", name: "常吃" }),
+          mealItem({ id: "o3", name: "常吃" }),
+        ]),
+        ...singles,
+      ],
+    });
+
+    const names = ((await runTool(context, "list_recent_foods", {})).result as Array<{ name: string }>).map((f) => f.name);
+
+    expect(names.length).toBe(30);
+    expect(names[0]).toBe("常吃");
+    expect(names[1]).toBe("single-2026-08-28");
+    expect(names[29]).toBe("aaa-oldest");
+    expect(names).not.toContain("zzz-oldest");
+  });
+});
+
+describe("search_foods", () => {
+  it("searches under the caller's own id with the model's query, never an id from the arguments", async () => {
+    const seen: Array<[string, string]> = [];
+    const context = contextWith({
+      health: healthPorts({ foodDictionary: { search: async (u: string, q: string) => { seen.push([u, q]); return []; } } as never }),
+    });
+
+    await runTool(context, "search_foods", { query: "雞", userId: "somebody-else", user_id: "somebody-else" });
+
+    expect(seen).toEqual([["user-1", "雞"]]);
+  });
+
+  it("returns at most the server's maximum rows, not the whole catalogue a one-character substring matches", async () => {
+    // 21 rows: one more than the cap, so a missing slice returns 21 and fails
+    // here. A fixture at or under 20 could not tell those apart.
+    const context = foodContext({ search: Array.from({ length: 21 }, (_, i) => foodItem({ id: `f-${i}`, name: `hit-${i}` })) });
+
+    const outcome = await runTool(context, "search_foods", { query: "h" });
+
+    expect((outcome.result as unknown[]).length).toBe(20);
+  });
+
+  it("answers a missing, non-string or blank query with an error the model can read and retry from, not the whole catalogue", async () => {
+    // Following `propose_transaction`: a bad argument is an answer, not a
+    // throw and not a dump. The port throws on touch here, so "the search was
+    // not run" is proven by the call completing at all.
+    const context = contextWith({ health: healthPorts() });
+
+    const absent = await runTool(context, "search_foods", {});
+    const nonString = await runTool(context, "search_foods", { query: 42 });
+    const empty = await runTool(context, "search_foods", { query: "" });
+    const blank = await runTool(context, "search_foods", { query: "   " });
+
+    for (const outcome of [absent, nonString, empty, blank]) {
+      expect(outcome.result).toEqual({ error: "query must be a non-empty string" });
+      expect(outcome.proposal).toBeUndefined();
+    }
+  });
+});
+
+describe("the food tools write nothing", () => {
+  it("produces no proposal from any of the three, because they offer no write of any kind", async () => {
+    const context = foodContext({ favorites: [foodItem()], search: [foodItem()], meals: [mealEntry("2026-08-08", [mealItem()])] });
+
+    const outcomes = await Promise.all([
+      runTool(context, "list_favorite_foods", {}),
+      runTool(context, "list_recent_foods", {}),
+      runTool(context, "search_foods", { query: "糙" }),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.proposal)).toEqual([undefined, undefined, undefined]);
   });
 });

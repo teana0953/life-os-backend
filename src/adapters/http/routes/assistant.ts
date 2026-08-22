@@ -9,6 +9,7 @@ import type { BodyProfileRepository } from "../../../contexts/health/domain/body
 import type { BowelRepository } from "../../../contexts/health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
 import type { ExerciseRepository } from "../../../contexts/health/domain/exercise-repository";
+import type { FoodDictionaryRepository } from "../../../contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
 import type { MenstrualRepository } from "../../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
@@ -35,6 +36,7 @@ export interface AssistantHandlerOptions {
   exerciseRepository: ExerciseRepository;
   menstrualRepository: MenstrualRepository;
   bodyProfileRepository: BodyProfileRepository;
+  foodDictionaryRepository: FoodDictionaryRepository;
   modelClient: ModelClient;
 }
 
@@ -102,6 +104,7 @@ export function createAssistantHandler(options: AssistantHandlerOptions) {
             exercise: options.exerciseRepository,
             menstrual: options.menstrualRepository,
             bodyProfile: options.bodyProfileRepository,
+            foodDictionary: options.foodDictionaryRepository,
           }
         : undefined,
     };
