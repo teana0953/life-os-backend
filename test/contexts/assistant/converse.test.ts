@@ -1,15 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { converse, TOOL_LIMIT_NOTICE } from "../../../src/contexts/assistant/application/converse";
-import type { ToolContext } from "../../../src/contexts/assistant/application/tools";
-import type { AssistantMessage, ModelClient, ModelTurn, ToolRound } from "../../../src/contexts/assistant/domain/model-client";
+import { assistantTools, type HealthPorts, type ToolContext } from "../../../src/contexts/assistant/application/tools";
+import type { AssistantMessage, AssistantTool, ModelClient, ModelTurn, ToolRound } from "../../../src/contexts/assistant/domain/model-client";
 
 /**
  * Every repository throws if touched. The loop must not preload any data into
  * the model's context (task 5.2) — the only way to a record is a tool the
  * model explicitly called, and tests that need one override that repository.
  */
+const unusable = new Proxy({}, { get: () => () => { throw new Error("this repository must not be reached"); } });
+
+/** Opted in, and every port still throws if touched — the prompt branch does not read a record. */
+const healthPorts: HealthPorts = {
+  dailyTargets: unusable as never,
+  meals: unusable as never,
+  water: unusable as never,
+  bowel: unusable as never,
+  vitals: unusable as never,
+  exercise: unusable as never,
+  menstrual: unusable as never,
+  bodyProfile: unusable as never,
+};
+
 function contextWith(overrides: Partial<ToolContext> = {}): ToolContext {
-  const unusable = new Proxy({}, { get: () => () => { throw new Error("this repository must not be reached"); } });
   return {
     userId: "user-1",
     today: "2026-08-08",
@@ -29,15 +42,17 @@ class ScriptedModel implements ModelClient {
   calls = 0;
   seenSystem: string[] = [];
   seenRounds: ToolRound[][] = [];
+  seenTools: AssistantTool[][] = [];
 
   constructor(private readonly script: (call: number) => ModelTurn) {}
 
-  async turn(_apiKey: string, system: string, _messages: AssistantMessage[], _tools: unknown, rounds: ToolRound[]): Promise<ModelTurn> {
+  async turn(_apiKey: string, system: string, _messages: AssistantMessage[], tools: AssistantTool[], rounds: ToolRound[]): Promise<ModelTurn> {
     this.calls += 1;
     // The fuse: with the loop's cap deleted, this test must go red fast, not
     // hang — a hung test run has no red letters (測試卡死≠通過).
     if (this.calls > 6) throw new Error("fuse blown: the loop no longer has a cap");
     this.seenSystem.push(system);
+    this.seenTools.push(tools);
     // Snapshot: the loop mutates its rounds array in place between turns.
     this.seenRounds.push(rounds.map((r) => ({ calls: [...r.calls], results: [...r.results] })));
     return this.script(this.calls);
@@ -200,5 +215,70 @@ describe("the tool loop", () => {
 
     // The second turn is the one that replays round 1.
     expect(model.seenRounds[1][0].calls[0].providerToken).toBe("opaque-token-from-the-provider");
+  });
+});
+
+/**
+ * The instructions the model is given, asserted whole in each state.
+ *
+ * These guard that the instruction is **present**, and nothing more. Under
+ * BYOK the model runs on the provider's side and the server never sees its
+ * output, so no test here — and no code on this side — can prove the model
+ * obeyed. A green test below must not be read as "health leakage is blocked":
+ * the enforceable half of that lives in `runTool`'s refusal and in which tools
+ * the list carries, both covered in tools.test.ts.
+ */
+describe("the instructions the model is given", () => {
+  const HEALTH_OFF_PROMPT = [
+    "Today is 2026-08-08 and the caller's current month is 2026-08.",
+    "You are a finance assistant. Through your tools you can see the caller's own finance and split records, and nothing else.",
+    "You cannot see health, diet, care or reminder records; if asked about those, say you cannot see them.",
+    "Anything that is not about the caller's own finance and split records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
+    "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
+    "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
+  ].join(" ");
+
+  const HEALTH_ON_PROMPT = [
+    "Today is 2026-08-08 and the caller's current month is 2026-08.",
+    "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health and diet records, and nothing else.",
+    "You cannot see care or reminder records; if asked about those, say you cannot see them.",
+    "Anything that is not about the caller's own finance, split, health or diet records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
+    "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
+    "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
+  ].join(" ");
+
+  it("says health records are out of reach when the caller has not opted in (an instruction, not a server-side block)", async () => {
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith());
+
+    expect(model.seenSystem[0]).toBe(HEALTH_OFF_PROMPT);
+  });
+
+  it("says health and diet are visible and care and reminders are not when the caller has opted in (an instruction, not a server-side block)", async () => {
+    // The out-of-scope sentence widens in the same breath as the visibility
+    // one: left naming finance alone it would tell the model to decline the
+    // very health questions it was just given tools for.
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith({ health: healthPorts }));
+
+    expect(model.seenSystem[0]).toBe(HEALTH_ON_PROMPT);
+  });
+});
+
+describe("the tool list the model is offered", () => {
+  it("carries the health tools only when the caller has opted in", async () => {
+    const off = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+    const on = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(off, "key", ASK, contextWith());
+    await converse(on, "key", ASK, contextWith({ health: healthPorts }));
+
+    expect(off.seenTools[0].map((tool) => tool.name)).toEqual(assistantTools(contextWith()).map((tool) => tool.name));
+    expect(on.seenTools[0].map((tool) => tool.name)).toEqual(
+      assistantTools(contextWith({ health: healthPorts })).map((tool) => tool.name),
+    );
+    expect(on.seenTools[0].length - off.seenTools[0].length).toBe(9);
   });
 });

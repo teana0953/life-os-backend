@@ -205,7 +205,7 @@ class ScriptedModel implements ModelClient {
   }
 }
 
-function buildApp(model: ModelClient) {
+function buildApp(model: ModelClient, waterRepository: WaterRepository = stubWaterRepository) {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
   const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
@@ -216,7 +216,7 @@ function buildApp(model: ModelClient) {
     foodDictionaryRepository: stubFoodDictionaryRepository,
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
-    waterRepository: stubWaterRepository,
+    waterRepository,
     bowelRepository: stubBowelRepository,
     vitalsRepository: stubVitalsRepository,
     exerciseRepository: stubExerciseRepository,
@@ -440,9 +440,10 @@ describe("POST /api/assistant — identity and writes", () => {
 });
 
 describe("CORS for the assistant", () => {
-  it("allows the key header through preflight", async () => {
+  it("allows the key header and the health opt-in header through preflight", async () => {
     // Without this, only a real browser fails — every server-side test stays
-    // green while the whole feature is unreachable from the web app.
+    // green while the whole feature is unreachable from the web app. The key
+    // header already cost one round of exactly this.
     const { app } = buildApp(new ScriptedModel([]));
 
     const res = await app.request(
@@ -451,11 +452,84 @@ describe("CORS for the assistant", () => {
         headers: {
           Origin: "http://localhost:3000",
           "Access-Control-Request-Method": "POST",
-          "Access-Control-Request-Headers": "X-Gemini-Api-Key",
+          // A header the app never allows is mixed in on purpose: Hono's cors
+          // plugin echoes back whatever `Access-Control-Request-Headers` sent
+          // when `allowHeaders` is unconfigured, so a request naming only the
+          // headers under test could pass with no `allowHeaders` list at all.
+          "Access-Control-Request-Headers": "X-Gemini-Api-Key, X-Assistant-Health, X-Should-Not-Be-Allowed",
         },
       }),
     );
 
-    expect(res.headers.get("Access-Control-Allow-Headers") ?? "").toContain("X-Gemini-Api-Key");
+    const allowed = res.headers.get("Access-Control-Allow-Headers") ?? "";
+    expect(allowed).toContain("X-Gemini-Api-Key");
+    expect(allowed).toContain("X-Assistant-Health");
+    expect(allowed).not.toContain("X-Should-Not-Be-Allowed");
+  });
+});
+
+describe("POST /api/assistant — the health opt-in", () => {
+  const ASKS_FOR_WATER: ModelTurn = { text: "", toolCalls: [{ id: "w#0", name: "get_water_day", arguments: {} }] };
+
+  /** Records the day it was asked for and answers with values no default could produce. */
+  function recordingWaterRepository(seen: Array<[string, string]>): WaterRepository {
+    return {
+      ...stubWaterRepository,
+      getTarget: async (userId: string, day: string) => {
+        seen.push([userId, day]);
+        return { userId, day, targetMl: 2000 } as never;
+      },
+      getLatestTargetOnOrBefore: async () => null,
+      getIntake: async (_userId: string, day: string) => ({ day, totalMl: 1234 }) as never,
+    };
+  }
+
+  it("reads no health record without the header, even when the model names a health tool", async () => {
+    // The whole point of the per-case refusal: the tool is missing from the
+    // list this request was given, and the model named it anyway. Every health
+    // stub throws on touch, so reaching one would surface as a 500 here.
+    const seen: Array<[string, string]> = [];
+    const model = new ScriptedModel([ASKS_FOR_WATER, TEXT_ONLY]);
+    const { app } = buildApp(model, recordingWaterRepository(seen));
+
+    const res = await app.request(assistantRequest(await validToken(), ASK, { "X-Gemini-Api-Key": CANARY_KEY }));
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([]);
+    expect(model.seen[1].rounds[0].results[0].result).toEqual({ error: "unknown tool: get_water_day" });
+  });
+
+  it("reads the caller's own water record for the caller's own day with the header", async () => {
+    const seen: Array<[string, string]> = [];
+    const model = new ScriptedModel([ASKS_FOR_WATER, TEXT_ONLY]);
+    const built = buildApp(model, recordingWaterRepository(seen));
+    const token = await validToken();
+    const meRes = await built.app.request(new Request("http://localhost/api/me", { headers: { Authorization: `Bearer ${token}` } }));
+    const me = await meRes.json<{ id: string }>();
+
+    const res = await built.app.request(
+      assistantRequest(token, ASK, { "X-Gemini-Api-Key": CANARY_KEY, "X-Assistant-Health": "on" }),
+    );
+
+    expect(res.status).toBe(200);
+    // The day is the caller's own, resolved from their timezone by the route:
+    // asserted as "the same day the answer reports" rather than a literal, so
+    // this reads the same under CI's UTC and a UTC+8 laptop.
+    const result = model.seen[1].rounds[0].results[0].result as { day: string; totalMl: number; targetMl: number; remainingMl: number };
+    expect(seen).toEqual([[me.id, result.day]]);
+    expect(result.day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result).toEqual({ day: result.day, totalMl: 1234, targetMl: 2000, remainingMl: 766 });
+  });
+
+  it("treats a header value other than the exact agreed one as no opt-in", async () => {
+    const seen: Array<[string, string]> = [];
+    const model = new ScriptedModel([ASKS_FOR_WATER, TEXT_ONLY]);
+    const { app } = buildApp(model, recordingWaterRepository(seen));
+
+    const res = await app.request(assistantRequest(await validToken(), ASK, { "X-Gemini-Api-Key": CANARY_KEY, "X-Assistant-Health": "true" }));
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([]);
+    expect(model.seen[1].rounds[0].results[0].result).toEqual({ error: "unknown tool: get_water_day" });
   });
 });

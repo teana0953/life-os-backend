@@ -5,13 +5,21 @@ import type { AssistantMessage, ModelClient } from "../../../contexts/assistant/
 import type { FinanceBudgetRepository } from "../../../contexts/finance/domain/finance-budget-repository";
 import type { FinanceCategoryRepository } from "../../../contexts/finance/domain/finance-category-repository";
 import type { FinanceTransactionRepository } from "../../../contexts/finance/domain/finance-transaction-repository";
+import type { BodyProfileRepository } from "../../../contexts/health/domain/body-profile-repository";
+import type { BowelRepository } from "../../../contexts/health/domain/bowel-repository";
+import type { DailyTargetRepository } from "../../../contexts/health/domain/daily-target-repository";
+import type { ExerciseRepository } from "../../../contexts/health/domain/exercise-repository";
+import type { MealRepository } from "../../../contexts/health/domain/meal-repository";
+import type { MenstrualRepository } from "../../../contexts/health/domain/menstrual-repository";
+import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
+import type { WaterRepository } from "../../../contexts/health/domain/water-repository";
 import type { BalanceRepository } from "../../../contexts/split/domain/balance-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { localParts } from "../../../shared-kernel/reminder-clock";
 import { resolveUserId } from "../current-user";
 import type { AuthVariables } from "../middleware/auth";
 import { BadRequestError } from "../validation";
-import { resolveModelApiKey } from "./assistant-key";
+import { resolveHealthOptIn, resolveModelApiKey } from "./assistant-key";
 
 export interface AssistantHandlerOptions {
   userRepository: UserRepository;
@@ -19,6 +27,14 @@ export interface AssistantHandlerOptions {
   financeCategoryRepository: FinanceCategoryRepository;
   financeBudgetRepository: FinanceBudgetRepository;
   balanceRepository: BalanceRepository;
+  dailyTargetRepository: DailyTargetRepository;
+  mealRepository: MealRepository;
+  waterRepository: WaterRepository;
+  bowelRepository: BowelRepository;
+  vitalsRepository: VitalsRepository;
+  exerciseRepository: ExerciseRepository;
+  menstrualRepository: MenstrualRepository;
+  bodyProfileRepository: BodyProfileRepository;
   modelClient: ModelClient;
 }
 
@@ -73,6 +89,21 @@ export function createAssistantHandler(options: AssistantHandlerOptions) {
       categories: options.financeCategoryRepository,
       budgets: options.financeBudgetRepository,
       balances: options.balanceRepository,
+      // Built only for a request that opted in: with the header absent there
+      // is nothing in the context to read a health record with, which is why
+      // the flag and the repositories are one field rather than two.
+      health: resolveHealthOptIn(c)
+        ? {
+            dailyTargets: options.dailyTargetRepository,
+            meals: options.mealRepository,
+            water: options.waterRepository,
+            bowel: options.bowelRepository,
+            vitals: options.vitalsRepository,
+            exercise: options.exerciseRepository,
+            menstrual: options.menstrualRepository,
+            bodyProfile: options.bodyProfileRepository,
+          }
+        : undefined,
     };
 
     const { text, proposals } = await converse(options.modelClient, apiKey, messages, context);
