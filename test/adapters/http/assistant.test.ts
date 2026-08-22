@@ -205,7 +205,11 @@ class ScriptedModel implements ModelClient {
   }
 }
 
-function buildApp(model: ModelClient, waterRepository: WaterRepository = stubWaterRepository) {
+function buildApp(
+  model: ModelClient,
+  waterRepository: WaterRepository = stubWaterRepository,
+  foodDictionaryRepository: FoodDictionaryRepository = stubFoodDictionaryRepository,
+) {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
   const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
   const financeBudgetRepository = new InMemoryFinanceBudgetRepository(financeTransactionRepository);
@@ -213,7 +217,7 @@ function buildApp(model: ModelClient, waterRepository: WaterRepository = stubWat
     projectId: PROJECT_ID,
     jwks,
     userRepository: new InMemoryUserRepository(),
-    foodDictionaryRepository: stubFoodDictionaryRepository,
+    foodDictionaryRepository,
     mealRepository: stubMealRepository,
     dailyTargetRepository: stubDailyTargetRepository,
     waterRepository,
@@ -531,5 +535,75 @@ describe("POST /api/assistant — the health opt-in", () => {
     expect(res.status).toBe(200);
     expect(seen).toEqual([]);
     expect(model.seen[1].rounds[0].results[0].result).toEqual({ error: "unknown tool: get_water_day" });
+  });
+});
+
+describe("POST /api/assistant — the food dictionary under the health opt-in", () => {
+  const ASKS_FOR_FAVORITES: ModelTurn = { text: "", toolCalls: [{ id: "f#0", name: "list_favorite_foods", arguments: {} }] };
+
+  /** Records the id it was asked for and answers with one item whose withheld fields are all set. */
+  function recordingFoodDictionary(seen: string[]): FoodDictionaryRepository {
+    return {
+      ...stubFoodDictionaryRepository,
+      listFavorites: async (userId: string) => {
+        seen.push(userId);
+        return [
+          {
+            id: "food-7",
+            ownerUserId: userId,
+            name: "雞胸肉",
+            carbG: 0,
+            proteinG: 31,
+            fatG: 3.6,
+            sugarG: 0,
+            fiberG: 0,
+            kcal: 165,
+            staple: 0,
+            meat: 2,
+            fruit: 0,
+            veg: 0,
+            baseAmount: 100,
+            measureUnit: "g",
+            createdAt: new Date("2026-01-01T00:00:00Z"),
+          },
+        ];
+      },
+    };
+  }
+
+  it("reaches no dictionary without the header, even when the model names a food tool", async () => {
+    // The wiring and the opt-in are two separate things: the port is present
+    // in the handler's options on every request, so only the absent `health`
+    // object keeps it out of reach.
+    const seen: string[] = [];
+    const model = new ScriptedModel([ASKS_FOR_FAVORITES, TEXT_ONLY]);
+    const { app } = buildApp(model, stubWaterRepository, recordingFoodDictionary(seen));
+
+    const res = await app.request(assistantRequest(await validToken(), ASK, { "X-Gemini-Api-Key": CANARY_KEY }));
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([]);
+    expect(model.seen[1].rounds[0].results[0].result).toEqual({ error: "unknown tool: list_favorite_foods" });
+  });
+
+  it("reads the caller's own favourites with the header, projected to what a recommendation needs", async () => {
+    const seen: string[] = [];
+    const model = new ScriptedModel([ASKS_FOR_FAVORITES, TEXT_ONLY]);
+    const built = buildApp(model, stubWaterRepository, recordingFoodDictionary(seen));
+    const token = await validToken();
+    const meRes = await built.app.request(new Request("http://localhost/api/me", { headers: { Authorization: `Bearer ${token}` } }));
+    const me = await meRes.json<{ id: string }>();
+
+    const res = await built.app.request(
+      assistantRequest(token, ASK, { "X-Gemini-Api-Key": CANARY_KEY, "X-Assistant-Health": "on" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([me.id]);
+    // Whole-object, so the id, the owner and the macronutrients cannot come
+    // back through the route even though the repository row carries them.
+    expect(model.seen[1].rounds[0].results[0].result).toEqual([
+      { name: "雞胸肉", staple: 0, meat: 2, fruit: 0, veg: 0, kcal: 165, base_amount: 100, measure_unit: "g" },
+    ]);
   });
 });

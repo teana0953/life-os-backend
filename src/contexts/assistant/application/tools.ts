@@ -14,10 +14,14 @@ import { getVitalsDay } from "../../health/application/get-vitals-day";
 import { getVitalsRange } from "../../health/application/get-vitals-range";
 import { getWaterDay } from "../../health/application/get-water-day";
 import { getWeightGoal } from "../../health/application/get-weight-goal";
+import { listFavoriteFoodItems } from "../../health/application/list-favorite-food-items";
+import { searchFoodDictionary } from "../../health/application/search-food-dictionary";
 import type { BodyProfileRepository } from "../../health/domain/body-profile-repository";
 import type { BowelRepository } from "../../health/domain/bowel-repository";
 import type { DailyTargetRepository } from "../../health/domain/daily-target-repository";
 import type { ExerciseRepository } from "../../health/domain/exercise-repository";
+import type { FoodDictionaryRepository } from "../../health/domain/food-dictionary-repository";
+import type { MealEntry } from "../../health/domain/meal-entry";
 import type { MealRepository } from "../../health/domain/meal-repository";
 import type { MenstrualRepository } from "../../health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../health/domain/vitals-repository";
@@ -73,6 +77,7 @@ export interface HealthPorts {
   exercise: ExerciseRepository;
   menstrual: MenstrualRepository;
   bodyProfile: BodyProfileRepository;
+  foodDictionary: FoodDictionaryRepository;
 }
 
 /** A tool's answer, plus whatever the caller has to confirm before it happens. */
@@ -121,6 +126,30 @@ const VITALS_RANGE_MAX_DAYS = 31;
  * roughly a year, enough for the derived statistics to mean something.
  */
 const MENSTRUAL_CYCLE_MAX = 12;
+
+/**
+ * How far back `list_recent_foods` may look, in days, and the window it uses
+ * when the model names none. Same rule again: the bound is the server's, not
+ * the model's — a wide enough window ships the caller's whole eating history.
+ * A month is long enough for a weekly favourite to appear several times and
+ * short enough that a food dropped two months ago does not come back as a
+ * suggestion.
+ */
+const RECENT_FOOD_DAYS_MAX = 30;
+
+/**
+ * How many distinct foods `list_recent_foods` returns, taken from the head of
+ * its relevance order so the clamp keeps the best candidates rather than
+ * whichever rows the database returned first.
+ */
+const RECENT_FOOD_MAX = 30;
+
+/**
+ * How many rows one dictionary search returns. A one-character substring
+ * matches a large part of the seeded catalogue; the model asked for
+ * candidates, not for the catalogue.
+ */
+const FOOD_SEARCH_MAX = 20;
 
 const DAY = { type: "string", description: "YYYY-MM-DD. Omit for today." } as const;
 
@@ -235,6 +264,33 @@ const HEALTH_TOOLS: AssistantTool[] = [
       "Recorded periods with the derived cycle statistics. The server returns at most the 12 most recent cycles, so an older period may be missing even though the statistics cover the whole history.",
     parameters: { type: "object", properties: {} },
   },
+  {
+    name: "list_favorite_foods",
+    description:
+      "The foods the user marked as favourite — their own curated list, and the first place to look for a recommendation candidate. Each row carries per-unit food-group portions, calories and the measure basis.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "list_recent_foods",
+    description:
+      "Distinct foods the user actually ate recently, each with how many times and the day it was last eaten. The server looks back at most 30 days (also the default) and returns at most 30 foods, most eaten first, so a longer or wider question comes back covering only that.",
+    parameters: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "How many days back to look, including today. The server enforces its own maximum." },
+      },
+    },
+  },
+  {
+    name: "search_foods",
+    description:
+      "Search the food dictionary by name substring: shared foods plus the user's own custom ones. The server returns at most 20 rows, so a common substring comes back cut down. Use this only when favourites and recent foods do not cover the gap.",
+    parameters: {
+      type: "object",
+      properties: { query: { type: "string", description: "Part of a food name. Required and non-empty." } },
+      required: ["query"],
+    },
+  },
 ];
 
 /**
@@ -267,6 +323,89 @@ function dayArg(context: ToolContext, value: unknown): string {
 function addDays(day: string, days: number): string {
   const [year, month, date] = day.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, date + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The one shape of food the model sees, whatever source the candidate came
+ * from. `FoodItem` and `MealItem` also carry an id, an owner, a macronutrient
+ * breakdown and timestamps; none of it fills a remaining-portion gap, and
+ * every field kept is a field sent to a provider that may train on it. The
+ * owner in particular would tell the model which of the caller's foods are
+ * private custom items. Omitting the id is deliberate too: the model cannot
+ * name a dictionary item by id in a follow-up, which is what a logging tool
+ * would need — and this change ships no write.
+ */
+interface FoodCandidate {
+  name: string;
+  staple: number;
+  meat: number;
+  fruit: number;
+  veg: number;
+  kcal: number;
+  base_amount: number | null;
+  measure_unit: string | null;
+}
+
+interface RecentFood extends FoodCandidate {
+  times_eaten: number;
+  last_eaten_day: string;
+}
+
+function foodCandidate(food: Omit<FoodCandidate, "base_amount" | "measure_unit"> & { baseAmount: number | null; measureUnit: string | null }): FoodCandidate {
+  return {
+    name: food.name,
+    staple: food.staple,
+    meat: food.meat,
+    fruit: food.fruit,
+    veg: food.veg,
+    kcal: food.kcal,
+    base_amount: food.baseAmount,
+    measure_unit: food.measureUnit,
+  };
+}
+
+/**
+ * Distinct foods out of the caller's meals in the window — a fold over rows a
+ * method that already exists fetched, rather than a new `GROUP BY` and the
+ * second definition of "recently eaten" that would come with it.
+ *
+ * Items with no usable name are dropped (a candidate the model cannot name is
+ * not a candidate) and so are `unclassified` items, which carry zero portions
+ * by design and would otherwise be offered as foods that fill nothing.
+ * `quantity` is deliberately not summed: the question here is which foods are
+ * candidates, and per-unit values are what a combination is built from.
+ */
+function recentFoods(meals: MealEntry[]): RecentFood[] {
+  const groups = new Map<string, { name: string; day: string; count: number; candidate: FoodCandidate }>();
+  for (const meal of meals) {
+    for (const item of meal.items) {
+      if (item.unclassified) continue;
+      const name = item.name === null ? "" : item.name.trim();
+      if (name === "") continue;
+      const key = name.toLowerCase();
+      const group = groups.get(key);
+      if (group === undefined) {
+        groups.set(key, { name, day: meal.day, count: 1, candidate: foodCandidate({ ...item, name }) });
+        continue;
+      }
+      group.count += 1;
+      // Per-unit values are a log-time snapshot and may differ between two
+      // days; the latest is the shape the caller most recently ate, while an
+      // average would produce a food whose values never existed. The rows are
+      // in no guaranteed day order, hence the comparison.
+      if (meal.day >= group.day) {
+        group.day = meal.day;
+        group.name = name;
+        group.candidate = foodCandidate({ ...item, name });
+      }
+    }
+  }
+  return [...groups.values()]
+    // Name ascending only to make the order total, so the clamp below cuts
+    // deterministically and its test cannot flake.
+    .sort((a, b) => b.count - a.count || b.day.localeCompare(a.day) || a.name.localeCompare(b.name))
+    .slice(0, RECENT_FOOD_MAX)
+    .map((group) => ({ ...group.candidate, times_eaten: group.count, last_eaten_day: group.day }));
 }
 
 /**
@@ -382,6 +521,33 @@ export async function runTool(context: ToolContext, name: string, args: Record<s
       // summary over a year of cycles is a far smaller disclosure than the
       // cycles themselves.
       return { result: { ...overview, periods: overview.periods.slice(-MENSTRUAL_CYCLE_MAX) } };
+    }
+    case "list_favorite_foods": {
+      if (!context.health) return unknownTool(name);
+      // Deliberately unclamped: the list's size is the caller's own choice,
+      // not something the model can widen, and silently dropping a favourite
+      // would make the answer wrong in a way neither of them can see.
+      const favorites = await listFavoriteFoodItems(context.health.foodDictionary, context.userId);
+      return { result: favorites.map(foodCandidate) };
+    }
+    case "list_recent_foods": {
+      if (!context.health) return unknownTool(name);
+      const requested = typeof args.days === "number" && Number.isFinite(args.days) ? Math.floor(args.days) : RECENT_FOOD_DAYS_MAX;
+      const days = Math.min(Math.max(requested, 1), RECENT_FOOD_DAYS_MAX);
+      // The window is inclusive of today, so a `days` of 1 is today alone.
+      const meals = await context.health.meals.listMealsInRange(context.userId, addDays(context.today, -(days - 1)), context.today);
+      return { result: recentFoods(meals) };
+    }
+    case "search_foods": {
+      if (!context.health) return unknownTool(name);
+      // A bad argument is an answer the model retries from, following
+      // `propose_transaction` — a blank query would otherwise substring-match
+      // the whole catalogue.
+      if (typeof args.query !== "string" || args.query.trim() === "") {
+        return { result: { error: "query must be a non-empty string" } };
+      }
+      const found = await searchFoodDictionary(context.health.foodDictionary, context.userId, args.query);
+      return { result: found.slice(0, FOOD_SEARCH_MAX).map(foodCandidate) };
     }
     default:
       return unknownTool(name);

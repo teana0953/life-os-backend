@@ -531,6 +531,7 @@ export function createApp(options: CreateAppOptions) {
       exerciseRepository: options.exerciseRepository,
       menstrualRepository: options.menstrualRepository,
       bodyProfileRepository: options.bodyProfileRepository,
+      foodDictionaryRepository: options.foodDictionaryRepository,
       modelClient: options.modelClient,
     }),
   );

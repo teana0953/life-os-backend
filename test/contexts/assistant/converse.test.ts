@@ -20,6 +20,7 @@ const healthPorts: HealthPorts = {
   exercise: unusable as never,
   menstrual: unusable as never,
   bodyProfile: unusable as never,
+  foodDictionary: unusable as never,
 };
 
 function contextWith(overrides: Partial<ToolContext> = {}): ToolContext {
@@ -245,6 +246,7 @@ describe("the instructions the model is given", () => {
     "Anything that is not about the caller's own finance, split, health or diet records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
     "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
     "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
+    "When the caller asks what they can still eat, call get_diet_targets first for what remains, draw candidates from list_favorite_foods and list_recent_foods, reach for search_foods only when those do not cover the gap, and present the suggestion as each food group's summed portions set against what remains.",
   ].join(" ");
 
   it("says health records are out of reach when the caller has not opted in (an instruction, not a server-side block)", async () => {
@@ -265,6 +267,33 @@ describe("the instructions the model is given", () => {
 
     expect(model.seenSystem[0]).toBe(HEALTH_ON_PROMPT);
   });
+
+  it("tells the model how to build a food recommendation when the caller has opted in (an instruction, not a server-side block)", async () => {
+    // Without this sentence the model answers "what can I still eat" from its
+    // own training data — the failure this change exists to prevent. Nothing
+    // here proves the model obeys it; only that it was told.
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith({ health: healthPorts }));
+
+    const prompt = model.seenSystem[0];
+    expect(prompt).toContain("call get_diet_targets first for what remains");
+    expect(prompt).toContain("draw candidates from list_favorite_foods and list_recent_foods");
+    expect(prompt).toContain("reach for search_foods only when those do not cover the gap");
+    expect(prompt).toContain("summed portions set against what remains");
+  });
+
+  it("says nothing about food recommendations with health off, where none of those tools exist (an instruction, not a server-side block)", async () => {
+    // A model told to call tools it was not given reports the unknown-tool
+    // error to the caller as a product failure.
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith());
+
+    for (const tool of ["get_diet_targets", "list_favorite_foods", "list_recent_foods", "search_foods"]) {
+      expect(model.seenSystem[0]).not.toContain(tool);
+    }
+  });
 });
 
 describe("the tool list the model is offered", () => {
@@ -279,6 +308,6 @@ describe("the tool list the model is offered", () => {
     expect(on.seenTools[0].map((tool) => tool.name)).toEqual(
       assistantTools(contextWith({ health: healthPorts })).map((tool) => tool.name),
     );
-    expect(on.seenTools[0].length - off.seenTools[0].length).toBe(9);
+    expect(on.seenTools[0].length - off.seenTools[0].length).toBe(12);
   });
 });
