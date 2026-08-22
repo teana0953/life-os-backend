@@ -1,5 +1,5 @@
 import type { AssistantMessage, ModelClient, ToolResult, ToolRound } from "../domain/model-client";
-import { ASSISTANT_TOOLS, runTool, type Proposal, type ToolContext } from "./tools";
+import { assistantTools, runTool, type Proposal, type ToolContext } from "./tools";
 
 /**
  * How many tool rounds one request may spend (parallel calls in one turn count
@@ -20,13 +20,28 @@ export const TOOL_LIMIT_NOTICE = "已達到工具呼叫上限，以上是目前�
  * the context. Every fact the model uses has to come back through a tool,
  * which is what keeps one request from shipping a month of records to the
  * provider as a matter of course.
+ *
+ * The two states get different wording, and the out-of-scope sentence moves
+ * with the visibility one: left naming finance alone, it would tell the model
+ * to decline the very health questions this request just gave it tools for.
+ *
+ * This is an instruction the assistant carries, not a filter the server
+ * applies — under BYOK the model runs at the provider and the server never
+ * sees its output. What the server refuses to *fetch* is the enforceable half,
+ * and that lives in `assistantTools` and `runTool`.
  */
 function systemPrompt(context: ToolContext): string {
   return [
     `Today is ${context.today} and the caller's current month is ${context.defaultMonth}.`,
-    "You are a finance assistant. Through your tools you can see the caller's own finance and split records, and nothing else.",
-    "You cannot see health, diet, care or reminder records; if asked about those, say you cannot see them.",
-    "Anything that is not about the caller's own finance and split records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
+    context.health
+      ? "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health and diet records, and nothing else."
+      : "You are a finance assistant. Through your tools you can see the caller's own finance and split records, and nothing else.",
+    context.health
+      ? "You cannot see care or reminder records; if asked about those, say you cannot see them."
+      : "You cannot see health, diet, care or reminder records; if asked about those, say you cannot see them.",
+    context.health
+      ? "Anything that is not about the caller's own finance, split, health or diet records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat."
+      : "Anything that is not about the caller's own finance and split records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
     "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
     "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
   ].join(" ");
@@ -48,10 +63,11 @@ export async function converse(
   context: ToolContext,
 ): Promise<{ text: string; proposals: Proposal[] }> {
   const system = systemPrompt(context);
+  const tools = assistantTools(context);
   const proposals: Proposal[] = [];
   const rounds: ToolRound[] = [];
 
-  let turn = await model.turn(apiKey, system, messages, ASSISTANT_TOOLS, rounds);
+  let turn = await model.turn(apiKey, system, messages, tools, rounds);
 
   while (turn.toolCalls.length > 0) {
     if (rounds.length >= MAX_TOOL_ROUNDS) {
@@ -67,7 +83,7 @@ export async function converse(
     }
     rounds.push({ calls: turn.toolCalls, results });
 
-    turn = await model.turn(apiKey, system, messages, ASSISTANT_TOOLS, rounds);
+    turn = await model.turn(apiKey, system, messages, tools, rounds);
   }
 
   return { text: turn.text, proposals };

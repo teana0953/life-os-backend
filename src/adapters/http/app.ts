@@ -168,7 +168,7 @@ import {
   createUpdateExpenseHandler,
 } from "./routes/split";
 import { createAssistantHandler } from "./routes/assistant";
-import { GEMINI_KEY_HEADER } from "./routes/assistant-key";
+import { ASSISTANT_HEALTH_HEADER, GEMINI_KEY_HEADER } from "./routes/assistant-key";
 import { createSetUserTimezoneHandler } from "./routes/user-timezone";
 import {
   createAddWaterHandler,
@@ -247,9 +247,10 @@ export function createApp(options: CreateAppOptions) {
     cors({
       origin: (origin) => (isAllowedOrigin(origin, options.allowedWebOrigin) ? origin : null),
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      // GEMINI_KEY_HEADER must be allowed here or the browser's preflight
-      // rejects every assistant request before it leaves the client.
-      allowHeaders: ["Authorization", "Content-Type", GEMINI_KEY_HEADER],
+      // GEMINI_KEY_HEADER and ASSISTANT_HEALTH_HEADER must be allowed here or
+      // the browser's preflight rejects every assistant request before it
+      // leaves the client — a failure only a real device shows.
+      allowHeaders: ["Authorization", "Content-Type", GEMINI_KEY_HEADER, ASSISTANT_HEALTH_HEADER],
       // Chrome caps preflight caching at 7200s and silently truncates anything
       // larger, so a bigger number buys nothing on our main client — it only
       // delays when an `origin`/`allowHeaders` change takes effect in tabs the
@@ -522,6 +523,14 @@ export function createApp(options: CreateAppOptions) {
       financeCategoryRepository: options.financeCategoryRepository,
       financeBudgetRepository: options.financeBudgetRepository,
       balanceRepository: options.splitBalanceRepository,
+      dailyTargetRepository: options.dailyTargetRepository,
+      mealRepository: options.mealRepository,
+      waterRepository: options.waterRepository,
+      bowelRepository: options.bowelRepository,
+      vitalsRepository: options.vitalsRepository,
+      exerciseRepository: options.exerciseRepository,
+      menstrualRepository: options.menstrualRepository,
+      bodyProfileRepository: options.bodyProfileRepository,
       modelClient: options.modelClient,
     }),
   );
