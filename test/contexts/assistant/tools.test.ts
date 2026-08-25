@@ -4,6 +4,9 @@ import { getMenstrualOverview } from "../../../src/contexts/health/application/g
 import type { FoodItem } from "../../../src/contexts/health/domain/food-item";
 import type { MealEntry, MealItem } from "../../../src/contexts/health/domain/meal-entry";
 import type { MenstrualPeriod } from "../../../src/contexts/health/domain/menstrual-period";
+import type { CareItemWithSchedules, CareSchedule } from "../../../src/contexts/notifications/domain/care-item";
+import type { CareLog } from "../../../src/contexts/notifications/domain/care-log";
+import { localParts } from "../../../src/shared-kernel/reminder-clock";
 
 const unusable = new Proxy({}, { get: () => () => { throw new Error("this repository must not be reached"); } });
 
@@ -18,6 +21,9 @@ function healthPorts(overrides: Partial<HealthPorts> = {}): HealthPorts {
     menstrual: unusable as never,
     bodyProfile: unusable as never,
     foodDictionary: unusable as never,
+    careItems: unusable as never,
+    careLogs: unusable as never,
+    users: unusable as never,
     ...overrides,
   };
 }
@@ -46,7 +52,7 @@ describe("the assistant's tool list", () => {
     ]);
   });
 
-  it("is exactly these eighteen with the health opt-in, and still no care or reminder tool", () => {
+  it("is exactly these twenty-one with the health opt-in, and still no reminder or push-notification tool", () => {
     expect(assistantTools(contextWith({ health: healthPorts() })).map((tool) => tool.name)).toEqual([
       "get_monthly_summary",
       "list_transactions",
@@ -66,6 +72,9 @@ describe("the assistant's tool list", () => {
       "list_favorite_foods",
       "list_recent_foods",
       "search_foods",
+      "get_care_today",
+      "get_care_range",
+      "list_care_items",
     ]);
   });
 
@@ -87,6 +96,9 @@ describe("the assistant's tool list", () => {
     expect(describedBy("list_recent_foods")).toContain("at most 30 days");
     expect(describedBy("list_recent_foods")).toContain("at most 30 foods");
     expect(describedBy("search_foods")).toContain("at most 20 rows");
+    // The care range's bound is the vitals range's, one number under two
+    // names — a description naming a different span means the two drifted.
+    expect(describedBy("get_care_range")).toContain("at most 31 days");
     // Not a bound, but the reason the model should reach here first: the list
     // is the caller's own, so it needs no clamp and no search.
     expect(describedBy("list_favorite_foods")).toContain("favourite");
@@ -937,6 +949,407 @@ describe("the food tools write nothing", () => {
       runTool(context, "list_favorite_foods", {}),
       runTool(context, "list_recent_foods", {}),
       runTool(context, "search_foods", { query: "糙" }),
+    ]);
+
+    expect(outcomes.map((outcome) => outcome.proposal)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+const CARE_TOOL_NAMES = ["get_care_today", "get_care_range", "list_care_items"];
+
+function careSchedule(overrides: Partial<CareSchedule> = {}): CareSchedule {
+  return {
+    id: "sched-1",
+    careItemId: "item-1",
+    timeOfDay: "08:00",
+    repeatDays: [],
+    weekInterval: 1,
+    startDate: "2020-01-01",
+    endDate: null,
+    doseQuantity: 2,
+    nagIntervalMinutes: 15,
+    enabled: true,
+    ...overrides,
+  };
+}
+
+function careItem(overrides: Partial<CareItemWithSchedules> = {}): CareItemWithSchedules {
+  return {
+    id: "item-1",
+    userId: "user-1",
+    category: "medication",
+    title: "血壓藥",
+    note: "飯後服用",
+    dose: "5mg",
+    stock: 30,
+    stockAlert: 5,
+    schedules: [careSchedule()],
+    ...overrides,
+  };
+}
+
+function careLog(overrides: Partial<CareLog> = {}): CareLog {
+  return {
+    id: "log-1",
+    userId: "user-1",
+    careItemId: "item-1",
+    careScheduleId: "sched-1",
+    localDate: "2026-08-08",
+    timeOfDay: "08:00",
+    status: "done",
+    doneTime: new Date("2026-08-08T00:05:00Z"),
+    doseQuantity: 2,
+    ...overrides,
+  };
+}
+
+/** The caller's row — the only thing the assistant reads a `UserRepository` for. */
+function careUsers(timezone: string, seen?: string[]) {
+  return {
+    getById: async (userId: string) => {
+      seen?.push(userId);
+      return { id: userId, firebaseUid: "fb-1", email: "a@example.com", displayName: null, timezone, isAdmin: false, createdAt: new Date("2026-01-01T00:00:00Z") };
+    },
+  } as never;
+}
+
+describe("running a care tool without the opt-in", () => {
+  it("answers all three exactly as an unknown name, reaching no repository", async () => {
+    // The guard lives in each case, not in one list of names, so this must
+    // hold for a care tool named from an earlier turn or from text somebody
+    // else wrote. `contextWith()` has no `health` field at all, so there is
+    // nothing here to read a care record with.
+    const answers = await Promise.all(
+      CARE_TOOL_NAMES.map(async (name) => [name, (await runTool(contextWith(), name, {})).result]),
+    );
+
+    expect(answers).toEqual(CARE_TOOL_NAMES.map((name) => [name, { error: `unknown tool: ${name}` }]));
+  });
+
+  it("gives a care tool the same answer as a name that does not exist at all", async () => {
+    // A distinct "not permitted" would tell the model, and anything reading
+    // the transcript, that a tool by that name exists and is being withheld —
+    // which is a fact about the caller's records.
+    const withheld = await runTool(contextWith(), "get_care_today", {});
+    const nonexistent = await runTool(contextWith(), "get_care_today_that_never_existed", {});
+
+    expect(withheld.result).toEqual({ error: "unknown tool: get_care_today" });
+    expect(JSON.stringify(withheld.result).replace("get_care_today", "X")).toBe(
+      JSON.stringify(nonexistent.result).replace("get_care_today_that_never_existed", "X"),
+    );
+  });
+});
+
+describe("get_care_today", () => {
+  it("runs under the caller's own id, never one from the arguments, and answers with the day's slots", async () => {
+    const seenUsers: string[] = [];
+    const seenSlots: Array<[string, string]> = [];
+    const context = contextWith({
+      health: healthPorts({
+        users: careUsers("Asia/Taipei", seenUsers),
+        careItems: {
+          listActiveSchedulesForUserOn: async (userId: string, date: string) => {
+            seenSlots.push([userId, date]);
+            return [{ item: careItem(), schedule: careSchedule() }];
+          },
+        } as never,
+        careLogs: { listByUserAndDate: async (_u: string, date: string) => [careLog({ localDate: date })] } as never,
+      }),
+    });
+
+    const outcome = await runTool(context, "get_care_today", { user_id: "somebody-else", userId: "somebody-else" });
+
+    expect(seenUsers).toEqual(["user-1"]);
+    expect(seenSlots.map(([userId]) => userId)).toEqual(["user-1"]);
+    const result = outcome.result as { date: string; items: unknown[] };
+    expect(result.items.length).toBe(1);
+    expect(result.date).toBe(seenSlots[0][1]);
+  });
+
+  it("lets the use case resolve the day from the caller's own timezone, rather than passing the route's date down", async () => {
+    // D2: the caller's local date has exactly one definition, and it lives in
+    // the use case. `context.today` here is a fixed 2026-08-08, so an
+    // implementation that handed that down (or a date derived from it) returns
+    // it for both zones instead of each zone's own current date.
+    const dates: string[] = [];
+    for (const timezone of ["Asia/Taipei", "America/Los_Angeles"]) {
+      const context = contextWith({
+        health: healthPorts({
+          users: careUsers(timezone),
+          careItems: { listActiveSchedulesForUserOn: async () => [] } as never,
+          careLogs: { listByUserAndDate: async () => [] } as never,
+        }),
+      });
+      dates.push(((await runTool(context, "get_care_today", {})).result as { date: string }).date);
+    }
+
+    expect(dates).toEqual([localParts(new Date(), "Asia/Taipei").date, localParts(new Date(), "America/Los_Angeles").date]);
+  });
+});
+
+describe("get_care_range", () => {
+  /** Records the range the log port was asked for; the expansion is empty. */
+  function rangeContext(seen: Array<[string, string, string]>): ToolContext {
+    return contextWith({
+      health: healthPorts({
+        users: careUsers("Asia/Taipei"),
+        careItems: { listByUser: async () => [] } as never,
+        careLogs: {
+          listByUserAndDateRange: async (userId: string, from: string, to: string) => {
+            seen.push([userId, from, to]);
+            return [];
+          },
+        } as never,
+      }),
+    });
+  }
+
+  it("defaults to the 31 days ending on the caller's today, under the caller's own id", async () => {
+    const seen: Array<[string, string, string]> = [];
+
+    await runTool(rangeContext(seen), "get_care_range", { userId: "somebody-else", user_id: "somebody-else" });
+
+    expect(seen).toEqual([["user-1", "2026-07-09", "2026-08-08"]]);
+  });
+
+  it("honours a from/to pair the model supplied", async () => {
+    const seen: Array<[string, string, string]> = [];
+
+    await runTool(rangeContext(seen), "get_care_range", { from: "2026-07-20", to: "2026-08-01" });
+
+    expect(seen).toEqual([["user-1", "2026-07-20", "2026-08-01"]]);
+  });
+
+  it("falls back a malformed or calendar-invalid day to the default, never the value verbatim", async () => {
+    // Both ends feed a Postgres `date` comparison and the clamp's own
+    // arithmetic, so a shape-only check turns an ordinary model slip into a
+    // 500. "2026-08-32" sorts *after* the clamp's earliest lexically, unlike
+    // "2026-02-31", so only a real calendar check rejects it.
+    const seen: Array<[string, string, string]> = [];
+    const context = rangeContext(seen);
+
+    await runTool(context, "get_care_range", { from: "2026-08-32", to: "2026-08-08" });
+    await runTool(context, "get_care_range", { to: "9999-99-99" });
+    await runTool(context, "get_care_range", { from: "last month", to: "yesterday" });
+
+    expect(seen).toEqual([
+      ["user-1", "2026-07-09", "2026-08-08"],
+      ["user-1", "2026-07-09", "2026-08-08"],
+      ["user-1", "2026-07-09", "2026-08-08"],
+    ]);
+  });
+
+  it("passes a span within the server's maximum through untouched", async () => {
+    // 2026-07-09..2026-08-08 is exactly 31 days: the widest span that must
+    // survive unclamped. Its neighbour one day wider is the next test — the
+    // pair straddles the boundary, so an off-by-one in either direction
+    // reddens one of them.
+    const seen: Array<[string, string, string]> = [];
+
+    await runTool(rangeContext(seen), "get_care_range", { from: "2026-07-09", to: "2026-08-08" });
+
+    expect(seen).toEqual([["user-1", "2026-07-09", "2026-08-08"]]);
+  });
+
+  it("clamps a span wider than the server allows instead of refusing it", async () => {
+    // Spec: "A care range wider than the server allows" — at most the maximum
+    // span, ending at the range's end. A year of medication history is one
+    // sentence away otherwise.
+    const seen: Array<[string, string, string]> = [];
+    const context = rangeContext(seen);
+
+    const justOver = await runTool(context, "get_care_range", { from: "2026-07-08", to: "2026-08-08" });
+    await runTool(context, "get_care_range", { from: "2025-08-08", to: "2026-08-08" });
+
+    expect(seen).toEqual([
+      ["user-1", "2026-07-09", "2026-08-08"],
+      ["user-1", "2026-07-09", "2026-08-08"],
+    ]);
+    // The answer reports the range actually read, so the model cannot present
+    // a clamped month as the year it asked for.
+    expect(justOver.result).toMatchObject({ from: "2026-07-09", to: "2026-08-08" });
+  });
+});
+
+describe("list_care_items", () => {
+  function itemsContext(seen: Array<[string, unknown]>): ToolContext {
+    return contextWith({
+      health: healthPorts({
+        careItems: {
+          listByUser: async (userId: string, category?: string) => {
+            seen.push([userId, category]);
+            return [careItem()];
+          },
+        } as never,
+      }),
+    });
+  }
+
+  it("lists every category under the caller's own id when the model names none", async () => {
+    const seen: Array<[string, unknown]> = [];
+
+    const outcome = await runTool(itemsContext(seen), "list_care_items", { userId: "somebody-else" });
+
+    expect(seen).toEqual([["user-1", undefined]]);
+    expect((outcome.result as unknown[]).length).toBe(1);
+  });
+
+  it("narrows to the category the model named", async () => {
+    const seen: Array<[string, unknown]> = [];
+    const context = itemsContext(seen);
+
+    for (const category of ["medication", "rehab", "radiotherapy_care", "custom"]) {
+      await runTool(context, "list_care_items", { category });
+    }
+
+    expect(seen).toEqual([
+      ["user-1", "medication"],
+      ["user-1", "rehab"],
+      ["user-1", "radiotherapy_care"],
+      ["user-1", "custom"],
+    ]);
+  });
+
+  it("answers an unrecognised category with an error naming the four valid values, reaching no repository", async () => {
+    // D7: silently dropping the filter would answer a narrowed question with
+    // an un-narrowed list, and the model would present it as narrowed. Every
+    // port in this context throws on touch, so "the listing was not run" is
+    // proven by the call completing at all.
+    const context = contextWith({ health: healthPorts() });
+
+    const outcomes = await Promise.all([
+      runTool(context, "list_care_items", { category: "vitamins" }),
+      runTool(context, "list_care_items", { category: "" }),
+      runTool(context, "list_care_items", { category: 42 }),
+    ]);
+
+    for (const outcome of outcomes) {
+      const error = (outcome.result as { error: string }).error;
+      for (const valid of ["medication", "rehab", "radiotherapy_care", "custom"]) {
+        expect(error).toContain(valid);
+      }
+      expect(outcome.proposal).toBeUndefined();
+    }
+  });
+});
+
+/**
+ * The fields a care record carries, and the fields it does not.
+ *
+ * Asserted as a whole key set rather than by `not.toHaveProperty`: a field
+ * added to the projection later cannot slip through green, and every field
+ * kept is a field sent to a provider that may train on what it receives.
+ */
+const CARE_SLOT_KEYS = ["category", "title", "note", "dose", "time_of_day", "local_date", "status", "done_time", "dose_quantity"];
+
+/** Both care sources answering with the same slot, on the caller's own local today. */
+function careRecordContext(localToday: string): ToolContext {
+  return contextWith({
+    health: healthPorts({
+      users: careUsers("Asia/Taipei"),
+      careItems: {
+        listActiveSchedulesForUserOn: async () => [{ item: careItem(), schedule: careSchedule() }],
+        listByUser: async () => [careItem()],
+      } as never,
+      careLogs: {
+        listByUserAndDate: async (_u: string, date: string) => [careLog({ localDate: date })],
+        listByUserAndDateRange: async () => [careLog({ localDate: localToday })],
+      } as never,
+    }),
+  });
+}
+
+describe("the care projection", () => {
+  it("carries the same key set and the same values from today's slots and from a range's", async () => {
+    // Spec: "The projection SHALL be applied identically to every care
+    // source". The range is asked for the caller's own local today so both
+    // answers describe the same slot on the same day, and both carry a log so
+    // neither status depends on the wall clock.
+    const localToday = localParts(new Date(), "Asia/Taipei").date;
+    const context = careRecordContext(localToday);
+
+    const today = (await runTool(context, "get_care_today", {})).result as { items: Record<string, unknown>[] };
+    const range = (await runTool(context, "get_care_range", { from: localToday, to: localToday })).result as { days: Array<{ items: Record<string, unknown>[] }> };
+
+    const fromRange = range.days[0].items[0];
+    expect(Object.keys(today.items[0])).toEqual(CARE_SLOT_KEYS);
+    expect(Object.keys(fromRange)).toEqual(CARE_SLOT_KEYS);
+    expect(today.items[0]).toEqual({
+      category: "medication",
+      title: "血壓藥",
+      note: "飯後服用",
+      dose: "5mg",
+      time_of_day: "08:00",
+      local_date: localToday,
+      status: "done",
+      // A `Date` would reach the provider as whatever the model client's JSON
+      // encoder happens to do with it, so it leaves here as an ISO string.
+      done_time: "2026-08-08T00:05:00.000Z",
+      dose_quantity: 2,
+    });
+    expect(fromRange).toEqual(today.items[0]);
+  });
+
+  it("carries a care item's schedules without the notification setting", async () => {
+    const context = contextWith({
+      health: healthPorts({ careItems: { listByUser: async () => [careItem()] } as never }),
+    });
+
+    const outcome = await runTool(context, "list_care_items", {});
+
+    expect(outcome.result).toEqual([
+      {
+        category: "medication",
+        title: "血壓藥",
+        note: "飯後服用",
+        dose: "5mg",
+        stock: 30,
+        stock_alert: 5,
+        // `nagIntervalMinutes` is dropped: it is a notification setting, and
+        // notification records are the one thing this change keeps out of reach.
+        schedules: [
+          { time_of_day: "08:00", repeat_days: [], week_interval: 1, start_date: "2020-01-01", end_date: null, dose_quantity: 2, enabled: true },
+        ],
+      },
+    ]);
+  });
+
+  it("withholds every identifier and the notification setting from all three care tools", async () => {
+    // The fixture carries each withheld field with a value the assertion can
+    // name, so adding any one of them back into either projection reddens
+    // this. Spec: "Fields a care record does not carry".
+    const localToday = localParts(new Date(), "Asia/Taipei").date;
+    const context = careRecordContext(localToday);
+
+    const answers = [
+      (await runTool(context, "get_care_today", {})).result,
+      (await runTool(context, "get_care_range", { from: localToday, to: localToday })).result,
+      (await runTool(context, "list_care_items", {})).result,
+    ];
+
+    for (const answer of answers) {
+      const json = JSON.stringify(answer);
+      for (const withheld of ["care_item_id", "careItemId", "care_schedule_id", "careScheduleId", "user_id", "userId", "nag_interval_minutes", "nagIntervalMinutes", "item-1", "sched-1", "log-1"]) {
+        expect(json).not.toContain(withheld);
+      }
+    }
+  });
+});
+
+describe("the care tools write nothing", () => {
+  it("produces no proposal from any of the three, because they offer no write of any kind", async () => {
+    const context = contextWith({
+      health: healthPorts({
+        users: careUsers("Asia/Taipei"),
+        careItems: { listActiveSchedulesForUserOn: async () => [], listByUser: async () => [] } as never,
+        careLogs: { listByUserAndDate: async () => [], listByUserAndDateRange: async () => [] } as never,
+      }),
+    });
+
+    const outcomes = await Promise.all([
+      runTool(context, "get_care_today", {}),
+      runTool(context, "get_care_range", {}),
+      runTool(context, "list_care_items", {}),
     ]);
 
     expect(outcomes.map((outcome) => outcome.proposal)).toEqual([undefined, undefined, undefined]);

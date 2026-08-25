@@ -19,6 +19,8 @@ import type { ExerciseRepository } from "../../../src/contexts/health/domain/exe
 import type { FoodDictionaryRepository } from "../../../src/contexts/health/domain/food-dictionary-repository";
 import type { MealRepository } from "../../../src/contexts/health/domain/meal-repository";
 import type { MenstrualRepository } from "../../../src/contexts/health/domain/menstrual-repository";
+import type { ActiveScheduleForUser, CareItemRepository } from "../../../src/contexts/notifications/domain/care-item";
+import type { CareLogRepository } from "../../../src/contexts/notifications/domain/care-log";
 import type { VitalsRepository } from "../../../src/contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../src/contexts/health/domain/water-repository";
 import type { User } from "../../../src/contexts/user/domain/user";
@@ -31,6 +33,7 @@ import {
 } from "../../contexts/finance/fakes";
 import { InMemoryInstallmentPlanRepository } from "../../contexts/finance/installment-fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
+import { stubCareItemRepository, stubCareLogRepository } from "./assistant-stubs";
 import { stubFriendInviteRepository, stubFriendshipRepository } from "./social-stubs";
 import {
   stubExpenseGroupRepository,
@@ -209,6 +212,8 @@ function buildApp(
   model: ModelClient,
   waterRepository: WaterRepository = stubWaterRepository,
   foodDictionaryRepository: FoodDictionaryRepository = stubFoodDictionaryRepository,
+  careItemRepository: CareItemRepository = stubCareItemRepository,
+  careLogRepository: CareLogRepository = stubCareLogRepository,
 ) {
   const financeCategoryRepository = new InMemoryFinanceCategoryRepository();
   const financeTransactionRepository = new InMemoryFinanceTransactionRepository();
@@ -242,25 +247,8 @@ function buildApp(
       },
     },
     pushSender: { send: notImplemented },
-    careItemRepository: {
-      create: notImplemented,
-      listByUser: notImplemented,
-      get: notImplemented,
-      getByScheduleId: notImplemented,
-      update: notImplemented,
-      delete: notImplemented,
-      listActiveSchedules: notImplemented,
-      listActiveSchedulesForUserOn: notImplemented,
-      decrementStock: notImplemented,
-      incrementStock: notImplemented,
-    },
-    careLogRepository: {
-      upsertIfAbsent: notImplemented,
-      getBySlot: notImplemented,
-      listByUserAndDate: notImplemented,
-      listByUserAndDateRange: notImplemented,
-      upsert: notImplemented,
-    },
+    careItemRepository,
+    careLogRepository,
     financeCategoryRepository,
     financeTransactionRepository,
     financeBudgetRepository,
@@ -605,5 +593,77 @@ describe("POST /api/assistant — the food dictionary under the health opt-in", 
     expect(model.seen[1].rounds[0].results[0].result).toEqual([
       { name: "雞胸肉", staple: 0, meat: 2, fruit: 0, veg: 0, kcal: 165, base_amount: 100, measure_unit: "g" },
     ]);
+  });
+});
+
+describe("POST /api/assistant — care records under the health opt-in", () => {
+  const ASKS_FOR_CARE_TODAY: ModelTurn = { text: "", toolCalls: [{ id: "c#0", name: "get_care_today", arguments: {} }] };
+
+  const ITEM_ID = "care-item-3";
+  const SCHEDULE_ID = "care-schedule-9";
+
+  /** Records who was asked for and answers with one medication slot whose identifiers must not survive the projection. */
+  function recordingCareItemRepository(seen: string[]): CareItemRepository {
+    return {
+      ...stubCareItemRepository,
+      listActiveSchedulesForUserOn: async (userId: string, localDate: string): Promise<ActiveScheduleForUser[]> => {
+        seen.push(userId);
+        return [
+          {
+            item: { id: ITEM_ID, userId, category: "medication", title: "血壓藥", note: "飯後", dose: "1 顆", stock: 12, stockAlert: 3 },
+            schedule: {
+              id: SCHEDULE_ID,
+              careItemId: ITEM_ID,
+              timeOfDay: "08:00",
+              repeatDays: [],
+              weekInterval: 1,
+              startDate: localDate,
+              endDate: null,
+              doseQuantity: 1,
+              nagIntervalMinutes: 15,
+              enabled: true,
+            },
+          },
+        ];
+      },
+    };
+  }
+
+  const emptyCareLogRepository: CareLogRepository = { ...stubCareLogRepository, listByUserAndDate: async () => [] };
+
+  it("reads no care record without the header, even when the model names a care tool", async () => {
+    // Same shape as the water case: the care repositories are wired into the
+    // handler on every request, so only the absent `health` object keeps a
+    // medication record out of reach. Every other care stub throws on touch.
+    const seen: string[] = [];
+    const model = new ScriptedModel([ASKS_FOR_CARE_TODAY, TEXT_ONLY]);
+    const { app } = buildApp(model, stubWaterRepository, stubFoodDictionaryRepository, recordingCareItemRepository(seen), emptyCareLogRepository);
+
+    const res = await app.request(assistantRequest(await validToken(), ASK, { "X-Gemini-Api-Key": CANARY_KEY }));
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([]);
+    expect(model.seen[1].rounds[0].results[0].result).toEqual({ error: "unknown tool: get_care_today" });
+  });
+
+  it("reads the caller's own care slots with the header, carrying no identifiers", async () => {
+    const seen: string[] = [];
+    const model = new ScriptedModel([ASKS_FOR_CARE_TODAY, TEXT_ONLY]);
+    const built = buildApp(model, stubWaterRepository, stubFoodDictionaryRepository, recordingCareItemRepository(seen), emptyCareLogRepository);
+    const token = await validToken();
+    const meRes = await built.app.request(new Request("http://localhost/api/me", { headers: { Authorization: `Bearer ${token}` } }));
+    const me = await meRes.json<{ id: string }>();
+
+    const res = await built.app.request(assistantRequest(token, ASK, { "X-Gemini-Api-Key": CANARY_KEY, "X-Assistant-Health": "on" }));
+
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([me.id]);
+    const serialized = JSON.stringify(model.seen[1].rounds[0].results[0].result);
+    expect(serialized).toContain("血壓藥");
+    // The identifiers the repository row carries must not reach the provider
+    // through the route, whatever shape the tool wraps its slots in.
+    expect(serialized).not.toContain(ITEM_ID);
+    expect(serialized).not.toContain(SCHEDULE_ID);
+    expect(serialized).not.toContain(me.id);
   });
 });
