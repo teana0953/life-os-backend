@@ -34,13 +34,13 @@ function systemPrompt(context: ToolContext): string {
   return [
     `Today is ${context.today} and the caller's current month is ${context.defaultMonth}.`,
     context.health
-      ? "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health and diet records, and nothing else."
+      ? "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health, diet and care records, and nothing else."
       : "You are a finance assistant. Through your tools you can see the caller's own finance and split records, and nothing else.",
     context.health
-      ? "You cannot see care or reminder records; if asked about those, say you cannot see them."
+      ? "You cannot see reminder or push-notification records; if asked about those, say you cannot see them."
       : "You cannot see health, diet, care or reminder records; if asked about those, say you cannot see them.",
     context.health
-      ? "Anything that is not about the caller's own finance, split, health or diet records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat."
+      ? "Anything that is not about the caller's own finance, split, health, diet or care records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat."
       : "Anything that is not about the caller's own finance and split records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
     "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
     "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
@@ -49,6 +49,11 @@ function systemPrompt(context: ToolContext): string {
     // the caller as a product failure.
     ...(context.health
       ? [
+          // Medicine is already out of scope, but a tool answering "血壓藥
+          // 08:00 missed" makes "should I take it now" look like a question
+          // about the caller's own records. Like every rule here, it is an
+          // instruction the model carries, not one the server can enforce.
+          "For care records, report what is recorded and what is scheduled: whether a dose should be taken, doubled, skipped or changed is medicine, and stays out of scope.",
           "When the caller asks what they can still eat, call get_diet_targets first for what remains, draw candidates from list_favorite_foods and list_recent_foods, reach for search_foods only when those do not cover the gap, and present the suggestion as each food group's summed portions set against what remains.",
         ]
       : []),

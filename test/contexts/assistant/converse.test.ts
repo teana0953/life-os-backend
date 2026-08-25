@@ -21,6 +21,9 @@ const healthPorts: HealthPorts = {
   menstrual: unusable as never,
   bodyProfile: unusable as never,
   foodDictionary: unusable as never,
+  careItems: unusable as never,
+  careLogs: unusable as never,
+  users: unusable as never,
 };
 
 function contextWith(overrides: Partial<ToolContext> = {}): ToolContext {
@@ -241,11 +244,12 @@ describe("the instructions the model is given", () => {
 
   const HEALTH_ON_PROMPT = [
     "Today is 2026-08-08 and the caller's current month is 2026-08.",
-    "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health and diet records, and nothing else.",
-    "You cannot see care or reminder records; if asked about those, say you cannot see them.",
-    "Anything that is not about the caller's own finance, split, health or diet records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
+    "You are a finance and health assistant. Through your tools you can see the caller's own finance, split, health, diet and care records, and nothing else.",
+    "You cannot see reminder or push-notification records; if asked about those, say you cannot see them.",
+    "Anything that is not about the caller's own finance, split, health, diet or care records, or about what this assistant can do, is out of scope: general knowledge, news, brands, products, recipes, medicine, code, and chit-chat.",
     "Decline every out-of-scope question in one short sentence in the caller's language and say what you can help with instead — do not answer it even when you know the answer.",
     "Recording a transaction only produces a proposal the caller must accept — never claim something was saved.",
+    "For care records, report what is recorded and what is scheduled: whether a dose should be taken, doubled, skipped or changed is medicine, and stays out of scope.",
     "When the caller asks what they can still eat, call get_diet_targets first for what remains, draw candidates from list_favorite_foods and list_recent_foods, reach for search_foods only when those do not cover the gap, and present the suggestion as each food group's summed portions set against what remains.",
   ].join(" ");
 
@@ -257,7 +261,7 @@ describe("the instructions the model is given", () => {
     expect(model.seenSystem[0]).toBe(HEALTH_OFF_PROMPT);
   });
 
-  it("says health and diet are visible and care and reminders are not when the caller has opted in (an instruction, not a server-side block)", async () => {
+  it("says health, diet and care are visible and reminders are not when the caller has opted in (an instruction, not a server-side block)", async () => {
     // The out-of-scope sentence widens in the same breath as the visibility
     // one: left naming finance alone it would tell the model to decline the
     // very health questions it was just given tools for.
@@ -283,6 +287,22 @@ describe("the instructions the model is given", () => {
     expect(prompt).toContain("summed portions set against what remains");
   });
 
+  it("tells the model to report a care record and decline the dosing judgement when the caller has opted in (an instruction, not a server-side block)", async () => {
+    // A tool that answers "血壓藥 08:00 missed" makes "should I take it now"
+    // look like a question about the caller's own records rather than the
+    // medical question it is. This asserts the sentence is in the prompt, and
+    // that is the whole of what is verifiable here: under BYOK the model runs
+    // at the provider and the server never sees its output, so nothing on
+    // this side can stop the model from advising a dose anyway.
+    const model = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
+
+    await converse(model, "key", ASK, contextWith({ health: healthPorts }));
+
+    const prompt = model.seenSystem[0];
+    expect(prompt).toContain("report what is recorded and what is scheduled");
+    expect(prompt).toContain("taken, doubled, skipped or changed is medicine");
+  });
+
   it("says nothing about food recommendations with health off, where none of those tools exist (an instruction, not a server-side block)", async () => {
     // A model told to call tools it was not given reports the unknown-tool
     // error to the caller as a product failure.
@@ -297,7 +317,7 @@ describe("the instructions the model is given", () => {
 });
 
 describe("the tool list the model is offered", () => {
-  it("carries the health tools only when the caller has opted in", async () => {
+  it("carries the health, diet and care tools only when the caller has opted in", async () => {
     const off = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
     const on = new ScriptedModel(() => ({ text: "ok", toolCalls: [] }));
 
@@ -308,6 +328,9 @@ describe("the tool list the model is offered", () => {
     expect(on.seenTools[0].map((tool) => tool.name)).toEqual(
       assistantTools(contextWith({ health: healthPorts })).map((tool) => tool.name),
     );
-    expect(on.seenTools[0].length - off.seenTools[0].length).toBe(12);
+    // 9 health/diet tools plus the 3 care ones. A literal, not a count taken
+    // from the list under test: a tool added to the opt-in set has to
+    // disagree with something.
+    expect(on.seenTools[0].length - off.seenTools[0].length).toBe(15);
   });
 });

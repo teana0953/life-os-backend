@@ -14,6 +14,8 @@ import type { MealRepository } from "../../../contexts/health/domain/meal-reposi
 import type { MenstrualRepository } from "../../../contexts/health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../../contexts/health/domain/vitals-repository";
 import type { WaterRepository } from "../../../contexts/health/domain/water-repository";
+import type { CareItemRepository } from "../../../contexts/notifications/domain/care-item";
+import type { CareLogRepository } from "../../../contexts/notifications/domain/care-log";
 import type { BalanceRepository } from "../../../contexts/split/domain/balance-repository";
 import type { UserRepository } from "../../../contexts/user/domain/user-repository";
 import { localParts } from "../../../shared-kernel/reminder-clock";
@@ -37,6 +39,8 @@ export interface AssistantHandlerOptions {
   menstrualRepository: MenstrualRepository;
   bodyProfileRepository: BodyProfileRepository;
   foodDictionaryRepository: FoodDictionaryRepository;
+  careItemRepository: CareItemRepository;
+  careLogRepository: CareLogRepository;
   modelClient: ModelClient;
 }
 
@@ -105,6 +109,12 @@ export function createAssistantHandler(options: AssistantHandlerOptions) {
             menstrual: options.menstrualRepository,
             bodyProfile: options.bodyProfileRepository,
             foodDictionary: options.foodDictionaryRepository,
+            careItems: options.careItemRepository,
+            careLogs: options.careLogRepository,
+            // The care use cases resolve the caller's local date from their
+            // own timezone; they take the repository rather than `today` so
+            // the assistant never becomes a second definition of that date.
+            users: options.userRepository,
           }
         : undefined,
     };

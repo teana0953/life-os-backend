@@ -26,8 +26,14 @@ import type { MealRepository } from "../../health/domain/meal-repository";
 import type { MenstrualRepository } from "../../health/domain/menstrual-repository";
 import type { VitalsRepository } from "../../health/domain/vitals-repository";
 import type { WaterRepository } from "../../health/domain/water-repository";
+import { listCareItems } from "../../notifications/application/care-items";
+import { getCareRange } from "../../notifications/application/get-care-range";
+import { getCareToday, type CareTodaySlot } from "../../notifications/application/get-care-today";
+import type { CareCategory, CareItemRepository, CareItemWithSchedules } from "../../notifications/domain/care-item";
+import type { CareLogRepository } from "../../notifications/domain/care-log";
 import { getBalances } from "../../split/application/get-balances";
 import type { BalanceRepository } from "../../split/domain/balance-repository";
+import type { UserRepository } from "../../user/domain/user-repository";
 import type { AssistantTool } from "../domain/model-client";
 
 /**
@@ -41,8 +47,9 @@ import type { AssistantTool } from "../domain/model-client";
  * the feature and it costs nothing: it is the architecture the repo already
  * has.
  *
- * Health and diet records are reachable **only** when the caller opted in on
- * this request, and care and reminder records are reachable in neither state.
+ * Health, diet and care records are reachable **only** when the caller opted
+ * in on this request, and reminder and push-notification records are reachable
+ * in neither state.
  * A free provider tier generally reserves the right to train on what it is
  * sent, and this product holds menstrual, glucose and care records — so
  * sending those is the caller's decision to make, not a default the product
@@ -78,6 +85,14 @@ export interface HealthPorts {
   menstrual: MenstrualRepository;
   bodyProfile: BodyProfileRepository;
   foodDictionary: FoodDictionaryRepository;
+  careItems: CareItemRepository;
+  careLogs: CareLogRepository;
+  /**
+   * Only ever read by `getById`, and only so the care use cases can resolve
+   * the caller's local date from their own timezone — the field is typed as
+   * the whole port because that is what those use cases' deps ask for.
+   */
+  users: UserRepository;
 }
 
 /** A tool's answer, plus whatever the caller has to confirm before it happens. */
@@ -150,6 +165,19 @@ const RECENT_FOOD_MAX = 30;
  * candidates, not for the catalogue.
  */
 const FOOD_SEARCH_MAX = 20;
+
+/**
+ * The widest care span one call may read, in days — the vitals range's bound
+ * written as that expression rather than as a second 31, so the two can never
+ * drift. The two answer the same shape of question ("how has this gone
+ * lately") and a reader who has to remember two numbers eventually picks the
+ * wrong one. Deliberately far tighter than the 366 days `/api/care/range`
+ * serves the history screen: that screen renders to one person on their own
+ * device, this tool ships to a provider that may train on what it receives.
+ */
+const CARE_RANGE_MAX_DAYS = VITALS_RANGE_MAX_DAYS;
+
+const CARE_CATEGORIES: CareCategory[] = ["medication", "rehab", "radiotherapy_care", "custom"];
 
 const DAY = { type: "string", description: "YYYY-MM-DD. Omit for today." } as const;
 
@@ -294,12 +322,49 @@ const HEALTH_TOOLS: AssistantTool[] = [
 ];
 
 /**
+ * Read-only, like the health tools: nothing here marks a slot, edits an item
+ * or moves stock. A care write is a medication record, and the assistant reads
+ * text other people wrote.
+ */
+const CARE_TOOLS: AssistantTool[] = [
+  {
+    name: "get_care_today",
+    description:
+      "Today's care slots (medication, rehab, radiotherapy care, custom) with each one's status: done, skipped, overdue or pending. Use for 'have I taken my pills'.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    name: "get_care_range",
+    description:
+      "Care slots per day over a range, for history. The server allows at most 31 days and moves `from` forward when a wider range is asked for, so a wider question comes back covering only the most recent 31 days of the range.",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "YYYY-MM-DD. Omit for 31 days back from `to`." },
+        to: { type: "string", description: "YYYY-MM-DD. Omit for today." },
+      },
+    },
+  },
+  {
+    name: "list_care_items",
+    description:
+      "The user's care items and their schedules — what is supposed to happen, including a schedule that has not fired yet today, its dose text and its stock. Use for 'what am I meant to be taking'.",
+    parameters: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "One of medication, rehab, radiotherapy_care, custom. Omit for every category." },
+      },
+    },
+  },
+];
+
+/**
  * The tool list for this request, in the order the model sees it. Derived from
  * the context rather than from a separate flag the caller has to keep in sync
  * with it. Both states are asserted whole by tests.
  */
 export function assistantTools(context: ToolContext): AssistantTool[] {
-  return context.health ? [...FINANCE_TOOLS, ...HEALTH_TOOLS] : [...FINANCE_TOOLS];
+  return context.health ? [...FINANCE_TOOLS, ...HEALTH_TOOLS, ...CARE_TOOLS] : [...FINANCE_TOOLS];
 }
 
 /**
@@ -406,6 +471,57 @@ function recentFoods(meals: MealEntry[]): RecentFood[] {
     .sort((a, b) => b.count - a.count || b.day.localeCompare(a.day) || a.name.localeCompare(b.name))
     .slice(0, RECENT_FOOD_MAX)
     .map((group) => ({ ...group.candidate, times_eaten: group.count, last_eaten_day: group.day }));
+}
+
+/**
+ * The one shape of care slot the model sees, whatever care source it came
+ * from. A local projection rather than `routes/care.ts`'s serializer: that one
+ * lives in `adapters/http/`, and importing it from here would point an
+ * application module at an adapter.
+ *
+ * The care item's, schedule's and log's identifiers are dropped. The model has
+ * no care write, so an identifier cannot be spent on anything — and omitting
+ * it means a later care write cannot be bolted on by having the model name a
+ * row it saw. `done_time` leaves as an ISO string; a `Date` would reach the
+ * provider as whatever the model client's JSON encoder happens to do with it.
+ */
+function careSlot(slot: CareTodaySlot) {
+  return {
+    category: slot.category,
+    title: slot.title,
+    note: slot.note,
+    dose: slot.dose,
+    time_of_day: slot.timeOfDay,
+    local_date: slot.localDate,
+    status: slot.status,
+    done_time: slot.doneTime === null ? null : slot.doneTime.toISOString(),
+    dose_quantity: slot.doseQuantity,
+  };
+}
+
+/**
+ * A care item and its schedules, identifier-free like `careSlot`.
+ * `nagIntervalMinutes` is dropped as well: it is a notification setting, and
+ * notification records are the one thing this change keeps out of reach.
+ */
+function careItemWithSchedules(item: CareItemWithSchedules) {
+  return {
+    category: item.category,
+    title: item.title,
+    note: item.note,
+    dose: item.dose,
+    stock: item.stock,
+    stock_alert: item.stockAlert,
+    schedules: item.schedules.map((schedule) => ({
+      time_of_day: schedule.timeOfDay,
+      repeat_days: schedule.repeatDays,
+      week_interval: schedule.weekInterval,
+      start_date: schedule.startDate,
+      end_date: schedule.endDate,
+      dose_quantity: schedule.doseQuantity,
+      enabled: schedule.enabled,
+    })),
+  };
 }
 
 /**
@@ -548,6 +664,52 @@ export async function runTool(context: ToolContext, name: string, args: Record<s
       }
       const found = await searchFoodDictionary(context.health.foodDictionary, context.userId, args.query);
       return { result: found.slice(0, FOOD_SEARCH_MAX).map(foodCandidate) };
+    }
+    // The care cases check the opt-in one by one for the same reason the
+    // health cases do: a fourth care tool added later cannot be left unguarded
+    // by a forgotten entry in a list of names.
+    case "get_care_today": {
+      if (!context.health) return unknownTool(name);
+      // No `day` argument, and `new Date()` rather than anything derived from
+      // `context.today`: the use case resolves the caller's local date from
+      // their own timezone, and that is the only definition of it (D2).
+      const today = await getCareToday(
+        { userRepo: context.health.users, careItemRepo: context.health.careItems, careLogRepo: context.health.careLogs },
+        context.userId,
+        new Date(),
+      );
+      return { result: { date: today.date, items: today.items.map(careSlot) } };
+    }
+    case "get_care_range": {
+      if (!context.health) return unknownTool(name);
+      const to = dayArg(context, args.to);
+      // Clamped, not refused, exactly as the vitals range is: the caller gets
+      // a usable answer and the provider gets at most a month of medication
+      // history. The span is inclusive, so the earliest allowed `from` is `to`
+      // minus MAX - 1 days.
+      const earliest = addDays(to, -(CARE_RANGE_MAX_DAYS - 1));
+      const requested = isValidDay(args.from) ? args.from : earliest;
+      const from = requested < earliest ? earliest : requested;
+      const range = await getCareRange(
+        { userRepo: context.health.users, careItemRepo: context.health.careItems, careLogRepo: context.health.careLogs },
+        context.userId,
+        from,
+        to,
+        new Date(),
+      );
+      return { result: { from: range.from, to: range.to, days: range.days.map((day) => ({ date: day.date, items: day.items.map(careSlot) })) } };
+    }
+    case "list_care_items": {
+      if (!context.health) return unknownTool(name);
+      // An unrecognised category is an answer, not a silently dropped filter
+      // (D7): the model would present an un-narrowed list as narrowed. An
+      // absent category means every category, as the endpoint's absent query
+      // parameter does.
+      if (args.category !== undefined && !CARE_CATEGORIES.includes(args.category as CareCategory)) {
+        return { result: { error: `category must be one of ${CARE_CATEGORIES.join(", ")}` } };
+      }
+      const items = await listCareItems(context.health.careItems, context.userId, args.category as CareCategory | undefined);
+      return { result: items.map(careItemWithSchedules) };
     }
     default:
       return unknownTool(name);
