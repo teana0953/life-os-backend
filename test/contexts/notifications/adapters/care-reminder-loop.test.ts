@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type CareReminderStep, runCareReminderDay } from "../../../../src/contexts/notifications/adapters/care-reminder-loop";
 import { type RunCareDayDeps } from "../../../../src/contexts/notifications/application/run-care-day";
 import { isActiveOn } from "../../../../src/contexts/notifications/domain/care-schedule";
@@ -20,6 +20,8 @@ import type {
 import type { PushDeliveryRepository } from "../../../../src/contexts/notifications/domain/push-delivery";
 import type { PushMessage, PushSendResult, PushSender } from "../../../../src/contexts/notifications/domain/push-sender";
 import type { PushSubscription, PushSubscriptionRepository, PushSubscriptionKeys } from "../../../../src/contexts/notifications/domain/push-subscription";
+import { createRetryingFetch } from "../../../../src/shared/db/retry-fetch";
+import { FREE_PLAN_SUBREQUEST_LIMIT, recordSubrequest, remainingSubrequestBudget } from "../../../../src/shared/db/subrequest-budget";
 import { StrictWorkflowStep } from "./strict-workflows-fakes";
 
 // --- Minimal in-memory repos (same shapes/semantics as run-care-day.test.ts's,
@@ -108,8 +110,8 @@ class InMemoryCareLogRepository implements CareLogRepository {
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
   }
 
-  async listByUserAndDate(): Promise<CareLog[]> {
-    throw new Error("not used by these tests");
+  async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
+    return [...this.bySlot.values()].filter((l) => l.userId === userId && l.localDate === localDate);
   }
   async listByUserAndDateRange(): Promise<CareLog[]> {
     throw new Error("not used by these tests");
@@ -153,6 +155,10 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
     return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
   }
 
+  async listByUserAndDate(userId: string, localDate: string): Promise<CareOccurrence[]> {
+    return [...this.bySlot.values()].filter((o) => o.userId === userId && o.localDate === localDate);
+  }
+
   /** Mirrors the real repository's leased-claim semantics (gate_decision #1) — no internal `await`, so it is atomic w.r.t. any interleaving `Promise.all` driver, exactly like a real DB's conditional UPDATE is atomic w.r.t. concurrent transactions. */
   async claimAttempt(id: string, input: ClaimAttemptInput): Promise<boolean> {
     for (const occ of this.bySlot.values()) {
@@ -180,6 +186,16 @@ class InMemoryCareOccurrenceRepository implements CareOccurrenceRepository {
 
   async listPastUnlogged(careScheduleId: string, todayLocalDate: string): Promise<CareOccurrence[]> {
     const past = [...this.bySlot.values()].filter((o) => o.careScheduleId === careScheduleId && o.localDate < todayLocalDate);
+    const unlogged: CareOccurrence[] = [];
+    for (const o of past) {
+      const log = await this.careLogRepo.getBySlot(o.careScheduleId, o.localDate, o.timeOfDay);
+      if (!log) unlogged.push(o);
+    }
+    return unlogged;
+  }
+
+  async listPastUnloggedForUser(userId: string, todayLocalDate: string): Promise<CareOccurrence[]> {
+    const past = [...this.bySlot.values()].filter((o) => o.userId === userId && o.localDate < todayLocalDate);
     const unlogged: CareOccurrence[] = [];
     for (const o of past) {
       const log = await this.careLogRepo.getBySlot(o.careScheduleId, o.localDate, o.timeOfDay);
@@ -237,7 +253,7 @@ function buildDeps() {
   const subscriptionRepo = new InMemoryPushSubscriptionRepository();
   const pushSender = new RecordingPushSender();
   const pushDeliveryRepo: PushDeliveryRepository = { registerSent: async () => {}, markAcked: async () => false };
-  const deps: RunCareDayDeps = { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, pushDeliveryRepo };
+  const deps: RunCareDayDeps = { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, pushDeliveryRepo, remainingSubrequestBudget };
   return { careItemRepo, careLogRepo, careOccurrenceRepo, subscriptionRepo, pushSender, deps };
 }
 
@@ -387,6 +403,8 @@ describe("runCareReminderDay — Bug A (sleepUntil crashing on an already-past w
       upsertBySlot: careOccurrenceRepo.upsertBySlot.bind(careOccurrenceRepo),
       recordAttempt: careOccurrenceRepo.recordAttempt.bind(careOccurrenceRepo),
       listPastUnlogged: careOccurrenceRepo.listPastUnlogged.bind(careOccurrenceRepo),
+      listByUserAndDate: careOccurrenceRepo.listByUserAndDate.bind(careOccurrenceRepo),
+      listPastUnloggedForUser: careOccurrenceRepo.listPastUnloggedForUser.bind(careOccurrenceRepo),
       expediteNoSubscriptionsRetry: careOccurrenceRepo.expediteNoSubscriptionsRetry.bind(careOccurrenceRepo),
       claimAttempt: async () => false,
     };
@@ -820,5 +838,170 @@ describe("runCareReminderDay — fix/overdue-wake-jump: an overdue instance hand
     // 2026-08-13 exclusive and lose this one forever.
     const log = await careLogRepo.getBySlot("sched-1", "2026-08-13", "09:00");
     expect(log?.status).toBe("missed");
+  });
+});
+
+/**
+ * design.md D3/D4: a Workflows `step.do` callback is one Worker invocation, so
+ * the platform's subrequests-per-invocation ceiling applies per step. Before
+ * this change nothing on the reminder path ever established a budget scope at
+ * all, so `retry-fetch.ts` saw "unlimited" and kept retrying past the cap.
+ */
+describe("runCareReminderDay — every step body runs inside its own subrequest budget", () => {
+  /**
+   * Observes the budget visible at each instrumented call inside a step body,
+   * then spends one subrequest. The spending is what stops "each step starts
+   * with a full budget" from being a guard that cannot fail: on a budget
+   * nothing ever consumes, "still full" would be true even for one single
+   * scope shared by the whole day.
+   */
+  function budgetObserver() {
+    const seen: { step: string; remaining: number | null }[] = [];
+    let current = "(outside any step)";
+    return {
+      seen,
+      enterStep(name: string) {
+        current = name;
+      },
+      observe<T>(value: T): T {
+        seen.push({ step: current, remaining: remainingSubrequestBudget() });
+        recordSubrequest();
+        return value;
+      },
+      firstPerStep(): Map<string, number | null> {
+        const first = new Map<string, number | null>();
+        for (const o of seen) if (!first.has(o.step)) first.set(o.step, o.remaining);
+        return first;
+      },
+    };
+  }
+
+  it("every step body sees a budget, and each step starts with a full one of its own", async () => {
+    const { careItemRepo, careOccurrenceRepo, deps } = buildDeps();
+    // The one scenario that reaches all six steps: the chain terminates today,
+    // so `final-mark-missed` runs too.
+    careItemRepo.add({ id: "item-1", userId: USER }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [], endDate: LOCAL_DATE });
+    await careOccurrenceRepo.upsertBySlot({
+      userId: USER,
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: LOCAL_DATE,
+      timeOfDay: "09:00",
+    });
+
+    const observer = budgetObserver();
+    // `now()` is called inside five of the six step bodies; `mark-missed` is
+    // the one that is not, and it always reads the user's items.
+    const observedItemRepo: CareItemRepository = {
+      ...careItemRepo,
+      listByUser: (userId: string) => observer.observe(careItemRepo.listByUser(userId)),
+      listActiveSchedulesForUserOn: (userId: string, localDate: string) =>
+        observer.observe(careItemRepo.listActiveSchedulesForUserOn(userId, localDate)),
+    } as unknown as CareItemRepository;
+
+    const start = new Date("2026-08-12T15:50:00Z"); // 23:50 Taipei.
+    const strict = new StrictWorkflowStep(start, 3000);
+    const step: CareReminderStep = {
+      do: (name, cb) => {
+        observer.enterStep(name);
+        return strict.do(name, cb);
+      },
+      sleep: (name, ms) => strict.sleep(name, ms),
+    };
+
+    await runCareReminderDay(
+      { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+      step,
+      { ...deps, careItemRepo: observedItemRepo },
+      async () => {},
+      () => observer.observe(strict.now()),
+    );
+
+    expect(observer.seen.filter((o) => o.remaining === null)).toEqual([]); // a budget was in force everywhere.
+
+    const firstPerStep = observer.firstPerStep();
+    expect([...firstPerStep.keys()].sort()).toEqual([
+      "dispatch-due-rounds",
+      "final-mark-missed",
+      "mark-missed",
+      "plan-day-start-wait",
+      "plan-next-wake",
+      "spawn-next-care-day",
+    ]);
+    for (const [name, remaining] of firstPerStep) {
+      expect({ step: name, remaining }).toEqual({ step: name, remaining: FREE_PLAN_SUBREQUEST_LIMIT });
+    }
+    // ...and the budget really is spent inside a step, so "full at the start of
+    // the next one" is a reset rather than a budget nothing ever touches.
+    expect(observer.seen.some((o) => o.remaining !== null && o.remaining < FREE_PLAN_SUBREQUEST_LIMIT)).toBe(true);
+  });
+
+  const READ_BODY = JSON.stringify({ query: 'select "id" from "care_item"', params: [] });
+  const WRITE_BODY = JSON.stringify({ query: 'update "care_occurrence" set "last_attempt_at" = $1', params: ["x"] });
+
+  function failingNeonFetch(body: string) {
+    let calls = 0;
+    const retrying = createRetryingFetch({
+      fetchImpl: (async () => {
+        calls++;
+        return new Response("<html>error 520</html>", { status: 520 }); // the status observed in the 2026-08-14 incident.
+      }) as unknown as typeof fetch,
+      sleep: async () => {},
+      random: () => 0.5,
+    });
+    return { attempts: () => calls, send: () => retrying("https://ep.neon.tech/sql", { method: "POST", body, headers: {} }) };
+  }
+
+  /** Runs the loop just far enough to execute `mark-missed`'s body, then stops. */
+  async function runUntilFirstItemRead(deps: RunCareDayDeps, listByUser: () => Promise<never>): Promise<string[]> {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    });
+    const strict = new StrictWorkflowStep(new Date("2026-08-12T01:00:00Z"), 3000);
+    const { step } = recordingStep(strict);
+    try {
+      await expect(
+        runCareReminderDay(
+          { userId: USER, localDate: LOCAL_DATE, timezone: TAIPEI },
+          step,
+          { ...deps, careItemRepo: { listByUser } as unknown as CareItemRepository },
+          async () => {},
+          () => strict.now(),
+        ),
+      ).rejects.toThrow(TestStop);
+    } finally {
+      warn.mockRestore();
+    }
+    return warnings;
+  }
+
+  it("a transient retryable read is refused, not retried, once the step's budget is gone", async () => {
+    const { deps } = buildDeps();
+    const neon = failingNeonFetch(READ_BODY);
+
+    const warnings = await runUntilFirstItemRead(deps, async () => {
+      for (let i = 0; i < FREE_PLAN_SUBREQUEST_LIMIT; i++) recordSubrequest(); // this step has spent its whole budget.
+      await neon.send();
+      throw new TestStop();
+    });
+
+    // Without the per-step scope this read is outside any budget, so
+    // `hasSubrequestBudgetForRetry()` answers "unlimited" and this is 4.
+    expect(neon.attempts()).toBe(1);
+    expect(warnings.filter((w) => w.includes("budget exhausted"))).toHaveLength(1);
+  });
+
+  it("a failing write is never retried, budget or no budget", async () => {
+    const { deps } = buildDeps();
+    const neon = failingNeonFetch(WRITE_BODY);
+
+    const warnings = await runUntilFirstItemRead(deps, async () => {
+      await neon.send(); // full budget: only the write-vs-read rule can stop this one.
+      throw new TestStop();
+    });
+
+    expect(neon.attempts()).toBe(1);
+    expect(warnings.filter((w) => w.includes("not read-only"))).toHaveLength(1);
   });
 });

@@ -64,6 +64,15 @@ export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository
     return row ? toDomain(row) : null;
   }
 
+  async listByUserAndDate(userId: string, localDate: string): Promise<CareOccurrence[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select()
+      .from(careOccurrence)
+      .where(and(eq(careOccurrence.userId, userId), eq(careOccurrence.localDate, localDate)));
+    return rows.map(toDomain);
+  }
+
   /**
    * Leased conditional claim (gate_decision #1 in
    * replace-cron-with-workflows/design.md): wins iff `last_attempt_at` is
@@ -118,6 +127,23 @@ export class DrizzleCareOccurrenceRepository implements CareOccurrenceRepository
           isNull(careLog.id),
         ),
       );
+    return rows.map((row) => toDomain(row.occurrence));
+  }
+
+  async listPastUnloggedForUser(userId: string, todayLocalDate: string): Promise<CareOccurrence[]> {
+    const db = this.getDb();
+    const rows = await db
+      .select({ occurrence: careOccurrence })
+      .from(careOccurrence)
+      .leftJoin(
+        careLog,
+        and(
+          eq(careLog.careScheduleId, careOccurrence.careScheduleId),
+          eq(careLog.localDate, careOccurrence.localDate),
+          eq(careLog.timeOfDay, careOccurrence.timeOfDay),
+        ),
+      )
+      .where(and(eq(careOccurrence.userId, userId), lt(careOccurrence.localDate, todayLocalDate), isNull(careLog.id)));
     return rows.map((row) => toDomain(row.occurrence));
   }
 

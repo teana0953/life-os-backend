@@ -39,6 +39,7 @@ import { DrizzleSplitExpenseRepository } from "./contexts/split/adapters/drizzle
 import { DrizzleUserRepository } from "./contexts/user/adapters/drizzle-user-repository";
 import { createGoogleSecuretokenJwks } from "./shared/auth/firebase-verifier";
 import { createDbClient, type Db } from "./shared/db/client";
+import { recordSubrequest } from "./shared/db/subrequest-budget";
 
 export interface Env {
   DATABASE_URL: string;
@@ -89,14 +90,27 @@ function lazyDb(getDb: () => Db): Db {
  * error 1101). Requests that never touch the DB (e.g. an unauthenticated
  * `/api/me`) are unaffected.
  */
-function buildDeps(env: Env) {
+export function buildDeps(env: Env) {
   let db: Db | undefined;
   const getDb = () => (db ??= createDbClient(env.DATABASE_URL));
+  const boundFetch = fetch.bind(globalThis);
 
   const pushSender = new WebPushSender({
     publicKey: env.VAPID_PUBLIC_KEY,
     privateKey: env.VAPID_PRIVATE_KEY,
     subject: env.VAPID_SUBJECT,
+    // A push send is a `fetch` too, and counts against the same per-invocation
+    // subrequest budget as the Neon queries (fix-care-reminder-subrequest-n-plus-1
+    // design.md D3) — without this, `remainingSubrequestBudget()` never sees a
+    // push send at all and over-reports headroom by however many pushes a round
+    // already sent. `boundFetch`, not the bare `fetch` identifier: called through
+    // this arrow function it would run with `this === undefined` (ES modules are
+    // strict), which throws "Illegal invocation" in the Workers runtime — the
+    // same failure mode `WebPushSender`'s own default already binds around.
+    fetchImpl: (url, init) => {
+      recordSubrequest();
+      return boundFetch(url, init);
+    },
   });
   const chaodaysClient = new HttpChaodaysClient();
   const userRepository = new DrizzleUserRepository(getDb);

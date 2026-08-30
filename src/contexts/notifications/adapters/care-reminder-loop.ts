@@ -1,3 +1,4 @@
+import { FREE_PLAN_SUBREQUEST_LIMIT, withSubrequestBudget } from "../../../shared/db/subrequest-budget";
 import { localParts, nextLocalDate, utcInstantFor } from "../../../shared-kernel/reminder-clock";
 import { planCareChainDateOnOrAfter } from "../application/care-day-chain";
 import { buildSlotSnapshots, dispatchDueRounds, markMissedForUserDay, planNextWake, type RunCareDayDeps, type SlotSnapshot } from "../application/run-care-day";
@@ -47,6 +48,31 @@ function slotStateSignature(slots: SlotSnapshot[]): string {
 }
 
 /**
+ * Establishes a fresh subrequest budget around EVERY step body.
+ *
+ * A `step.do` callback runs in its own Worker invocation, so the platform's
+ * subrequests-per-invocation ceiling applies once per step — not once per
+ * instance and not once per day (design.md D3). Without this wrapper nothing on
+ * the reminder path is ever inside a budget scope at all, so
+ * `hasSubrequestBudgetForRetry()` in `retry-fetch.ts` answers "unlimited" and a
+ * transient read keeps retrying past the cap.
+ *
+ * Wrapping here rather than in `CareReminderWorkflow` keeps it inside what the
+ * strict step double already exercises, and keeps the entrypoint class a
+ * policy-free wiring shim.
+ */
+function budgetedStep(step: CareReminderStep): CareReminderStep {
+  return {
+    do<T>(name: string, callback: () => Promise<T>): Promise<T> {
+      return step.do(name, () => withSubrequestBudget(FREE_PLAN_SUBREQUEST_LIMIT, callback));
+    },
+    sleep(name: string, ms: number): Promise<void> {
+      return step.sleep(name, ms);
+    },
+  };
+}
+
+/**
  * The wake/dispatch loop body of a `CareReminderWorkflow` instance-day, as a
  * plain function over a minimal step interface — extracted from the
  * Workflows entrypoint class so it can run under a strict, real-API-shaped
@@ -63,12 +89,13 @@ function slotStateSignature(slots: SlotSnapshot[]): string {
  */
 export async function runCareReminderDay(
   params: CareReminderLoopParams,
-  step: CareReminderStep,
+  rawStep: CareReminderStep,
   deps: RunCareDayDeps,
   spawnNext: (nextCareLocalDate: string) => Promise<void>,
   now: () => Date = () => new Date(),
 ): Promise<void> {
   const { userId, localDate, timezone } = params;
+  const step = budgetedStep(rawStep);
 
   // Stays FIRST, before the day-start wait below: a successor instance is
   // created at the previous care day's local midnight and starts running
