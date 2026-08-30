@@ -62,6 +62,16 @@ export interface CareOccurrenceRepository {
   upsertBySlot(input: CreateCareOccurrenceInput): Promise<CareOccurrence>;
   getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareOccurrence | null>;
   /**
+   * Every occurrence the user has on `localDate`, in one read — including
+   * ones whose `timeOfDay` no longer matches any active slot, which is what
+   * lets a caller detect an occurrence orphaned by a same-day schedule edit
+   * (fix-care-reminder-subrequest-n-plus-1 design.md D1/D7). Callers index the
+   * result by `(careScheduleId, timeOfDay)` in memory instead of issuing one
+   * `getBySlot` per schedule, so a reminder day's read count no longer grows
+   * with the number of schedules.
+   */
+  listByUserAndDate(userId: string, localDate: string): Promise<CareOccurrence[]>;
+  /**
    * Atomically claims this round's dispatch attempt for `id`: conditionally
    * writes `last_attempt_at = input.at` and returns whether *this* call won
    * the claim (`true`) or lost it to a concurrent/earlier claimant still
@@ -81,6 +91,13 @@ export interface CareOccurrenceRepository {
    * re-scanning all history forever.
    */
   listPastUnlogged(careScheduleId: string, todayLocalDate: string): Promise<CareOccurrence[]>;
+  /**
+   * The user-scoped form of `listPastUnlogged`: same "past day, no `care_log`
+   * for the slot" set, for every one of the user's schedules at once instead
+   * of one schedule per call (design.md D1). Marking past slots missed uses
+   * this; the per-schedule form stays for the single-schedule HTTP paths.
+   */
+  listPastUnloggedForUser(userId: string, todayLocalDate: string): Promise<CareOccurrence[]>;
   /**
    * "A subscription may have just arrived" nudge (D12' in
    * replace-cron-with-workflows/design.md): rewinds `lastAttemptAt` to the

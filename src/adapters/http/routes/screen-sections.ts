@@ -1,5 +1,9 @@
 import { logInternalError } from "../error-logging";
 
+// Re-exported from its new home in shared/db so the existing batch routes keep
+// importing it from here (design.md D3).
+export { FREE_PLAN_SUBREQUEST_LIMIT } from "../../../shared/db/subrequest-budget";
+
 /**
  * One section of a per-screen batch response. The envelope is the contract:
  * a failed section must stay a failed *section*, never a failed request, or
@@ -14,18 +18,6 @@ export type Section<T> = { ok: true; data: T } | { ok: false; error: "unavailabl
  * per-section error isolation does not cover, because a hang never rejects.
  */
 export const SECTION_TIMEOUT_MS = 8_000;
-
-/**
- * Workers Free plan's subrequests-per-invocation ceiling (docs read
- * 2026-08-20; batch-screen-reads design.md D6). It covers the *whole*
- * invocation, not the fan-out alone, so a batch handler wraps its entire body
- * in `withSubrequestBudget(FREE_PLAN_SUBREQUEST_LIMIT, ...)` — the pre-fan-out
- * `resolveUserId` and JWKS fetch spend from the same ceiling. Wrapping only
- * `resolveSections` would miss the fan-out too: `section()`'s thunk starts
- * running synchronously, and `AsyncLocalStorage` only reaches work started
- * inside the scoped callback.
- */
-export const FREE_PLAN_SUBREQUEST_LIMIT = 50;
 
 /**
  * Runs one section and resolves to its envelope. The catch is *inside*, so the

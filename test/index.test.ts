@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import worker from "../src/index";
+import { describe, expect, it, vi } from "vitest";
+import worker, { buildDeps, type Env } from "../src/index";
+import { remainingSubrequestBudget, withSubrequestBudget } from "../src/shared/db/subrequest-budget";
 
 // A misconfigured DATABASE_URL must never crash the Worker (Cloudflare error
 // 1101). The DB client is built lazily inside the Hono error boundary, so a
@@ -48,5 +49,65 @@ describe("scheduled handler composition root", () => {
     // instead of leaving an unhandled rejection.
     expect(waited).toHaveLength(1);
     return expect(waited[0]).rejects.toThrow();
+  });
+});
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * A real VAPID key pair + a real subscriber P-256 key pair, so
+ * `WebPushSender.send()` runs all the way to its `fetch` call instead of
+ * returning `failed` at the crypto step (see `web-push-sender.ts`).
+ */
+async function realPushEnv(): Promise<Pick<Env, "VAPID_PUBLIC_KEY" | "VAPID_PRIVATE_KEY" | "VAPID_SUBJECT"> & { p256dh: string; auth: string }> {
+  const vapidKeyPair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const VAPID_PUBLIC_KEY = base64UrlEncode(new Uint8Array((await crypto.subtle.exportKey("raw", vapidKeyPair.publicKey)) as ArrayBuffer));
+  const VAPID_PRIVATE_KEY = ((await crypto.subtle.exportKey("jwk", vapidKeyPair.privateKey)) as JsonWebKey).d ?? "";
+
+  const subscriberKeyPair = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"])) as CryptoKeyPair;
+  const p256dh = base64UrlEncode(new Uint8Array((await crypto.subtle.exportKey("raw", subscriberKeyPair.publicKey)) as ArrayBuffer));
+  const auth = base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)));
+
+  return { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT: "mailto:test@example.com", p256dh, auth };
+}
+
+/**
+ * fix-care-reminder-subrequest-n-plus-1 design.md D3: "a push send is also a
+ * fetch, so subscriptions count against the same 50 as the queries." That
+ * only holds if the composition root actually wires `WebPushSender`'s
+ * `fetchImpl` to `recordSubrequest()` — without it `remainingSubrequestBudget()`
+ * never sees a push send at all and over-reports headroom to the care
+ * dispatch loop's budget brake.
+ */
+describe("buildDeps wires WebPushSender's fetch into the subrequest budget", () => {
+  it("records one subrequest per push send", async () => {
+    const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT, p256dh, auth } = await realPushEnv();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 201 }));
+    try {
+      const { pushSender } = buildDeps({
+        DATABASE_URL: "postgres://unused",
+        FIREBASE_PROJECT_ID: "life-os-test",
+        VAPID_PUBLIC_KEY,
+        VAPID_PRIVATE_KEY,
+        VAPID_SUBJECT,
+        CARE_REMINDER_WORKFLOW: {} as Env["CARE_REMINDER_WORKFLOW"],
+      });
+
+      await withSubrequestBudget(10, async () => {
+        expect(remainingSubrequestBudget()).toBe(10);
+        const result = await pushSender.send(
+          { userId: "user-1", endpoint: "https://push.example.com/probe", p256dh, auth },
+          { title: "t", body: "b", ttlSeconds: 300 },
+        );
+        expect(result.outcome).toBe("sent"); // crypto + the (stubbed) fetch both actually ran.
+        expect(remainingSubrequestBudget()).toBe(9);
+      });
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

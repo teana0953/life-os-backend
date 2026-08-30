@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, lt } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { DrizzleCareOccurrenceRepository } from "../../../../src/contexts/notifications/adapters/drizzle-care-occurrence-repository";
 import type { Db } from "../../../../src/shared/db/client";
-import { careOccurrence } from "../../../../src/shared/db/schema";
+import { careLog, careOccurrence } from "../../../../src/shared/db/schema";
 
 /**
  * `upsertBySlot` inserts only if absent (`onConflictDoNothing` on the unique
@@ -217,5 +217,95 @@ describe("DrizzleCareOccurrenceRepository.listPastUnlogged", () => {
     const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForListPastUnlogged([]));
 
     expect(await repo.listPastUnlogged("sched-1", "2026-07-24")).toEqual([]);
+  });
+});
+
+/**
+ * The two batch reads added by fix-care-reminder-subrequest-n-plus-1 (design
+ * D1). Each must be ONE statement — the whole point is that a reminder day's
+ * read count stops growing with the schedule count — so the fakes below give
+ * the builder exactly one `where`, and the captured predicate is asserted
+ * whole: dropping the `user_id` term would return every user's occurrences,
+ * and dropping the `local_date` term would return the whole history, both of
+ * which a rows-only assertion happily accepts.
+ */
+interface CapturedSelect {
+  where?: unknown;
+  joinOn?: unknown;
+}
+
+function fakeDbForListByUserAndDate(rows: unknown[], saw: CapturedSelect): Db {
+  return {
+    select: () => ({
+      from: () => ({
+        where: (predicate: unknown) => {
+          saw.where = predicate;
+          return Promise.resolve(rows);
+        },
+      }),
+    }),
+  } as unknown as Db;
+}
+
+describe("DrizzleCareOccurrenceRepository.listByUserAndDate", () => {
+  it("selects the user's occurrences for exactly that local date in one statement", async () => {
+    const saw: CapturedSelect = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForListByUserAndDate([CREATED_ROW], saw));
+
+    const result = await repo.listByUserAndDate("user-1", "2026-07-24");
+
+    expect(result).toEqual([CREATED_ROW]);
+    expect(saw.where).toEqual(and(eq(careOccurrence.userId, "user-1"), eq(careOccurrence.localDate, "2026-07-24")));
+  });
+
+  it("returns an empty array when the user has no occurrences that day", async () => {
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForListByUserAndDate([], {}));
+
+    expect(await repo.listByUserAndDate("user-1", "2026-07-24")).toEqual([]);
+  });
+});
+
+function fakeDbForListPastUnloggedForUser(rows: unknown[], saw: CapturedSelect): Db {
+  return {
+    select: () => ({
+      from: () => ({
+        leftJoin: (_table: unknown, on: unknown) => {
+          saw.joinOn = on;
+          return {
+            where: (predicate: unknown) => {
+              saw.where = predicate;
+              return Promise.resolve(rows);
+            },
+          };
+        },
+      }),
+    }),
+  } as unknown as Db;
+}
+
+describe("DrizzleCareOccurrenceRepository.listPastUnloggedForUser", () => {
+  it("is the user-scoped form of listPastUnlogged: same LEFT JOIN care_log IS NULL shape, filtered on user_id", async () => {
+    const saw: CapturedSelect = {};
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForListPastUnloggedForUser([{ occurrence: CREATED_ROW }], saw));
+
+    const result = await repo.listPastUnloggedForUser("user-1", "2026-07-25");
+
+    expect(result).toEqual([CREATED_ROW]);
+    expect(saw.joinOn).toEqual(
+      and(
+        eq(careLog.careScheduleId, careOccurrence.careScheduleId),
+        eq(careLog.localDate, careOccurrence.localDate),
+        eq(careLog.timeOfDay, careOccurrence.timeOfDay),
+      ),
+    );
+    expect(saw.where).toEqual(
+      and(eq(careOccurrence.userId, "user-1"), lt(careOccurrence.localDate, "2026-07-25"), isNull(careLog.id)),
+    );
+  });
+
+  it("returns an empty array when nothing is past-unlogged for the user", async () => {
+    const repo = new DrizzleCareOccurrenceRepository(() => fakeDbForListPastUnloggedForUser([], {}));
+
+    expect(await repo.listPastUnloggedForUser("user-1", "2026-07-25")).toEqual([]);
   });
 });

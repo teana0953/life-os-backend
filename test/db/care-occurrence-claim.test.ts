@@ -80,4 +80,35 @@ describe("DrizzleCareOccurrenceRepository.claimAttempt (PGlite)", () => {
     const secondAt = new Date(firstAt.getTime() + 12 * 60_000);
     expect(await repo.claimAttempt(id, { at: secondAt, leaseMinutes: 10 })).toBe(true);
   });
+
+  /**
+   * `ABANDONED_CLAIM_RETRY_MINUTES = 2` is both the due-floor and, because
+   * `dispatchSlot` derives the lease from the same `due`, the re-claim lease for
+   * an occurrence with an attempt time and no outcome
+   * (fix-care-reminder-subrequest-n-plus-1 design.md D6). The pair below pins
+   * the boundary against the REAL SQL predicate, so a `lt`/`lte` slip — which
+   * would make the retry that becomes due at exactly +2 minutes unable to claim
+   * — cannot pass unnoticed.
+   */
+  it("(d) an abandoned claim can be retaken at exactly the two-minute boundary", async () => {
+    const repo = new DrizzleCareOccurrenceRepository(() => testDb.db);
+    const id = await seedOccurrence();
+    const firstAt = new Date("2026-07-24T01:00:00Z");
+
+    expect(await repo.claimAttempt(id, { at: firstAt, leaseMinutes: 2 })).toBe(true);
+
+    const exactlyTwoMinutesLater = new Date(firstAt.getTime() + 2 * 60_000);
+    expect(await repo.claimAttempt(id, { at: exactlyTwoMinutesLater, leaseMinutes: 2 })).toBe(true);
+  });
+
+  it("(e) ...and not one second before it", async () => {
+    const repo = new DrizzleCareOccurrenceRepository(() => testDb.db);
+    const id = await seedOccurrence();
+    const firstAt = new Date("2026-07-24T01:00:00Z");
+
+    expect(await repo.claimAttempt(id, { at: firstAt, leaseMinutes: 2 })).toBe(true);
+
+    const oneSecondEarly = new Date(firstAt.getTime() + 2 * 60_000 - 1000);
+    expect(await repo.claimAttempt(id, { at: oneSecondEarly, leaseMinutes: 2 })).toBe(false);
+  });
 });
