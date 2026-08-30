@@ -21,6 +21,10 @@ are batched; writes are not.
 - **WHEN** a dispatch round runs for a user with one active schedule, and again for a user with twenty-five active schedules of which none is yet due
 - **THEN** both rounds issue the same number of database reads
 
+#### Scenario: A dispatch round costs the same even when every slot is due but already answered
+- **WHEN** a dispatch round runs for a user with one active schedule, and again for a user with twenty-five active schedules, all of them due and already answered for the day
+- **THEN** both rounds issue the same number of database reads, and no slot is claimed or dispatched
+
 #### Scenario: Marking past slots missed costs the same for one schedule and for many
 - **WHEN** past unanswered slots are marked missed for a user with one enabled schedule, and again for a user with twenty-five enabled schedules
 - **THEN** both passes issue the same number of database reads, and the same slots are marked missed in each case
@@ -47,9 +51,36 @@ round's budget is exhausted, the read is not retried. This holds inside every st
 reminder day, and each step SHALL have its own budget, because each step is a separate
 invocation with its own limit.
 
+A slot's entry-gate reserve SHALL NOT scale with its subscription count: it SHALL be a fixed cost
+that decides only whether the slot is worth claiming at all, never a per-subscription estimate of
+the whole fleet's worst case. (A fleet-scaled entry reserve was tried and reverted: it made a large
+subscription fleet — `subscriptions.length` past roughly 21 on a 50-request step — unaffordable on
+EVERY wake, forever, because every wake starts from the same fresh budget; that is a permanent,
+silent drop of the exact kind this change exists to remove, reached from the conservative
+direction instead of the cheap one, and it does not self-heal because a stale subscription is only
+pruned on an actual send. See `design.md` D4.)
+
+Once a slot is claimed, its dispatch to individual subscriptions SHALL itself stay inside the
+remaining budget: before each subscription's send, the round SHALL confirm there is still room for
+that send's worst case (the send itself, plus a possible `subscriptionRepo.deleteByEndpoint` if it
+comes back expired) AND for the outcome-recording write that follows the dispatch loop. When there
+is not, the loop SHALL stop sending to the remaining subscriptions rather than either being claimed
+in the first place with no chance of finishing, or continuing until the platform itself cuts the
+round off. A slot that stops early this way SHALL still have its attempt recorded — the reserved
+room for that write SHALL NOT itself be spent by the per-send check. Subscriptions the loop did not
+reach are not retried within the same wake; they wait for the slot's ordinary next-due cadence.
+
 #### Scenario: A round out of budget defers rather than half-claims
 - **WHEN** a round has already consumed its budget and further slots are still due
 - **THEN** no further slot is claimed or dispatched, the deferral is logged, and the deferred slots are still due — and are dispatched — on the next wake
+
+#### Scenario: A large fleet is claimed and delivered to on a normal budget, never permanently deferred
+- **WHEN** a user has enough push subscriptions that the OLD fleet-scaled reserve would have exceeded what any wake's budget could ever cover
+- **THEN** the slot is still claimed on the ordinary fixed entry-gate cost, and every reachable subscription in the fleet is sent to when the round's budget is otherwise fresh
+
+#### Scenario: A slot with more subscriptions than the remaining budget can reach delivers partially and records the result
+- **WHEN** a claimed slot has more subscriptions than the round's remaining budget can afford to send to
+- **THEN** the round sends to as many subscriptions as it can afford, stops before exceeding budget on the rest, logs how many of the fleet it reached, and records the slot's attempt outcome rather than leaving it an abandoned claim
 
 #### Scenario: Deferral serves the earliest slot first
 - **WHEN** several slots are due in one round and the budget covers only some of them
@@ -123,7 +154,19 @@ failed-round floor for a round that never actually reported anything.
 Changing a schedule's time of day part-way through a day leaves behind an occurrence at the old
 time that no later read keyed on the schedule's current time will ever see again. Such an
 occurrence — one belonging to the current day whose slot is no longer among the schedule's
-active slots for that day — SHALL NOT be left with no outcome until the next day.
+active slots for that day, AND whose schedule is still active today (not disabled or deleted) —
+SHALL NOT be left with no outcome until the next day.
+
+An orphan whose schedule was disabled mid-day (rather than merely having its time of day changed)
+is exempt from the same-day requirement above: the day's read batch this requirement is built on
+has no `doseQuantity` for such a schedule (`design.md` D7), and resolving it same-day would cost
+a per-orphan read that reintroduces the per-schedule cost the rest of this change removes. This is
+a pre-existing gap this change does not close: the ordinary missed-marking sweep only ever
+considers enabled schedules, so such an orphan is left with no outcome for as long as its
+schedule stays disabled — it resolves only if and when the schedule is re-enabled. A *deleted*
+schedule does not extend this gap: `care_occurrence` cascades on its schedule's deletion (`design.md`
+D7), so deleting the schedule deletes the orphan occurrence row with it — there is no row left
+to be "resolved" or "unresolved" either way.
 
 An orphaned occurrence that was never delivered SHALL be written off as `missed` for its own
 slot when it is detected, using the same never-clobber write as every other missed marking, so
@@ -149,3 +192,11 @@ deliberately.
 #### Scenario: Writing off an orphan never clobbers a real answer
 - **WHEN** the user has already answered the orphaned slot as done or skipped
 - **THEN** that answer stands and is not overwritten
+
+#### Scenario: A disabled schedule's orphan is not resolved same-day
+- **WHEN** a schedule is disabled part-way through the day, leaving behind an undelivered occurrence for a slot that is no longer active
+- **THEN** that occurrence is not written off as `missed` that same day, and stays that way — with no outcome — for as long as the schedule remains disabled; it is written off only once the schedule is re-enabled and the ordinary missed-marking sweep next runs
+
+#### Scenario: A deleted schedule's orphan occurrence is deleted with it, not left unresolved
+- **WHEN** a schedule is deleted part-way through the day, leaving behind an undelivered occurrence for a slot that is no longer active
+- **THEN** the cascading foreign key removes that occurrence's row along with the schedule — there is no orphan record left for any later sweep to resolve
