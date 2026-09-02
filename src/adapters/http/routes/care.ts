@@ -112,6 +112,14 @@ function careTodaySlotToJson(slot: CareTodaySlot) {
     status: slot.status,
     done_time: slot.doneTime ? slot.doneTime.toISOString() : null,
     dose_quantity: slot.doseQuantity,
+    // Range only; always false on /api/care/today. NOT the same question as
+    // whether the two ids above are null: each id is null exactly when its own
+    // parent row is gone, independently of this flag
+    // (preserve-care-logs-on-item-delete D5). `care_schedule_id` is null with
+    // `item_deleted: false` whenever the item is still live but that
+    // time-of-day's schedule was removed — an item edit dropping one time.
+    // Clients must not infer deletion from a null id.
+    item_deleted: slot.itemDeleted,
   };
 }
 

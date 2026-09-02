@@ -1,7 +1,7 @@
 import { describeErrorChain } from "../../../shared-kernel/error-logging";
 import { localMinute, localParts, nextLocalMidnightInstant, utcInstantFor } from "../../../shared-kernel/reminder-clock";
 import type { CareItem, CareItemRepository, CareSchedule } from "../domain/care-item";
-import type { CareLogRepository } from "../domain/care-log";
+import type { CareLog, CareLogRepository } from "../domain/care-log";
 import type { CareOccurrence, CareOccurrenceRepository, CareSendOutcome } from "../domain/care-occurrence";
 import { hashAckToken, mintAckToken } from "../domain/ack-token";
 import type { PushDeliveryRegistration, PushDeliveryRepository } from "../domain/push-delivery";
@@ -266,6 +266,23 @@ function slotKey(careScheduleId: string, timeOfDay: string): string {
   return `${careScheduleId}|${timeOfDay}`;
 }
 
+/**
+ * The slot keys today's logs have already answered. A log whose schedule has
+ * been deleted carries a `null` `careScheduleId` (D2 in
+ * preserve-care-logs-on-item-delete) and belongs to no live slot, so it is
+ * dropped rather than keyed.
+ *
+ * Exported only so that dropping can be asserted directly: keying such a log
+ * anyway yields the string `"null|HH:mm"`, and no caller can currently collide
+ * with that sentinel (every `care_occurrence.care_schedule_id` is NOT NULL and
+ * every live `care_schedule.id` is a uuid), so replacing the filter with a
+ * plain `map` leaves every end-to-end case in `run-care-day.test.ts` green.
+ * The contract is pinned here instead of at a caller for that reason.
+ */
+export function answeredSlotKeys(logs: CareLog[]): Set<string> {
+  return new Set(logs.flatMap((log) => (log.careScheduleId === null ? [] : [slotKey(log.careScheduleId, log.timeOfDay)])));
+}
+
 function indexBySlot<T extends { careScheduleId: string; timeOfDay: string }>(rows: T[]): Map<string, T> {
   const byKey = new Map<string, T>();
   for (const row of rows) byKey.set(slotKey(row.careScheduleId, row.timeOfDay), row);
@@ -514,6 +531,9 @@ export async function markMissedForUserDay(userId: string, todayLocalDate: strin
         status: "missed",
         doneTime: null,
         doseQuantity: owner.schedule.doseQuantity,
+        itemTitle: owner.item.title,
+        itemCategory: owner.item.category,
+        itemDose: owner.item.dose,
       });
     } catch {
       // Isolate: one occurrence's failure must not abort markMissed for the rest.
@@ -547,7 +567,7 @@ export async function dispatchDueRounds(now: Date, userId: string, timeZone: str
   ]);
 
   const occurrenceBySlot = indexBySlot(occurrences);
-  const answeredSlots = new Set(logs.map((log) => slotKey(log.careScheduleId, log.timeOfDay)));
+  const answeredSlots = answeredSlotKeys(logs);
 
   // Earliest scheduled time first (D4): when the budget covers only some of the
   // round, the slots closest to falling out of `FIRST_FIRE_GRACE_MINUTES` — and
@@ -650,6 +670,9 @@ async function retireOrphanedOccurrences(
         status: "missed",
         doneTime: null,
         doseQuantity: owner.schedule.doseQuantity,
+        itemTitle: owner.item.title,
+        itemCategory: owner.item.category,
+        itemDose: owner.item.dose,
       });
     } catch (err) {
       console.error("care-dispatch: orphan retirement failed", { careScheduleId: occurrence.careScheduleId, error: failureDetail(err) });
@@ -730,7 +753,7 @@ export async function buildSlotSnapshots(
   ]);
 
   const occurrenceBySlot = indexBySlot(occurrences);
-  const answeredSlots = new Set(logs.map((log) => slotKey(log.careScheduleId, log.timeOfDay)));
+  const answeredSlots = answeredSlotKeys(logs);
 
   const slots: SlotSnapshot[] = active.map(({ schedule }) => {
     const key = slotKey(schedule.id, schedule.timeOfDay);

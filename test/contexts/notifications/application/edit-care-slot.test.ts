@@ -7,7 +7,13 @@ import type {
   CareItemWithSchedules,
   CareSchedule,
 } from "../../../../src/contexts/notifications/domain/care-item";
-import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../../src/contexts/notifications/domain/care-log";
+import type {
+  CareLog,
+  CareLogItemSnapshot,
+  CareLogRepository,
+  CareLogStatus,
+  CreateCareLogInput,
+} from "../../../../src/contexts/notifications/domain/care-log";
 
 class FakeCareItemRepository implements CareItemRepository {
   items = new Map<string, CareItemWithSchedules>();
@@ -61,23 +67,24 @@ class FakeCareLogRepository implements CareLogRepository {
   private bySlot = new Map<string, CareLog>();
   private nextId = 1;
   getBySlotCalls = 0;
+  writes: CreateCareLogInput[] = [];
 
   private key(scheduleId: string, localDate: string, timeOfDay: string): string {
     return `${scheduleId}|${localDate}|${timeOfDay}`;
   }
 
-  /** Test helper: seed a pre-existing log for the slot (a prior POST/PUT answer). */
-  seed(input: CreateCareLogInput): void {
+  /**
+   * Test helper: seed a pre-existing log for the slot (a prior POST/PUT
+   * answer). The snapshot defaults to the seeded item's values so the cases
+   * that only care about status/doneTime need not restate them.
+   */
+  seed(input: Omit<CreateCareLogInput, keyof CareLogItemSnapshot> & Partial<CareLogItemSnapshot>): void {
     this.bySlot.set(this.key(input.careScheduleId, input.localDate, input.timeOfDay), {
       id: `log-${this.nextId++}`,
-      userId: input.userId,
-      careItemId: input.careItemId,
-      careScheduleId: input.careScheduleId,
-      localDate: input.localDate,
-      timeOfDay: input.timeOfDay,
-      status: input.status,
-      doneTime: input.doneTime,
-      doseQuantity: input.doseQuantity,
+      itemTitle: "藥物",
+      itemCategory: "medication",
+      itemDose: "5mg",
+      ...input,
     });
   }
 
@@ -95,6 +102,7 @@ class FakeCareLogRepository implements CareLogRepository {
     throw new Error("not used by these tests");
   }
   async upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
+    this.writes.push(input);
     const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
     const existing = this.bySlot.get(key);
     const log: CareLog = {
@@ -107,6 +115,12 @@ class FakeCareLogRepository implements CareLogRepository {
       status: input.status,
       doneTime: input.doneTime,
       doseQuantity: input.doseQuantity,
+      // Mirrors the real repository's `onConflictDoUpdate`, which deliberately
+      // leaves the snapshot columns out of its `set` clause: an edit never
+      // restamps an existing record's snapshot.
+      itemTitle: existing?.itemTitle ?? input.itemTitle,
+      itemCategory: existing?.itemCategory ?? input.itemCategory,
+      itemDose: existing ? existing.itemDose : input.itemDose,
     };
     this.bySlot.set(key, log);
     return { log, previousStatus: existing?.status ?? null };
@@ -433,5 +447,34 @@ describe("editCareSlot", () => {
 
     expect(result?.doneTime).toBeNull();
     expect(careLogRepo.getBySlotCalls).toBe(0);
+  });
+
+  it("writes the item's title, category and dose onto a newly created log", async () => {
+    careItemRepo.add(makeItem({ title: "標靶藥", category: "medication", dose: "5mg" }));
+
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    expect(careLogRepo.writes).toHaveLength(1);
+    expect(careLogRepo.writes[0]).toMatchObject({ itemTitle: "標靶藥", itemCategory: "medication", itemDose: "5mg" });
+    expect(result).toMatchObject({ itemTitle: "標靶藥", itemCategory: "medication", itemDose: "5mg" });
+  });
+
+  it("snapshots a doseless non-medication item as itemDose null", async () => {
+    careItemRepo.add(makeItem({ title: "抬腿運動", category: "rehab", dose: null, stock: null }));
+
+    await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "skipped" });
+
+    expect(careLogRepo.writes[0]).toMatchObject({ itemTitle: "抬腿運動", itemCategory: "rehab", itemDose: null });
+  });
+
+  // Same guard as answerCareSlot's: the 404 has to come from getByScheduleId
+  // failing to resolve the deleted item, BEFORE any write reaches the
+  // repository ("A deleted item stops producing new work").
+  it("returns null and writes nothing when the schedule's item has been deleted", async () => {
+    const result = await editCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    expect(result).toBeNull();
+    expect(careLogRepo.writes).toEqual([]);
+    expect(await careLogRepo.getBySlot("sched-1", SLOT.localDate, SLOT.timeOfDay)).toBeNull();
   });
 });

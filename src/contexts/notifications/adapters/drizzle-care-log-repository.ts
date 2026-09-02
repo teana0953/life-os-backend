@@ -1,6 +1,7 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { careLog } from "../../../shared/db/schema";
+import type { CareCategory } from "../domain/care-item";
 import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../domain/care-log";
 
 type CareLogRow = typeof careLog.$inferSelect;
@@ -16,6 +17,9 @@ function toDomain(row: CareLogRow): CareLog {
     status: row.status as CareLogStatus,
     doneTime: row.doneTime,
     doseQuantity: row.doseQuantity,
+    itemTitle: row.itemTitle,
+    itemCategory: row.itemCategory as CareCategory,
+    itemDose: row.itemDose,
   };
 }
 
@@ -35,6 +39,9 @@ export class DrizzleCareLogRepository implements CareLogRepository {
         status: input.status,
         doneTime: input.doneTime,
         doseQuantity: input.doseQuantity,
+        itemTitle: input.itemTitle,
+        itemCategory: input.itemCategory,
+        itemDose: input.itemDose,
       })
       .onConflictDoNothing({ target: [careLog.careScheduleId, careLog.localDate, careLog.timeOfDay] })
       .returning();
@@ -112,9 +119,15 @@ export class DrizzleCareLogRepository implements CareLogRepository {
         status: input.status,
         doneTime: input.doneTime,
         doseQuantity: input.doseQuantity,
+        itemTitle: input.itemTitle,
+        itemCategory: input.itemCategory,
+        itemDose: input.itemDose,
       })
       .onConflictDoUpdate({
         target: [careLog.careScheduleId, careLog.localDate, careLog.timeOfDay],
+        // Deliberately NOT the snapshot columns: an edit must not restamp an
+        // existing record's item_title/category/dose with the item's current
+        // values (D1 in design.md).
         set: {
           status: input.status,
           doneTime: input.doneTime,

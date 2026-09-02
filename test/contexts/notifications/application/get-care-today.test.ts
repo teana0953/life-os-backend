@@ -90,6 +90,9 @@ class FakeCareLogRepository implements CareLogRepository {
       status: input.status,
       doneTime: input.doneTime,
       doseQuantity: input.doseQuantity,
+      itemTitle: input.itemTitle,
+      itemCategory: input.itemCategory,
+      itemDose: input.itemDose,
     });
   }
 
@@ -205,6 +208,9 @@ describe("getCareToday", () => {
         status,
         doneTime,
         doseQuantity: 1,
+        itemTitle: "藥物",
+        itemCategory: "medication",
+        itemDose: "5mg",
       });
 
       const result = await getCareToday({ userRepo, careItemRepo, careLogRepo }, "user-1", NOW);
@@ -269,5 +275,20 @@ describe("getCareToday", () => {
     expect(taipeiResult.items[0].status).toBe("pending"); // 07:00 local, before the 08:00 slot
     expect(laResult.date).toBe("2026-07-22");
     expect(laResult.items[0].status).toBe("overdue"); // 16:00 local, past the 08:00 slot
+  });
+
+  // preserve-care-logs-on-item-delete D5: today's list is a to-do list, so it
+  // only ever shows live schedules — the field is on the shared type for the
+  // range path's sake and must be constantly false here, with ids never null.
+  it("every slot reports itemDeleted false and non-null ids", async () => {
+    const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+    careItemRepo.add(makeItem(), makeSchedule());
+
+    const result = await getCareToday({ userRepo, careItemRepo, careLogRepo }, "user-1", NOW);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].itemDeleted).toBe(false);
+    expect(result.items[0].careItemId).toBe("item-1");
+    expect(result.items[0].careScheduleId).toBe("sched-1");
   });
 });

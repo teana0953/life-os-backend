@@ -59,7 +59,7 @@ async function insertOccurrence(input: {
 }
 
 async function insertLog(input: { userId: string; careItemId: string; careScheduleId: string; localDate: string; timeOfDay: string }): Promise<void> {
-  await testDb.db.insert(schema.careLog).values({ ...input, status: "done" });
+  await testDb.db.insert(schema.careLog).values({ ...input, status: "done", itemTitle: "藥物", itemCategory: "medication" });
 }
 
 describe("listByUserAndDate (PGlite)", () => {

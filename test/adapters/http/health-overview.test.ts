@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { CareLog } from "../../../src/contexts/notifications/domain/care-log";
 import {
   argsOf,
   buildBatchApp,
@@ -92,6 +93,49 @@ describe("GET /api/health-overview", () => {
     expect(body.menstrual.data).toMatchObject({ periods: [expect.objectContaining({ start_date: "2026-07-20" })] });
     expect(body.care_today.data).toMatchObject({ items: [] });
     expect(body.care_range.data).toMatchObject({ from: "2026-07-22", to: DAY });
+  });
+
+  it("gives the care_range section a deleted item's record in the same shape /api/care/range uses", async () => {
+    // This section reuses careRangeToJson, so a client reading the batch
+    // response must see `item_deleted` and the null identifiers too — not just
+    // callers of the standalone endpoint.
+    const orphan: CareLog = {
+      id: "log-1",
+      userId: "user-1",
+      careItemId: null,
+      careScheduleId: null,
+      localDate: DAY,
+      timeOfDay: "08:00",
+      status: "done",
+      doneTime: new Date("2026-08-20T00:05:00.000Z"),
+      doseQuantity: 2,
+      itemTitle: "已刪除的藥",
+      itemCategory: "medication",
+      itemDose: "5mg",
+    };
+    const { app } = buildBatchApp({ "careLog.listByUserAndDateRange": async () => [orphan] });
+    const token = await validToken();
+
+    const body = (await (await get(app, `/api/health-overview?day=${DAY}`, token)).json()) as SectionBody;
+
+    const days = (body.care_range.data as { days: { date: string; items: Record<string, unknown>[] }[] }).days;
+    const day = days.find((d) => d.date === DAY);
+    expect(day?.items).toEqual([
+      {
+        care_item_id: null,
+        care_schedule_id: null,
+        category: "medication",
+        title: "已刪除的藥",
+        note: null,
+        dose: "5mg",
+        time_of_day: "08:00",
+        local_date: DAY,
+        status: "done",
+        done_time: "2026-08-20T00:05:00.000Z",
+        dose_quantity: 2,
+        item_deleted: true,
+      },
+    ]);
   });
 
   it("defaults both windows to the 30 days ending at day, inclusive", async () => {

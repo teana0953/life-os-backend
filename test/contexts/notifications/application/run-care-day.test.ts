@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  answeredSlotKeys,
   buildSlotSnapshots,
   dispatchDueRounds,
   markMissedForUserDay,
@@ -21,7 +22,13 @@ import type {
   CareItemWithSchedules,
   CareSchedule,
 } from "../../../../src/contexts/notifications/domain/care-item";
-import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../../src/contexts/notifications/domain/care-log";
+import type {
+  CareLog,
+  CareLogItemSnapshot,
+  CareLogRepository,
+  CareLogStatus,
+  CreateCareLogInput,
+} from "../../../../src/contexts/notifications/domain/care-log";
 import type {
   CareOccurrence,
   CareOccurrenceRepository,
@@ -126,8 +133,38 @@ class InMemoryCareLogRepository implements CareLogRepository {
     throw new Error("not used by these tests");
   }
 
-  seed(input: CreateCareLogInput): void {
-    this.bySlot.set(this.key(input.careScheduleId, input.localDate, input.timeOfDay), { id: `log-${this.nextId++}`, ...input });
+  /** The snapshot defaults so cases that only care about status need not restate it. */
+  seed(input: Omit<CreateCareLogInput, keyof CareLogItemSnapshot> & Partial<CareLogItemSnapshot>): void {
+    this.bySlot.set(this.key(input.careScheduleId, input.localDate, input.timeOfDay), {
+      id: `log-${this.nextId++}`,
+      itemTitle: "藥物",
+      itemCategory: "medication",
+      itemDose: null,
+      ...input,
+    });
+  }
+
+  /**
+   * A row `ON DELETE SET NULL` left behind: answered, then the item deleted, on
+   * the same local day (preserve-care-logs-on-item-delete D2). `seed` above
+   * cannot express it — `CreateCareLogInput`'s ids are non-null by design, since
+   * no writer can produce one.
+   */
+  seedOrphan(input: { userId: string; careItemId: string | null; localDate: string; timeOfDay: string; status: CareLogStatus }): void {
+    this.bySlot.set(`orphan-${this.nextId}|${input.localDate}|${input.timeOfDay}`, {
+      id: `log-${this.nextId++}`,
+      userId: input.userId,
+      careItemId: input.careItemId,
+      careScheduleId: null,
+      localDate: input.localDate,
+      timeOfDay: input.timeOfDay,
+      status: input.status,
+      doneTime: null,
+      doseQuantity: 1,
+      itemTitle: "藥物",
+      itemCategory: "medication",
+      itemDose: null,
+    });
   }
 
   all(): CareLog[] {
@@ -913,6 +950,25 @@ describe("markMissedForUserDay", () => {
     expect(careLogRepo.statusOf("sched-1", "2026-07-20", "09:00")).toBe("missed");
   });
 
+  it("stamps the item's title, category and dose onto the missed log", async () => {
+    careItemRepo.add(
+      { id: "item-1", userId: "user-1", category: "medication", title: "標靶藥", dose: "5mg" },
+      { id: "sched-1", timeOfDay: "09:00", repeatDays: [] },
+    );
+    await careOccurrenceRepo.upsertBySlot({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: "2026-07-23",
+      timeOfDay: "09:00",
+    });
+
+    await markMissedForUserDay("user-1", "2026-07-24", deps());
+
+    expect(careLogRepo.all()).toHaveLength(1);
+    expect(careLogRepo.all()[0]).toMatchObject({ status: "missed", itemTitle: "標靶藥", itemCategory: "medication", itemDose: "5mg" });
+  });
+
   it("does NOT mark a disabled schedule's past unanswered slots missed (matches the pre-existing enabled-only scan)", async () => {
     careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5], enabled: false });
     await careOccurrenceRepo.upsertBySlot({
@@ -1229,6 +1285,9 @@ describe("read counts are independent of the schedule count (design.md D1/D8)", 
           status: "done",
           doneTime: FRIDAY_0900_TAIPEI,
           doseQuantity: 1,
+          itemTitle: "藥物",
+          itemCategory: "medication",
+          itemDose: null,
         });
       }
       const reads: string[] = [];
@@ -1792,6 +1851,8 @@ describe("dispatchDueRounds: an orphaned occurrence from a same-day time change 
     await dispatchDueRounds(FRIDAY_1620_TAIPEI, "user-1", TAIPEI, deps());
 
     expect(careLogRepo.statusOf("sched-1", "2026-07-24", "16:05")).toBe("missed");
+    // The retirement is a write path too: it must stamp the same snapshot.
+    expect(careLogRepo.all()).toEqual([expect.objectContaining({ itemTitle: "藥物", itemCategory: "medication", itemDose: null })]);
     // The slot that IS active still dispatched normally.
     expect(pushSender.sentTo).toHaveLength(1);
   });
@@ -1868,5 +1929,72 @@ describe("dispatchDueRounds: an orphaned occurrence from a same-day time change 
 
     expect(careLogRepo.statusOf("sched-1", "2026-07-24", "16:05")).toBeUndefined();
     expect(warn.lines).toContain("care-dispatch: deferred 1 orphan retirements, subrequest budget exhausted");
+  });
+});
+
+// preserve-care-logs-on-item-delete D2: a log survives its schedule with a null
+// `careScheduleId`, and every caller of `answeredSlotKeys` (dispatchDueRounds,
+// retireOrphanedOccurrences, buildSlotSnapshots) reads today's whole log list —
+// orphans included — and asks it which LIVE slots are answered. Asserted on the
+// helper directly, not through a caller: keying an orphan anyway produces
+// `"null|HH:mm"`, which no live slot key can equal, so a caller-level assertion
+// stays green either way. That is the surviving mutation this block exists for.
+describe("answeredSlotKeys drops a log whose schedule is gone (design D2)", () => {
+  function log(overrides: Partial<CareLog>): CareLog {
+    return {
+      id: "log-x",
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: "2026-07-24",
+      timeOfDay: "09:00",
+      status: "done",
+      doneTime: null,
+      doseQuantity: 1,
+      itemTitle: "藥物",
+      itemCategory: "medication",
+      itemDose: null,
+      ...overrides,
+    };
+  }
+
+  it("keys a live slot's log and drops the orphan entirely, rather than keying it as \"null|HH:mm\"", () => {
+    const keys = answeredSlotKeys([log({}), log({ id: "log-y", careScheduleId: null, timeOfDay: "21:00" })]);
+
+    expect([...keys]).toEqual(["sched-1|09:00"]);
+    // Spelled out as well as counted: a plain `map` yields this sentinel, and
+    // `toEqual` above is the only assertion that notices, so state it.
+    expect(keys.has("null|21:00")).toBe(false);
+  });
+
+  it("an orphan at the SAME time of day as a live slot does not answer that slot", () => {
+    // The one arrangement where the sentinel key could plausibly matter: the
+    // deleted item and a surviving one share 09:00. The orphan must not make
+    // the live slot look answered, and must not add a key of its own.
+    const keys = answeredSlotKeys([log({ id: "log-y", careItemId: null, careScheduleId: null, status: "skipped" })]);
+
+    expect([...keys]).toEqual([]);
+  });
+
+  it("an answered live slot is still seen as answered when today's list also holds an orphan", async () => {
+    // End-to-end through a real caller: the orphan is in `listByUserAndDate`'s
+    // output for the same local day, and the live slot's `answered` flag must
+    // come out true regardless.
+    careItemRepo.add({ id: "item-1", userId: "user-1" }, { id: "sched-1", timeOfDay: "09:00", repeatDays: [5] });
+    careLogRepo.seed({
+      userId: "user-1",
+      careItemId: "item-1",
+      careScheduleId: "sched-1",
+      localDate: "2026-07-24",
+      timeOfDay: "09:00",
+      status: "done",
+      doneTime: FRIDAY_0900_TAIPEI,
+      doseQuantity: 1,
+    });
+    careLogRepo.seedOrphan({ userId: "user-1", careItemId: null, localDate: "2026-07-24", timeOfDay: "09:00", status: "done" });
+
+    const { slots } = await buildSlotSnapshots("user-1", TAIPEI, FRIDAY_0900_TAIPEI, deps());
+
+    expect(slots.map((s) => ({ id: s.schedule.id, answered: s.answered }))).toEqual([{ id: "sched-1", answered: true }]);
   });
 });

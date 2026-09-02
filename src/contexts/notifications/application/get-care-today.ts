@@ -10,8 +10,18 @@ export interface GetCareTodayDeps {
 }
 
 export interface CareTodaySlot {
-  careItemId: string;
-  careScheduleId: string;
+  /**
+   * `null` on a range slot surfaced from a log whose item was deleted
+   * (preserve-care-logs-on-item-delete D2/D5). `getCareToday` never emits one.
+   */
+  careItemId: string | null;
+  /**
+   * `null` on a range slot surfaced from a log whose schedule is gone — which
+   * is NOT the same as the item being gone, so this can be `null` while
+   * `careItemId` is set and `itemDeleted` is false (an item edit that dropped
+   * one time-of-day). `getCareToday` never emits one.
+   */
+  careScheduleId: string | null;
   category: CareCategory;
   title: string;
   note: string | null;
@@ -22,6 +32,13 @@ export interface CareTodaySlot {
   status: CareLogStatus | "pending" | "overdue";
   doneTime: Date | null;
   doseQuantity: number;
+  /**
+   * The item behind this record is gone, so title/category/dose come from the
+   * record's own write-time snapshot rather than a live item (D4/D5). Always
+   * `false` on the today path: this type is shared with `getCareRange` and one
+   * serializer, precisely so the two payloads cannot drift.
+   */
+  itemDeleted: boolean;
 }
 
 export interface CareTodayResult {
@@ -67,6 +84,7 @@ export async function getCareToday(deps: GetCareTodayDeps, userId: string, now: 
       status,
       doneTime: log ? log.doneTime : null,
       doseQuantity: schedule.doseQuantity,
+      itemDeleted: false,
     };
   });
 

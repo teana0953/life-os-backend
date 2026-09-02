@@ -999,6 +999,9 @@ function careLog(overrides: Partial<CareLog> = {}): CareLog {
     status: "done",
     doneTime: new Date("2026-08-08T00:05:00Z"),
     doseQuantity: 2,
+    itemTitle: "血壓藥",
+    itemCategory: "medication",
+    itemDose: "5mg",
     ...overrides,
   };
 }
@@ -1240,7 +1243,7 @@ describe("list_care_items", () => {
  * added to the projection later cannot slip through green, and every field
  * kept is a field sent to a provider that may train on what it receives.
  */
-const CARE_SLOT_KEYS = ["category", "title", "note", "dose", "time_of_day", "local_date", "status", "done_time", "dose_quantity"];
+const CARE_SLOT_KEYS = ["category", "title", "note", "dose", "time_of_day", "local_date", "status", "done_time", "dose_quantity", "item_deleted"];
 
 /** Both care sources answering with the same slot, on the caller's own local today. */
 function careRecordContext(localToday: string): ToolContext {
@@ -1286,8 +1289,32 @@ describe("the care projection", () => {
       // encoder happens to do with it, so it leaves here as an ISO string.
       done_time: "2026-08-08T00:05:00.000Z",
       dose_quantity: 2,
+      item_deleted: false,
     });
     expect(fromRange).toEqual(today.items[0]);
+  });
+
+  it("tells the model a deleted item's record is a past record, named from its snapshot", async () => {
+    // Without `item_deleted` the model would read this row as something the
+    // user is still being reminded about (tools.ts careSlot). The item is gone,
+    // so `listByUser` answers with nothing and only the snapshot can name it.
+    const localToday = localParts(new Date(), "Asia/Taipei").date;
+    const context = contextWith({
+      health: healthPorts({
+        users: careUsers("Asia/Taipei"),
+        careItems: { listByUser: async () => [] } as never,
+        careLogs: {
+          listByUserAndDateRange: async () => [
+            careLog({ localDate: localToday, careItemId: null, careScheduleId: null, itemTitle: "停用的舊藥", itemCategory: "medication", itemDose: "10mg" }),
+          ],
+        } as never,
+      }),
+    });
+
+    const range = (await runTool(context, "get_care_range", { from: localToday, to: localToday })).result as { days: Array<{ items: Record<string, unknown>[] }> };
+
+    expect(range.days[0].items).toHaveLength(1);
+    expect(range.days[0].items[0]).toMatchObject({ item_deleted: true, title: "停用的舊藥", dose: "10mg", category: "medication" });
   });
 
   it("carries a care item's schedules without the notification setting", async () => {

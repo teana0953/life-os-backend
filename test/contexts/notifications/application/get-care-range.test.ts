@@ -7,9 +7,18 @@ import type {
   CareItemWithSchedules,
   CareSchedule,
 } from "../../../../src/contexts/notifications/domain/care-item";
-import type { CareLog, CareLogRepository, CareLogStatus, CreateCareLogInput } from "../../../../src/contexts/notifications/domain/care-log";
+import type {
+  CareLog,
+  CareLogItemSnapshot,
+  CareLogRepository,
+  CareLogStatus,
+  CreateCareLogInput,
+} from "../../../../src/contexts/notifications/domain/care-log";
 import type { User } from "../../../../src/contexts/user/domain/user";
 import type { UserRepository } from "../../../../src/contexts/user/domain/user-repository";
+
+type SeedLogInput = Omit<CreateCareLogInput, "careItemId" | "careScheduleId" | keyof CareLogItemSnapshot> &
+  Partial<CareLogItemSnapshot> & { careItemId: string | null; careScheduleId: string | null };
 
 class FakeUserRepository implements UserRepository {
   private byId = new Map<string, User>();
@@ -32,6 +41,8 @@ class FakeUserRepository implements UserRepository {
 /** Mirrors DrizzleCareItemRepository.listByUser: ALL of the caller's items (schedules embedded), not filtered by enabled/active — getCareRange must filter those itself. */
 class FakeCareItemRepository implements CareItemRepository {
   private items: CareItemWithSchedules[] = [];
+  /** Counts the reads getCareRange makes; task 4.5 pins it at one regardless of orphan count. */
+  listByUserCalls = 0;
 
   add(item: CareItemWithSchedules): void {
     this.items.push(item);
@@ -41,6 +52,7 @@ class FakeCareItemRepository implements CareItemRepository {
     throw new Error("not used by these tests");
   }
   async listByUser(userId: string): Promise<CareItemWithSchedules[]> {
+    this.listByUserCalls += 1;
     return this.items.filter((i) => i.userId === userId);
   }
   async get(): Promise<CareItemWithSchedules | null> {
@@ -72,9 +84,16 @@ class FakeCareItemRepository implements CareItemRepository {
 class FakeCareLogRepository implements CareLogRepository {
   private logs: CareLog[] = [];
   private nextId = 1;
+  /** Counts the reads getCareRange makes; task 4.5 pins it at one regardless of orphan count. */
+  listByUserAndDateRangeCalls = 0;
 
-  /** Test helper: seed a log directly (simulating a prior HTTP answer or edit). */
-  seed(input: CreateCareLogInput): void {
+  /**
+   * Test helper: seed a log directly (simulating a prior HTTP answer or edit).
+   * The ids are nullable here — unlike `CreateCareLogInput`'s — because that is
+   * exactly the row `ON DELETE SET NULL` leaves behind, and the whole point of
+   * these tests. The snapshot defaults keep the pre-existing fixtures short.
+   */
+  seed(input: SeedLogInput): void {
     this.logs.push({
       id: `log-${this.nextId++}`,
       userId: input.userId,
@@ -85,6 +104,9 @@ class FakeCareLogRepository implements CareLogRepository {
       status: input.status,
       doneTime: input.doneTime,
       doseQuantity: input.doseQuantity,
+      itemTitle: input.itemTitle ?? "藥物",
+      itemCategory: input.itemCategory ?? "medication",
+      itemDose: input.itemDose ?? null,
     });
   }
 
@@ -98,6 +120,7 @@ class FakeCareLogRepository implements CareLogRepository {
     throw new Error("not used by these tests");
   }
   async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
+    this.listByUserAndDateRangeCalls += 1;
     return this.logs.filter((l) => l.userId === userId && l.localDate >= from && l.localDate <= to);
   }
   async upsert(): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
@@ -258,5 +281,408 @@ describe("getCareRange", () => {
       { date: "2026-07-21", items: [] },
       { date: "2026-07-22", items: [] },
     ]);
+  });
+
+  // preserve-care-logs-on-item-delete D3/D4: a log is no longer a decoration on a
+  // live slot. Every log in the range must surface exactly once, whatever became
+  // of the schedule that produced it.
+  describe("logs with no live slot (D3)", () => {
+    it("a deleted item's log is returned on its own date, named from the snapshot and flagged item_deleted", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      // No item at all: the delete cascaded the item and its schedule away and
+      // SET NULL left the log behind.
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "09:00",
+        status: "done",
+        doneTime: new Date("2026-07-21T01:00:00Z"),
+        doseQuantity: 2,
+        itemTitle: "停用的藥",
+        itemCategory: "medication",
+        itemDose: "10mg",
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-23", NOW);
+
+      expect(result.days[0].items).toHaveLength(1);
+      expect(result.days[0].items[0]).toEqual({
+        careItemId: null,
+        careScheduleId: null,
+        category: "medication",
+        title: "停用的藥",
+        note: null,
+        dose: "10mg",
+        timeOfDay: "09:00",
+        localDate: "2026-07-21",
+        status: "done",
+        doneTime: new Date("2026-07-21T01:00:00Z"),
+        doseQuantity: 2,
+        itemDeleted: true,
+      });
+      // and only on its own date.
+      expect(result.days[1].items).toEqual([]);
+      expect(result.days[2].items).toEqual([]);
+    });
+
+    it("a disabled schedule's log is still returned on that date", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ schedules: [makeSchedule({ enabled: false })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "skipped",
+        doneTime: null,
+        doseQuantity: 1,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-23", NOW);
+
+      expect(result.days[0].items).toHaveLength(1);
+      expect(result.days[0].items[0]).toMatchObject({ status: "skipped", timeOfDay: "08:00", careScheduleId: "sched-1", itemDeleted: false });
+      expect(result.days[1].items).toEqual([]); // the schedule is still disabled everywhere else
+    });
+
+    it("a log on a date its schedule is inactive on is still returned on that date", async () => {
+      // repeatDays=[3] = Wednesday only; the log sits on Tuesday 07-21.
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ schedules: [makeSchedule({ repeatDays: [3] })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "done",
+        doneTime: new Date("2026-07-21T00:10:00Z"),
+        doseQuantity: 1,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-23", NOW);
+
+      expect(result.days[0].items).toHaveLength(1); // Tue: from the log alone
+      expect(result.days[0].items[0].status).toBe("done");
+      expect(result.days[1].items).toHaveLength(1); // Wed: the live slot
+      expect(result.days[2].items).toEqual([]); // Thu: neither
+    });
+
+    it("an unconsumed log carries its own stored status, time, done time and dose quantity, not the schedule's", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      // The schedule is disabled, so its 08:00 / doseQuantity 1 cannot be the source.
+      careItemRepo.add(makeItem({ schedules: [makeSchedule({ enabled: false })] }));
+      const doneTime = new Date("2026-07-21T14:05:00Z");
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "22:00",
+        status: "done",
+        doneTime,
+        doseQuantity: 3,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      expect(result.days[0].items[0]).toMatchObject({ timeOfDay: "22:00", status: "done", doneTime, doseQuantity: 3 });
+    });
+
+    it("a strictly-past unconsumed log is NOT re-derived as missed", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "skipped",
+        doneTime: null,
+        doseQuantity: 1,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      expect(result.days[0].items[0].status).toBe("skipped");
+    });
+
+    it("a record whose SCHEDULE alone is gone keeps its item id, is NOT flagged item_deleted, and is named from the live item", async () => {
+      // The distinction every other case in this file misses: the two foreign
+      // keys are separate SET NULLs, so `careScheduleId: null` does NOT imply
+      // the item went with it. This is an item edit that dropped one
+      // time-of-day — the item is still in today's list, and flagging it
+      // deleted would have the frontend render a reminder the user still uses
+      // as gone. Every other seed here is either (item-1, sched-1) or
+      // (null, null), which is why itemDeleted could be wired to the schedule
+      // id and stay green.
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ title: "現在的名字", dose: "20mg" }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "21:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "快照名字",
+        itemDose: "5mg",
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      const orphan = result.days[0].items.find((i) => i.timeOfDay === "21:00");
+      expect(orphan).toMatchObject({
+        careItemId: "item-1",
+        careScheduleId: null,
+        itemDeleted: false,
+        title: "現在的名字",
+        dose: "20mg",
+      });
+    });
+
+    it("a re-added schedule at the same time shows BOTH the derived missed slot and the old done record (accepted D3 consequence)", async () => {
+      // Removing the 08:00 schedule after answering it and adding 08:00 back
+      // gives one item two rows for the same date and time: the new schedule
+      // expands with no log of its own (derived `missed`) and the old record
+      // surfaces unconsumed (`done`, null schedule id). Contradictory to read,
+      // and deliberately not collapsed — see the D3 note in design.md. Pinned
+      // so nobody "tidies" it into a live slot swallowing the record, which
+      // would delete history that actually happened.
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ schedules: [makeSchedule({ id: "sched-new" })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      // Compared as a SET, not a list. The comparator is `timeOfDay` then
+      // `title` and these two rows tie on both (same 08:00, and D4 names both
+      // from the one live item), so their relative order is decided by
+      // Array.prototype.sort's stability over insertion order — a fact about
+      // the runtime, not a guarantee this use case makes. What is being pinned
+      // is that BOTH rows are present; asserting a position would pin the
+      // sort's tie behaviour by accident.
+      const pairs = result.days[0].items.map((i) => ({ status: i.status, careScheduleId: i.careScheduleId }));
+      expect(pairs).toHaveLength(2);
+      expect(pairs).toContainEqual({ status: "missed", careScheduleId: "sched-new" });
+      expect(pairs).toContainEqual({ status: "done", careScheduleId: null });
+    });
+  });
+
+  describe("naming an unconsumed log (D4)", () => {
+    it("a live item whose schedule lapsed shows its CURRENT title while a deleted item's log keeps the OLD one", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      // Renamed since the log was written, and its schedule is now disabled, so
+      // the log is unconsumed but the item is still there.
+      careItemRepo.add(makeItem({ title: "新名字", dose: "20mg", schedules: [makeSchedule({ enabled: false })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "舊名字",
+        itemCategory: "medication",
+        itemDose: "5mg",
+      });
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "09:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "已刪除的復健",
+        itemCategory: "rehab",
+        itemDose: null,
+      });
+
+      const [live, deleted] = (
+        await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW)
+      ).days[0].items;
+
+      expect(live).toMatchObject({ title: "新名字", dose: "20mg", category: "medication", itemDeleted: false, careItemId: "item-1" });
+      expect(deleted).toMatchObject({ title: "已刪除的復健", dose: null, category: "rehab", itemDeleted: true, careItemId: null });
+    });
+
+    it("a live item's note reaches the slot, and a deleted item's is null (the snapshot has no note)", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ note: "飯後", schedules: [makeSchedule({ enabled: false })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+      });
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "09:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+      });
+
+      const [live, deleted] = (
+        await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW)
+      ).days[0].items;
+
+      expect(live.note).toBe("飯後");
+      expect(deleted.note).toBeNull();
+    });
+  });
+
+  describe("exactly once, in order (D3 step 3)", () => {
+    it("a log matched by a live slot is emitted once, not also as an unconsumed log", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem());
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: "item-1",
+        careScheduleId: "sched-1",
+        localDate: "2026-07-21",
+        timeOfDay: "08:00",
+        status: "done",
+        doneTime: new Date("2026-07-21T01:00:00Z"),
+        doseQuantity: 1,
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      expect(result.days[0].items).toHaveLength(1);
+      expect(result.days[0].items[0].status).toBe("done");
+    });
+
+    it("the same schedule's log on two dates is consumed on each of them, never duplicated onto one", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem());
+      for (const localDate of ["2026-07-21", "2026-07-22"]) {
+        careLogRepo.seed({
+          userId: "user-1",
+          careItemId: "item-1",
+          careScheduleId: "sched-1",
+          localDate,
+          timeOfDay: "08:00",
+          status: "done",
+          doneTime: null,
+          doseQuantity: 1,
+        });
+      }
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-22", NOW);
+
+      expect(result.days[0].items).toHaveLength(1);
+      expect(result.days[1].items).toHaveLength(1);
+    });
+
+    it("unconsumed slots interleave with live ones by time_of_day then title, not appended after them", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem({ id: "live", title: "b-live", schedules: [makeSchedule({ id: "sched-live", careItemId: "live", timeOfDay: "12:00" })] }));
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "07:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "z-early-orphan",
+      });
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "12:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "a-same-time-orphan",
+      });
+      careLogRepo.seed({
+        userId: "user-1",
+        careItemId: null,
+        careScheduleId: null,
+        localDate: "2026-07-21",
+        timeOfDay: "20:00",
+        status: "done",
+        doneTime: null,
+        doseQuantity: 1,
+        itemTitle: "y-late-orphan",
+      });
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+      // Appending the orphans after the live slot would give
+      // ["b-live", "z-early-orphan", "a-same-time-orphan", "y-late-orphan"].
+      expect(result.days[0].items.map((i) => i.title)).toEqual(["z-early-orphan", "a-same-time-orphan", "b-live", "y-late-orphan"]);
+    });
+
+    it("issues exactly two repository reads however many orphaned logs the range holds", async () => {
+      const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+      careItemRepo.add(makeItem());
+      for (let i = 0; i < 20; i += 1) {
+        careLogRepo.seed({
+          userId: "user-1",
+          careItemId: null,
+          careScheduleId: null,
+          localDate: "2026-07-21",
+          timeOfDay: `${String(i).padStart(2, "0")}:00`,
+          status: "done",
+          doneTime: null,
+          doseQuantity: 1,
+        });
+      }
+
+      const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-23", NOW);
+
+      expect(result.days[0].items).toHaveLength(21); // 20 orphans + the live slot
+      expect(careItemRepo.listByUserCalls).toBe(1);
+      expect(careLogRepo.listByUserAndDateRangeCalls).toBe(1);
+    });
+  });
+
+  it("another user's orphaned log never leaks into this user's range", async () => {
+    const { userRepo, careItemRepo, careLogRepo } = buildDeps();
+    careLogRepo.seed({
+      userId: "user-other",
+      careItemId: null,
+      careScheduleId: null,
+      localDate: "2026-07-21",
+      timeOfDay: "08:00",
+      status: "done",
+      doneTime: null,
+      doseQuantity: 1,
+    });
+
+    const result = await getCareRange({ userRepo, careItemRepo, careLogRepo }, "user-1", "2026-07-21", "2026-07-21", NOW);
+
+    expect(result.days[0].items).toEqual([]);
   });
 });
