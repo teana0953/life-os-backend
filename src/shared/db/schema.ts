@@ -314,6 +314,16 @@ export const careLogStatus = pgEnum("care_log_status", ["done", "skipped", "miss
 // care_log: adherence record for one slot (schedule, local_date, time_of_day —
 // unique, so answering/markMissed is an insert-if-absent, never clobbering an
 // existing log — D6/D7 in design.md).
+//
+// A log outlives the plan that produced it: both foreign keys are `set null`
+// and both ids are nullable, so deleting a care item keeps its history
+// (preserve-care-logs-on-item-delete design D2). `null` therefore means
+// exactly one thing — the item/schedule is gone. Note the interaction with
+// the unique key below: Postgres treats NULLs as distinct, so orphaned rows
+// leave that constraint's scope. That is deliberate and safe because no write
+// path can insert a null `care_schedule_id` — every one resolves the schedule
+// first and bails when it is gone — so a row is only ever made orphaned by a
+// delete, never born one.
 export const careLog = pgTable(
   "care_log",
   {
@@ -321,17 +331,35 @@ export const careLog = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id),
-    careItemId: uuid("care_item_id")
-      .notNull()
-      .references(() => careItem.id, { onDelete: "cascade" }),
-    careScheduleId: uuid("care_schedule_id")
-      .notNull()
-      .references(() => careSchedule.id, { onDelete: "cascade" }),
+    careItemId: uuid("care_item_id").references(() => careItem.id, { onDelete: "set null" }),
+    careScheduleId: uuid("care_schedule_id").references(() => careSchedule.id, { onDelete: "set null" }),
     localDate: date("local_date").notNull(),
     timeOfDay: text("time_of_day").notNull(),
     status: careLogStatus("status").notNull(),
     doneTime: timestamp("done_time", { withTimezone: true }),
     doseQuantity: integer("dose_quantity").notNull().default(1),
+    // Write-time snapshot of the item's naming attributes, so a record is
+    // readable with no join to `care_item` (design D1). Deliberately never
+    // re-synced when the item is renamed, re-categorized or has its dose
+    // changed: a record reports what was taken at the time. A still-existing
+    // item's current values win at read time (D4), so a rename is only
+    // visible-as-frozen for records whose item is actually gone.
+    // `item_category` mirrors `care_item.category`: plain text, not a
+    // Postgres enum, so a new category still needs no schema change.
+    //
+    // These two carry a DEFAULT in the database ('' / 'custom', set by
+    // migration 0036) and deliberately NOT here. The DEFAULT is only for the
+    // deploy window, where the OLD Worker runs its own already-deployed bundle
+    // and its inserts do not mention these columns at all — nothing in that
+    // window reads this file. Declaring `.default()` here would instead let a
+    // NEW writer omit the snapshot and still typecheck; leaving it off makes
+    // `npm run typecheck` fail on any insert that forgets a column, which is
+    // what actually enforces "every writer fills the snapshot". Do not add
+    // `.default()` to keep the two layers looking symmetrical.
+    itemTitle: text("item_title").notNull(),
+    itemCategory: text("item_category").notNull(),
+    /** Medication only, matching `care_item.dose`. */
+    itemDose: text("item_dose"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique().on(t.careScheduleId, t.localDate, t.timeOfDay)],
@@ -583,6 +611,11 @@ export const financeNetworthSnapshot = pgTable(
 // last_send_outcome / last_send_detail record every attempt, delivered or not,
 // so "never went out" is distinguishable from "the sender said OK" by SQL alone
 // (D11-D13). Diagnostic query: last_send_detail IS NOT NULL.
+//
+// Its foreign keys stay `cascade` while care_log's became `set null`
+// (preserve-care-logs-on-item-delete D6): an occurrence is pending nag/send
+// state for a slot, not history. Deleting an item must stop the nagging, and
+// an orphaned occurrence would only be a row every sweep has to skip.
 export const careOccurrence = pgTable(
   "care_occurrence",
   {

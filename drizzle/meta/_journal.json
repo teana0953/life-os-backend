@@ -253,6 +253,13 @@
       "when": 1787029099583,
       "tag": "0035_magical_alice",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788154346853,
+      "tag": "0036_eager_mathemanic",
+      "breakpoints": true
     }
   ]
 }

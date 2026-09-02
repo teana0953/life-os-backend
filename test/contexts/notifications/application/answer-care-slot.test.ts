@@ -57,12 +57,14 @@ class FakeCareItemRepository implements CareItemRepository {
 class FakeCareLogRepository implements CareLogRepository {
   private bySlot = new Map<string, CareLog>();
   private nextId = 1;
+  writes: CreateCareLogInput[] = [];
 
   private key(scheduleId: string, localDate: string, timeOfDay: string): string {
     return `${scheduleId}|${localDate}|${timeOfDay}`;
   }
 
   async upsertIfAbsent(input: CreateCareLogInput): Promise<{ log: CareLog; created: boolean }> {
+    this.writes.push(input);
     const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
     const existing = this.bySlot.get(key);
     if (existing) return { log: existing, created: false };
@@ -76,6 +78,9 @@ class FakeCareLogRepository implements CareLogRepository {
       status: input.status,
       doneTime: input.doneTime,
       doseQuantity: input.doseQuantity,
+      itemTitle: input.itemTitle,
+      itemCategory: input.itemCategory,
+      itemDose: input.itemDose,
     };
     this.bySlot.set(key, log);
     return { log, created: true };
@@ -207,6 +212,36 @@ describe("answerCareSlot", () => {
     await answerCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "skipped" });
 
     expect(careItemRepo.decrementCalls).toHaveLength(0);
+  });
+
+  it("writes the item's title, category and dose onto the log as a snapshot", async () => {
+    careItemRepo.add(makeItem({ title: "標靶藥", category: "medication", dose: "5mg" }));
+
+    const log = await answerCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    expect(careLogRepo.writes).toHaveLength(1);
+    expect(careLogRepo.writes[0]).toMatchObject({ itemTitle: "標靶藥", itemCategory: "medication", itemDose: "5mg" });
+    expect(log).toMatchObject({ itemTitle: "標靶藥", itemCategory: "medication", itemDose: "5mg" });
+  });
+
+  it("snapshots a doseless non-medication item as itemDose null", async () => {
+    careItemRepo.add(makeItem({ title: "抬腿運動", category: "rehab", dose: null, stock: null }));
+
+    await answerCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "skipped" });
+
+    expect(careLogRepo.writes[0]).toMatchObject({ itemTitle: "抬腿運動", itemCategory: "rehab", itemDose: null });
+  });
+
+  // No new adherence record may be written for a deleted item (spec: "A
+  // deleted item stops producing new work"). The whole guard is that
+  // getByScheduleId no longer resolves the schedule, so this pins that the
+  // 404 comes BEFORE any write, not after one.
+  it("returns null and writes nothing when the schedule's item has been deleted", async () => {
+    const result = await answerCareSlot({ careItemRepo, careLogRepo }, "user-1", { ...SLOT, status: "done" });
+
+    expect(result).toBeNull();
+    expect(careLogRepo.writes).toEqual([]);
+    expect(await careLogRepo.getBySlot("sched-1", "2026-07-24", "08:00")).toBeNull();
   });
 
   it("stock decrement clamps at 0", async () => {

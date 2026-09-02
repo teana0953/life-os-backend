@@ -496,6 +496,9 @@ function careSlot(slot: CareTodaySlot) {
     status: slot.status,
     done_time: slot.doneTime === null ? null : slot.doneTime.toISOString(),
     dose_quantity: slot.doseQuantity,
+    // Without it the model would present a deleted item's past record as
+    // something the user is still being reminded about.
+    item_deleted: slot.itemDeleted,
   };
 }
 

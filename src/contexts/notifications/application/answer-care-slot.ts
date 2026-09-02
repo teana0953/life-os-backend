@@ -41,6 +41,9 @@ export async function answerCareSlot(
     status: input.status,
     doneTime: input.status === "done" ? new Date() : null,
     doseQuantity: schedule.doseQuantity,
+    itemTitle: item.title,
+    itemCategory: item.category,
+    itemDose: item.dose,
   });
 
   if (created && input.status === "done" && item.category === "medication" && item.stock !== null) {

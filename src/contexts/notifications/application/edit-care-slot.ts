@@ -82,6 +82,9 @@ export async function editCareSlot(deps: EditCareSlotDeps, userId: string, input
     status: input.status,
     doneTime,
     doseQuantity: schedule.doseQuantity,
+    itemTitle: item.title,
+    itemCategory: item.category,
+    itemDose: item.dose,
   });
 
   if (item.category === "medication" && item.stock !== null) {

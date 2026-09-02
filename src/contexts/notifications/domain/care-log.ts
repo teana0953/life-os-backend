@@ -1,10 +1,39 @@
+import type { CareCategory } from "./care-item";
+
 export type CareLogStatus = "done" | "skipped" | "missed";
 
-export interface CareLog {
+/**
+ * Write-time snapshot of the item's naming attributes, so a log is readable
+ * with no join to `care_item` (preserve-care-logs-on-item-delete D1). Never
+ * re-synced when the item changes: a record reports what was taken at the
+ * time.
+ */
+export interface CareLogItemSnapshot {
+  itemTitle: string;
+  itemCategory: CareCategory;
+  itemDose: string | null;
+}
+
+export interface CareLog extends CareLogItemSnapshot {
   id: string;
   userId: string;
-  careItemId: string;
-  careScheduleId: string;
+  /**
+   * Each id is null exactly when ITS OWN parent row is gone — the two foreign
+   * keys are separate `ON DELETE SET NULL`s (D2 in design.md), so they do not
+   * move together.
+   *
+   * `null` = the item was deleted (which cascades its schedules, so
+   * `careScheduleId` is null too).
+   */
+  careItemId: string | null;
+  /**
+   * `null` = the schedule behind this record is gone. That happens when the
+   * item was deleted, but ALSO when the item is still live and only this
+   * time-of-day's schedule was removed (an item edit dropping one time) — in
+   * which case `careItemId` above is still set. A null here is therefore not
+   * evidence that the item was deleted.
+   */
+  careScheduleId: string | null;
   /** `YYYY-MM-DD`, local to the owning user (D5 in design.md). */
   localDate: string;
   /** Local `HH:mm`. */
@@ -14,7 +43,12 @@ export interface CareLog {
   doseQuantity: number;
 }
 
-export interface CreateCareLogInput {
+/**
+ * The ids stay non-null here on purpose: every write path resolves a live
+ * schedule first and bails when it is gone, so an orphaned row is only ever
+ * made by a delete, never inserted as one (D2 in design.md).
+ */
+export interface CreateCareLogInput extends CareLogItemSnapshot {
   userId: string;
   careItemId: string;
   careScheduleId: string;

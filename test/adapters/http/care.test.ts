@@ -193,6 +193,9 @@ class InMemoryCareItemRepository implements CareItemRepository {
   private nextId = 1;
   private nextScheduleId = 1;
 
+  /** Stands in for the database's own `ON DELETE SET NULL` on `care_log` (design D2). */
+  constructor(private readonly onDeleted: (itemId: string) => void = () => {}) {}
+
   private scheduleInputToSchedule(careItemId: string, input: CareScheduleInput): CareSchedule {
     return {
       id: input.id ?? `sched-${this.nextScheduleId++}`,
@@ -261,6 +264,7 @@ class InMemoryCareItemRepository implements CareItemRepository {
     const existing = this.byId.get(id);
     if (!existing || existing.userId !== userId) return false;
     this.byId.delete(id);
+    this.onDeleted(id);
     return true;
   }
 
@@ -295,18 +299,20 @@ class InMemoryCareItemRepository implements CareItemRepository {
   }
 }
 
+/**
+ * A list rather than a slot-keyed map: an orphaned row (`orphanByItemDelete`)
+ * has no schedule id left to key it by, and dropping it from the collection
+ * would fake away the very rows this change exists to keep.
+ */
 class InMemoryCareLogRepository implements CareLogRepository {
-  private bySlot = new Map<string, CareLog>();
+  private logs: CareLog[] = [];
   private nextId = 1;
 
-  private key(scheduleId: string, localDate: string, timeOfDay: string): string {
-    return `${scheduleId}|${localDate}|${timeOfDay}`;
+  private find(careScheduleId: string, localDate: string, timeOfDay: string): CareLog | undefined {
+    return this.logs.find((log) => log.careScheduleId === careScheduleId && log.localDate === localDate && log.timeOfDay === timeOfDay);
   }
 
-  async upsertIfAbsent(input: CreateCareLogInput): Promise<{ log: CareLog; created: boolean }> {
-    const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
-    const existing = this.bySlot.get(key);
-    if (existing) return { log: existing, created: false };
+  private insert(input: CreateCareLogInput): CareLog {
     const log: CareLog = {
       id: `log-${this.nextId++}`,
       userId: input.userId,
@@ -317,45 +323,57 @@ class InMemoryCareLogRepository implements CareLogRepository {
       status: input.status,
       doneTime: input.doneTime,
       doseQuantity: input.doseQuantity,
+      itemTitle: input.itemTitle,
+      itemCategory: input.itemCategory,
+      itemDose: input.itemDose,
     };
-    this.bySlot.set(key, log);
-    return { log, created: true };
+    this.logs.push(log);
+    return log;
+  }
+
+  async upsertIfAbsent(input: CreateCareLogInput): Promise<{ log: CareLog; created: boolean }> {
+    const existing = this.find(input.careScheduleId, input.localDate, input.timeOfDay);
+    if (existing) return { log: existing, created: false };
+    return { log: this.insert(input), created: true };
   }
 
   async getBySlot(careScheduleId: string, localDate: string, timeOfDay: string): Promise<CareLog | null> {
-    return this.bySlot.get(this.key(careScheduleId, localDate, timeOfDay)) ?? null;
+    return this.find(careScheduleId, localDate, timeOfDay) ?? null;
   }
 
   async listByUserAndDate(userId: string, localDate: string): Promise<CareLog[]> {
-    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate === localDate);
+    return this.logs.filter((log) => log.userId === userId && log.localDate === localDate);
   }
 
   async listByUserAndDateRange(userId: string, from: string, to: string): Promise<CareLog[]> {
-    return [...this.bySlot.values()].filter((log) => log.userId === userId && log.localDate >= from && log.localDate <= to);
+    return this.logs.filter((log) => log.userId === userId && log.localDate >= from && log.localDate <= to);
   }
 
   async upsert(input: CreateCareLogInput): Promise<{ log: CareLog; previousStatus: CareLogStatus | null }> {
-    const key = this.key(input.careScheduleId, input.localDate, input.timeOfDay);
-    const existing = this.bySlot.get(key);
-    const log: CareLog = {
-      id: existing?.id ?? `log-${this.nextId++}`,
-      userId: input.userId,
-      careItemId: input.careItemId,
-      careScheduleId: input.careScheduleId,
-      localDate: input.localDate,
-      timeOfDay: input.timeOfDay,
-      status: input.status,
-      doneTime: input.doneTime,
-      doseQuantity: input.doseQuantity,
-    };
-    this.bySlot.set(key, log);
-    return { log, previousStatus: existing?.status ?? null };
+    const existing = this.find(input.careScheduleId, input.localDate, input.timeOfDay);
+    if (!existing) return { log: this.insert(input), previousStatus: null };
+    const previousStatus = existing.status;
+    // Only the three columns the real repository's onConflictDoUpdate touches:
+    // an edit must not restamp an existing record's snapshot (design D1).
+    existing.status = input.status;
+    existing.doneTime = input.doneTime;
+    existing.doseQuantity = input.doseQuantity;
+    return { log: existing, previousStatus };
+  }
+
+  /** What the `ON DELETE SET NULL` foreign keys do to a deleted item's rows (design D2). */
+  orphanByItemDelete(careItemId: string): void {
+    for (const log of this.logs) {
+      if (log.careItemId !== careItemId) continue;
+      log.careItemId = null;
+      log.careScheduleId = null;
+    }
   }
 }
 
 function buildApp() {
-  const careItemRepository = new InMemoryCareItemRepository();
   const careLogRepository = new InMemoryCareLogRepository();
+  const careItemRepository = new InMemoryCareItemRepository((itemId) => careLogRepository.orphanByItemDelete(itemId));
   const app = createApp({
     projectId: PROJECT_ID,
     jwks,
@@ -817,6 +835,12 @@ describe("GET /api/care/today", () => {
       dose: "5mg",
       time_of_day: "08:00",
       local_date: body.date,
+      // Today's list is live schedules only, so it can never carry a record of
+      // a deleted item (design D5) — but the field is on the shared serializer
+      // and has to be on the wire here too.
+      item_deleted: false,
+      care_item_id: expect.any(String),
+      care_schedule_id: expect.any(String),
     });
     expect(["pending", "overdue"]).toContain(body.items[0].status);
   });
@@ -851,8 +875,8 @@ describe("GET /api/care/today", () => {
 });
 
 interface RangeSlotJson {
-  care_item_id: string;
-  care_schedule_id: string;
+  care_item_id: string | null;
+  care_schedule_id: string | null;
   category: string;
   title: string;
   note: string | null;
@@ -862,6 +886,7 @@ interface RangeSlotJson {
   status: string;
   done_time: string | null;
   dose_quantity: number;
+  item_deleted: boolean;
 }
 
 interface RangeJson {
@@ -911,8 +936,56 @@ describe("GET /api/care/range", () => {
         local_date: day.date,
         status: "missed",
         done_time: null,
+        item_deleted: false,
+        care_item_id: expect.any(String),
+        care_schedule_id: expect.any(String),
       });
     }
+  });
+
+  it("keeps a deleted item's record in the range, flagged and named from its snapshot, while today drops it", async () => {
+    const { app } = buildApp();
+    const headers = await authed();
+    const created = (await (
+      await app.request("/api/care/items", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...VALID_BODY, schedules: [EVERY_DAY_SCHEDULE] }),
+      })
+    ).json()) as CareItemJson;
+    const scheduleId = created.schedules[0].id;
+    // The caller's own local today, read off the endpoint rather than computed,
+    // so the "today no longer lists it" half is about the deletion and not
+    // about the test picking a date the schedule is inactive on.
+    const today = ((await (await app.request("/api/care/today", { headers })).json()) as { date: string }).date;
+    await app.request("/api/care/log", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ care_schedule_id: scheduleId, local_date: today, time_of_day: "08:00", status: "done" }),
+    });
+
+    const deleted = await app.request(`/api/care/items/${created.id}`, { method: "DELETE", headers });
+    expect(((await deleted.json()) as { deleted: boolean }).deleted).toBe(true);
+
+    const todayBody = (await (await app.request("/api/care/today", { headers })).json()) as { items: unknown[] };
+    expect(todayBody.items).toEqual([]);
+    const rangeBody = (await (await app.request(`/api/care/range?from=${today}&to=${today}`, { headers })).json()) as RangeJson;
+    expect(rangeBody.days[0].items).toHaveLength(1);
+    expect(rangeBody.days[0].items[0]).toMatchObject({
+      care_item_id: null,
+      care_schedule_id: null,
+      item_deleted: true,
+      // Only the log's own snapshot can answer these now; the item is gone.
+      category: "medication",
+      title: "降血壓藥",
+      dose: "5mg",
+      note: null,
+      time_of_day: "08:00",
+      local_date: today,
+      status: "done",
+      dose_quantity: 1,
+    });
+    expect(rangeBody.days[0].items[0].done_time).not.toBeNull();
   });
 
   it("a disabled schedule is excluded from every day in the range", async () => {

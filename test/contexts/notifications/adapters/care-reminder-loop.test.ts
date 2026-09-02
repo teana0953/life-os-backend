@@ -649,6 +649,9 @@ describe("runCareReminderDay — fix/idle-instance-chain: the chain jumps to the
       status: "done",
       doneTime: null,
       doseQuantity: 1,
+      itemTitle: "藥物",
+      itemCategory: "medication",
+      itemDose: null,
     });
 
     const start = new Date("2026-08-11T16:00:00Z"); // 2026-08-12T00:00 Taipei.
