@@ -43,8 +43,10 @@ import {
   NetWorthAccountNotFound,
   NetWorthAccountOrderMismatch,
   NetWorthInvalidKind,
+  NetWorthExposureNotAllowed,
 } from "../../../contexts/finance/domain/networth-errors";
 import type { NetWorthAccount } from "../../../contexts/finance/domain/networth-account";
+import { isExposureFactor } from "../../../contexts/finance/domain/networth-account";
 import type { NetWorthRepository } from "../../../contexts/finance/domain/networth-repository";
 import type { MonthlyNetWorth } from "../../../contexts/finance/application/get-monthly-networth";
 import type { NetWorthAccountValue, NetWorthTrendPoint } from "../../../contexts/finance/domain/networth-snapshot";
@@ -109,7 +111,8 @@ function mapFinanceError(err: unknown, c: Context): Response {
     err instanceof NetWorthAccountArchived ||
     err instanceof NetWorthAccountNameConflict ||
     err instanceof NetWorthAccountOrderMismatch ||
-    err instanceof NetWorthInvalidKind
+    err instanceof NetWorthInvalidKind ||
+    err instanceof NetWorthExposureNotAllowed
   ) {
     throw new BadRequestError(err.message);
   }
@@ -544,7 +547,29 @@ export function createDeleteBudgetHandler(options: FinanceHandlerOptions) {
 }
 
 function networthAccountToJson(account: NetWorthAccount) {
-  return { id: account.id, kind: account.kind, name: account.name, sort_order: account.sortOrder, archived: account.archived };
+  return {
+    id: account.id,
+    kind: account.kind,
+    name: account.name,
+    sort_order: account.sortOrder,
+    archived: account.archived,
+    exposure_factor: account.exposureFactor,
+  };
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readNetworthAccountBody(c: Context): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await c.req.json<unknown>();
+  } catch {
+    throw new BadRequestError("body must be a JSON object");
+  }
+  if (!isJsonObject(body)) throw new BadRequestError("body must be a JSON object");
+  return body;
 }
 
 function networthAccountValueToJson(value: NetWorthAccountValue) {
@@ -581,7 +606,7 @@ export function createListNetWorthAccountsHandler(options: FinanceHandlerOptions
 export function createCreateNetWorthAccountHandler(options: FinanceHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const body = await c.req.json<Record<string, unknown>>();
+    const body = await readNetworthAccountBody(c);
 
     try {
       const account = await createNetWorthAccount(options.financeNetWorthRepository, {
@@ -597,17 +622,22 @@ export function createCreateNetWorthAccountHandler(options: FinanceHandlerOption
   };
 }
 
-/** Protected `PUT /api/finance/networth/accounts/:id`: partial-update an owned account (name/sort_order/archived; `kind` is not editable). */
+/** Protected `PUT /api/finance/networth/accounts/:id`: partial-update an owned account (`kind` is not editable). */
 export function createUpdateNetWorthAccountHandler(options: FinanceHandlerOptions) {
   return async (c: Context<{ Variables: AuthVariables }>) => {
     const userId = await resolveUserId(options.userRepository, c.get("firebaseClaims"));
-    const body = await c.req.json<Record<string, unknown>>();
+    const body = await readNetworthAccountBody(c);
+    const exposureFactor = body.exposure_factor;
+    if (exposureFactor !== undefined && exposureFactor !== null && !isExposureFactor(exposureFactor)) {
+      throw new BadRequestError("exposure_factor must be 0, 1, 2, 3, or null");
+    }
 
     try {
       const account = await updateNetWorthAccount(options.financeNetWorthRepository, userId, c.req.param("id") ?? "", {
         name: typeof body.name === "string" ? body.name : undefined,
         sortOrder: typeof body.sort_order === "number" ? body.sort_order : undefined,
         archived: typeof body.archived === "boolean" ? body.archived : undefined,
+        exposureFactor,
       });
       return c.json(networthAccountToJson(account));
     } catch (err) {

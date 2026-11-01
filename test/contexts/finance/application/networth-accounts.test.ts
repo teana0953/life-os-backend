@@ -6,7 +6,9 @@ import {
   NetWorthAccountNameConflict,
   NetWorthAccountNotFound,
   NetWorthInvalidKind,
+  NetWorthExposureNotAllowed,
 } from "../../../../src/contexts/finance/domain/networth-errors";
+import type { ExposureFactor } from "../../../../src/contexts/finance/domain/networth-account";
 import { InMemoryNetWorthRepository } from "../networth-fakes";
 
 let repo: InMemoryNetWorthRepository;
@@ -29,7 +31,7 @@ describe("listNetWorthAccounts", () => {
 describe("createNetWorthAccount", () => {
   it("creates an account with default sort_order and archived false", async () => {
     const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "asset", name: "加密貨幣" });
-    expect(account).toMatchObject({ kind: "asset", name: "加密貨幣", sortOrder: 0, archived: false });
+    expect(account).toMatchObject({ kind: "asset", name: "加密貨幣", sortOrder: 0, archived: false, exposureFactor: null });
   });
 
   it("rejects an unknown kind with NetWorthInvalidKind, not a name conflict", async () => {
@@ -59,6 +61,41 @@ describe("createNetWorthAccount", () => {
 });
 
 describe("updateNetWorthAccount", () => {
+  const factors: (ExposureFactor | null)[] = [0, 1, 2, 3, null];
+
+  it.each(factors)("saves exposure %s on an archived asset", async (exposureFactor) => {
+    const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "asset", name: "股票" });
+    await updateNetWorthAccount(repo, "user-1", account.id, { archived: true, exposureFactor: 2 });
+    const updated = await updateNetWorthAccount(repo, "user-1", account.id, { exposureFactor });
+    expect(updated).toMatchObject({ exposureFactor, archived: true, name: "股票", sortOrder: 0 });
+    expect((await listNetWorthAccounts(repo, "user-1")).find((a) => a.id === account.id)?.exposureFactor).toBe(exposureFactor);
+  });
+
+  it("preserves exposure through unrelated patches and an empty patch", async () => {
+    const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "asset", name: "股票" });
+    await updateNetWorthAccount(repo, "user-1", account.id, { exposureFactor: 3 });
+    for (const patch of [{ name: "台股" }, { sortOrder: 4 }, { archived: true }, {}]) {
+      expect((await updateNetWorthAccount(repo, "user-1", account.id, patch)).exposureFactor).toBe(3);
+    }
+  });
+
+  it.each(factors)("rejects liability exposure edits including %s atomically", async (exposureFactor) => {
+    const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "liability", name: "學貸" });
+    await expect(updateNetWorthAccount(repo, "user-1", account.id, { exposureFactor, name: "changed" }))
+      .rejects.toBeInstanceOf(NetWorthExposureNotAllowed);
+    expect(account).toMatchObject({ name: "學貸", exposureFactor: null });
+    expect((await updateNetWorthAccount(repo, "user-1", account.id, { archived: true })).archived).toBe(true);
+  });
+
+  it("conceals foreign liabilities before applying the exposure rule", async () => {
+    const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "liability", name: "學貸" });
+    await expect(updateNetWorthAccount(repo, "user-2", account.id, { exposureFactor: 3 }))
+      .rejects.toBeInstanceOf(NetWorthAccountNotFound);
+    await expect(updateNetWorthAccount(repo, "user-1", "missing", { exposureFactor: null }))
+      .rejects.toBeInstanceOf(NetWorthAccountNotFound);
+    expect(account.exposureFactor).toBeNull();
+  });
+
   it("updates name/sort_order/archived", async () => {
     const account = await createNetWorthAccount(repo, { userId: "user-1", kind: "asset", name: "股票" });
     const updated = await updateNetWorthAccount(repo, "user-1", account.id, { name: "台股", sortOrder: 9, archived: true });

@@ -1,0 +1,2 @@
+ALTER TABLE "finance_networth_account" ADD COLUMN "exposure_factor" integer;--> statement-breakpoint
+ALTER TABLE "finance_networth_account" ADD CONSTRAINT "finance_networth_account_exposure_factor_check" CHECK ("finance_networth_account"."exposure_factor" IS NULL OR ("finance_networth_account"."kind" = 'asset' AND "finance_networth_account"."exposure_factor" IN (0, 1, 2, 3)));
