@@ -23,6 +23,7 @@ import {
 } from "../../contexts/finance/fakes";
 import { InMemoryInstallmentPlanRepository } from "../../contexts/finance/installment-fakes";
 import { InMemoryNetWorthRepository } from "../../contexts/finance/networth-fakes";
+import type { ExposureFactor } from "../../../src/contexts/finance/domain/networth-account";
 import {
   InMemoryExpenseGroupRepository,
   InMemoryFriendChecker,
@@ -1588,7 +1589,7 @@ describe("finance HTTP routes", () => {
       const token = await validToken();
       const res = await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset", name: "加密貨幣" }));
       expect(res.status).toBe(200);
-      expect(await res.json()).toMatchObject({ kind: "asset", name: "加密貨幣", sort_order: 0, archived: false });
+      expect(await res.json()).toMatchObject({ kind: "asset", name: "加密貨幣", sort_order: 0, archived: false, exposure_factor: null });
 
       const dup = await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset", name: "加密貨幣" }));
       expect(dup.status).toBe(400);
@@ -1598,6 +1599,112 @@ describe("finance HTTP routes", () => {
       const { app } = ctx;
       const token = await validToken();
       expect((await app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "asset" }))).status).toBe(400);
+    });
+
+    describe("cross-device exposure", () => {
+      const factors: (ExposureFactor | null)[] = [0, 1, 2, 3, null];
+
+      it.each(factors)("round-trips exposure %s through PUT and a fresh account listing", async (exposure_factor) => {
+        const token = await validToken();
+        const account = await seedAccount(ctx.app, token, "asset", "股票");
+        const url = `/api/finance/networth/accounts/${account.id}`;
+        await ctx.app.request(url, authed(token, "PUT", { exposure_factor: 2, archived: true }));
+        const saved = await ctx.app.request(url, authed(token, "PUT", { exposure_factor }));
+        expect(saved.status).toBe(200);
+        expect(await saved.json()).toMatchObject({ id: account.id, exposure_factor, archived: true, name: "股票", sort_order: 0 });
+        const reloaded = await ctx.app.request("/api/finance/networth/accounts", authed(await validToken()));
+        expect(reloaded.status).toBe(200);
+        expect(await reloaded.json()).toMatchObject({ accounts: [expect.objectContaining({ id: account.id, exposure_factor })] });
+      });
+
+      it("emits null exposure for every seeded default including liabilities", async () => {
+        const token = await validToken();
+        const response = await ctx.app.request("/api/finance/networth/accounts", authed(token));
+        const body = await response.json<{ accounts: { exposure_factor: unknown }[] }>();
+        expect(body.accounts).toHaveLength(10);
+        for (const account of body.accounts) expect(account.exposure_factor).toBeNull();
+        const liability = await ctx.app.request("/api/finance/networth/accounts", authed(token, "POST", { kind: "liability", name: "other debt" }));
+        expect(await liability.json()).toMatchObject({ kind: "liability", exposure_factor: null });
+      });
+
+      it("preserves exposure when renaming, ordering, archiving, or sending an empty patch", async () => {
+        const token = await validToken();
+        const account = await seedAccount(ctx.app, token, "asset", "股票");
+        const url = `/api/finance/networth/accounts/${account.id}`;
+        await ctx.app.request(url, authed(token, "PUT", { exposure_factor: 3 }));
+        for (const patch of [{ name: "台股" }, { sort_order: 9 }, { archived: true }, {}]) {
+          const response = await ctx.app.request(url, authed(token, "PUT", patch));
+          expect(response.status).toBe(200);
+          expect(await response.json()).toMatchObject({ exposure_factor: 3 });
+        }
+        const reordered = await ctx.app.request("/api/finance/networth/accounts/order", authed(token, "PUT", { kind: "asset", ids: [account.id] }));
+        expect(reordered.status).toBe(200);
+        const response = await ctx.app.request("/api/finance/networth/accounts", authed(token));
+        expect(await response.json()).toMatchObject({ accounts: [{ id: account.id, exposure_factor: 3, name: "台股", sort_order: 0, archived: true }] });
+      });
+
+      it.each(["0", "1", "2", "3", "", true, false, -1, 4, 1.5, {}, [], [1]])("rejects invalid exposure %j without updating any fields", async (exposure_factor) => {
+        const token = await validToken();
+        const account = await seedAccount(ctx.app, token, "asset", "股票");
+        const url = `/api/finance/networth/accounts/${account.id}`;
+        await ctx.app.request(url, authed(token, "PUT", { exposure_factor: 2 }));
+        const response = await ctx.app.request(url, authed(token, "PUT", { exposure_factor, name: "changed" }));
+        expect(response.status).toBe(400);
+        expect(ctx.financeNetWorthRepository.accounts.find((a) => a.id === account.id)).toMatchObject({ name: "股票", exposureFactor: 2 });
+      });
+
+      it.each(["null", "[]", "[{}]", '"text"', "0", "true", "{", "", '{"exposure_factor":1e999}', '{"exposure_factor":NaN}'])
+        ("returns 400 for malformed account body %j", async (body) => {
+          const token = await validToken();
+          const account = await seedAccount(ctx.app, token, "asset", "股票");
+          const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+          const response = await ctx.app.request(`/api/finance/networth/accounts/${account.id}`, { method: "PUT", headers, body });
+          expect(response.status).toBe(400);
+          const created = await ctx.app.request("/api/finance/networth/accounts", { method: "POST", headers, body });
+          expect(created.status).toBe(400);
+          expect(ctx.financeNetWorthRepository.accounts).toHaveLength(1);
+        });
+
+      it.each(factors)("rejects liability exposure %s including explicit unknown", async (exposure_factor) => {
+        const token = await validToken();
+        const account = await seedAccount(ctx.app, token, "liability", "學貸");
+        const response = await ctx.app.request(`/api/finance/networth/accounts/${account.id}`, authed(token, "PUT", { exposure_factor, archived: true }));
+        expect(response.status).toBe(400);
+        expect(ctx.financeNetWorthRepository.accounts.find((a) => a.id === account.id)).toMatchObject({ exposureFactor: null, archived: false });
+      });
+
+      it("uses verified claims despite forged owner fields and hides foreign or missing accounts", async () => {
+        const owner = await validToken("uid-owner");
+        const other = await validToken("uid-other");
+        const ownerId = await idOf(ctx.app, owner);
+        for (const kind of ["asset", "liability"] satisfies ("asset" | "liability")[]) {
+          const account = await seedAccount(ctx.app, owner, kind, "account");
+          const response = await ctx.app.request(`/api/finance/networth/accounts/${account.id}`, authed(other, "PUT", {
+            exposure_factor: 3, user_id: ownerId, userId: ownerId, uid: "uid-owner", firebase_uid: "uid-owner",
+          }));
+          expect(response.status).toBe(404);
+          expect(await response.json()).toEqual({ error: "not_found" });
+          expect(ctx.financeNetWorthRepository.accounts.find((a) => a.id === account.id)?.exposureFactor).toBeNull();
+        }
+        const missing = await ctx.app.request("/api/finance/networth/accounts/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", authed(owner, "PUT", { exposure_factor: null }));
+        expect(missing.status).toBe(404);
+        const foreignListing = await ctx.app.request(`/api/finance/networth/accounts?user_id=${ownerId}`, authed(other));
+        const body = await foreignListing.json<{ accounts: { name: string }[] }>();
+        expect(body.accounts.every((a) => a.name !== "account")).toBe(true);
+      });
+
+      it.each([undefined, "invalid-token"])("requires verified auth for exposure edits with bearer %s", async (bearer) => {
+        const owner = await validToken();
+        const account = await seedAccount(ctx.app, owner, "asset", "股票");
+        const response = await ctx.app.request(`/api/finance/networth/accounts/${account.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+          body: JSON.stringify({ exposure_factor: 3 }),
+        });
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ error: "unauthorized" });
+        expect(ctx.financeNetWorthRepository.accounts.find((a) => a.id === account.id)?.exposureFactor).toBeNull();
+      });
     });
 
     it("PUT updates an owned account's archived flag and 404s for another user's account", async () => {

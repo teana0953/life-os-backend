@@ -13,7 +13,7 @@ export interface NetWorthRepository {
   findAccountById(id: string): Promise<NetWorthAccount | null>;
   findAccountByUserKindName(userId: string, kind: NetWorthKind, name: string): Promise<NetWorthAccount | null>;
   createAccount(input: CreateNetWorthAccountInput): Promise<NetWorthAccount>;
-  /** Owner-scoped partial update (name/sort_order/archived; kind immutable); returns null when not owned/found. */
+  /** Owner-scoped partial update (kind immutable); returns null when not owned/found. */
   updateAccount(userId: string, id: string, patch: UpdateNetWorthAccountPatch): Promise<NetWorthAccount | null>;
   /**
    * Atomically sets `sortOrder` for every account in `orderedIds` to its index

@@ -11,6 +11,7 @@ import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { Db } from "../../../shared/db/client";
 import { financeNetworthAccount, financeNetworthSnapshot } from "../../../shared/db/schema";
 import type { CreateNetWorthAccountInput, NetWorthAccount, NetWorthKind, UpdateNetWorthAccountPatch } from "../domain/networth-account";
+import { isExposureFactor } from "../domain/networth-account";
 import type { MonthlyNetWorthTotals, NetWorthRepository } from "../domain/networth-repository";
 import type { NetWorthAccountValue, NetWorthSnapshot, NetWorthTrendPoint, UpsertNetWorthSnapshotInput } from "../domain/networth-snapshot";
 
@@ -18,6 +19,9 @@ type NetWorthAccountRow = typeof financeNetworthAccount.$inferSelect;
 type NetWorthSnapshotRow = typeof financeNetworthSnapshot.$inferSelect;
 
 function accountToDomain(row: NetWorthAccountRow): NetWorthAccount {
+  if (row.exposureFactor !== null && !isExposureFactor(row.exposureFactor)) {
+    throw new Error("invalid stored exposure factor");
+  }
   return {
     id: row.id,
     userId: row.userId,
@@ -25,6 +29,7 @@ function accountToDomain(row: NetWorthAccountRow): NetWorthAccount {
     name: row.name,
     sortOrder: row.sortOrder,
     archived: row.archived,
+    exposureFactor: row.exposureFactor,
   };
 }
 
@@ -78,6 +83,7 @@ export class DrizzleNetWorthRepository implements NetWorthRepository {
     if (patch.name !== undefined) values.name = patch.name;
     if (patch.sortOrder !== undefined) values.sortOrder = patch.sortOrder;
     if (patch.archived !== undefined) values.archived = patch.archived;
+    if (patch.exposureFactor !== undefined) values.exposureFactor = patch.exposureFactor;
 
     const [row] = await db
       .update(financeNetworthAccount)

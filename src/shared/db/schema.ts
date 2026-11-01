@@ -574,10 +574,14 @@ export const financeNetworthAccount = pgTable(
     name: text("name").notNull(),
     sortOrder: integer("sort_order").notNull().default(0),
     archived: boolean("archived").notNull().default(false),
+    exposureFactor: integer("exposure_factor"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("finance_networth_account_user_kind_name_idx").on(t.userId, t.kind, t.name)],
+  (t) => [
+    uniqueIndex("finance_networth_account_user_kind_name_idx").on(t.userId, t.kind, t.name),
+    check("finance_networth_account_exposure_factor_check", sql`${t.exposureFactor} IS NULL OR (${t.kind} = 'asset' AND ${t.exposureFactor} IN (0, 1, 2, 3))`),
+  ],
 );
 
 // finance_networth_snapshot: one market-value snapshot per account per month

@@ -50,6 +50,7 @@ export class InMemoryNetWorthRepository implements NetWorthRepository {
       name: input.name,
       sortOrder: input.sortOrder ?? 0,
       archived: false,
+      exposureFactor: null,
     };
     this.accounts.push(account);
     return account;
@@ -61,6 +62,7 @@ export class InMemoryNetWorthRepository implements NetWorthRepository {
     if (patch.name !== undefined) account.name = patch.name;
     if (patch.sortOrder !== undefined) account.sortOrder = patch.sortOrder;
     if (patch.archived !== undefined) account.archived = patch.archived;
+    if (patch.exposureFactor !== undefined) account.exposureFactor = patch.exposureFactor;
     return account;
   }
 
